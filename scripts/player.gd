@@ -443,10 +443,26 @@ func _squash_and_stretch(sx: float, sy: float):
 func _draw():
 	if is_dead:
 		return
-		
-	var facing_mul = 1.0 if is_facing_right else -1.0
+
 	var class_info = Global.CLASS_INFO[class_type]
 	var base_col: Color = class_info["color"]
+
+	# ── Remote players: minimal draw (4 calls) to avoid crashing browser ──────
+	if not is_local_player:
+		# Status rings
+		if spawn_invuln_timer > 0.0:
+			draw_circle(Vector2.ZERO, 16.0, Color(1.0, 1.0, 0.6, 0.18))
+		if is_shielding:
+			draw_circle(Vector2.ZERO, 19.0, Color(0.3, 0.6, 1.0, 0.35))
+		# Body
+		draw_circle(Vector2(0, -2), 9.0, base_col)
+		draw_circle(Vector2(0, -14), 6.0, Color(0.98, 0.85, 0.72))
+		# Aim line
+		draw_line(aim_direction * 10.0, aim_direction * 24.0, Color(1.0, 1.0, 1.0, 0.4), 1.5)
+		return
+	# ─────────────────────────────────────────────────────────────────────────
+
+	var facing_mul = 1.0 if is_facing_right else -1.0
 	var run_cycle = sin(anim_time) * 2.5 if abs(velocity.x) > 20.0 and is_on_floor() else 0.0
 	var breath = sin(anim_time * 0.4) * 0.8
 	

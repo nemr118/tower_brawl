@@ -109,6 +109,18 @@ func _determine_url_and_connect():
 		print("⚠️ [Global] WebSocket connect error: ", err)
 		is_connecting = false
 
+func _save_player_id():
+	# Persist our slot number so we can reclaim it after a page reload / reconnect
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("localStorage.setItem('towerbrawl_pid', '" + str(my_player_id) + "')", true)
+
+func _load_saved_player_id() -> int:
+	if OS.has_feature("web"):
+		var val = JavaScriptBridge.eval("localStorage.getItem('towerbrawl_pid')", true)
+		if val != null and str(val) != "null" and str(val) != "":
+			return int(str(val))
+	return 0  # 0 = no saved ID
+
 func _process(_delta):
 	ws.poll()
 	var state = ws.get_ready_state()
@@ -118,6 +130,9 @@ func _process(_delta):
 			is_connected = true
 			is_connecting = false
 			print("✅ [Global] Connected!")
+			# Send hello immediately — server uses reclaim_id to restore our slot
+			var saved_id = _load_saved_player_id()
+			send_net_data({"type": "hello", "reclaim_id": saved_id})
 			
 		while ws.get_available_packet_count() > 0:
 			var pkt = ws.get_packet()
@@ -148,6 +163,7 @@ func _handle_net_packet(msg_str: String):
 	if type == "assign_id":
 		my_player_id = int(data.get("id", 1))
 		print("🎮 [Global] Assigned Player ID: ", my_player_id)
+		_save_player_id()   # persist so reconnects restore this slot
 		
 		active_players.clear()
 		for x in data.get("active_players", [1]):

@@ -140,13 +140,34 @@ def ws_client_thread(sock, addr, label):
         except: pass
         return
 
+    # ── Slot assignment ───────────────────────────────────────────────────────
+    # Read optional first frame: client may send {"type":"hello","reclaim_id":N}
+    # to reclaim their previous slot after a page reload or reconnect.
+    sock.settimeout(0.5)
+    reclaim_id = 0
+    try:
+        hello_msg = ws_read(sock)
+        if hello_msg:
+            hello = json.loads(hello_msg)
+            if hello.get("type") == "hello":
+                reclaim_id = int(hello.get("reclaim_id", 0))
+    except Exception:
+        pass
+    sock.settimeout(None)
+
     assigned_id = None
     with lobby_lock:
-        for i in range(4):
-            if player_slots[i] is None:
-                player_slots[i] = {"sock": sock, "addr": str(addr)}
-                assigned_id = i + 1
-                break
+        # Try to reclaim previous slot first
+        if 1 <= reclaim_id <= 4 and player_slots[reclaim_id - 1] is None:
+            player_slots[reclaim_id - 1] = {"sock": sock, "addr": str(addr)}
+            assigned_id = reclaim_id
+            print(f"[{label}] P{assigned_id} RECLAIMED slot  addr={addr}")
+        else:
+            for i in range(4):
+                if player_slots[i] is None:
+                    player_slots[i] = {"sock": sock, "addr": str(addr)}
+                    assigned_id = i + 1
+                    break
 
     if assigned_id is None:
         ws_send(sock, json.dumps({"type": "server_full"}))
