@@ -65,6 +65,27 @@ const SKILL_DETAILS = {
 }
 
 func _ready():
+	# UI Hooks for IconTex
+	var show_tr = TextureRect.new()
+	show_tr.name = "IconTex"
+	show_tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	show_tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	show_tr.size = Vector2(40, 40)
+	show_tr.position = Vector2(name_label.position.x - 45, name_label.position.y)
+	name_label.get_parent().add_child(show_tr)
+	name_label.get_parent().move_child(show_tr, name_label.get_index())
+
+	for p_card in [$Roster/P1Card, $Roster/P2Card, $Roster/P3Card, $Roster/P4Card]:
+		var old_icon = p_card.get_node("Icon")
+		var tr = TextureRect.new()
+		tr.name = "IconTex"
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.position = old_icon.position
+		tr.size = Vector2(30, 30)
+		p_card.add_child(tr)
+		old_icon.visible = false
+
 	local_player_id = Global.my_player_id
 	active_player_ids = Global.active_players.duplicate()
 	locked_players = Global.locked_opponents.duplicate()
@@ -162,7 +183,9 @@ func _update_showcase():
 	var c_info = Global.CLASS_INFO[c_type]
 	var s_info = SKILL_DETAILS[c_type]
 	
-	name_label.text = c_info["icon"] + " " + c_info["name"].to_upper()
+	name_label.text = c_info["name"].to_upper()
+	if c_info.has("icon_tex"):
+		name_label.get_parent().get_node("IconTex").texture = load(c_info["icon_tex"])
 	name_label.modulate = c_info["color"]
 	desc_label.text = c_info["desc"]
 	primary_label.text = s_info["primary"]

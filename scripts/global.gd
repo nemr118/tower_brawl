@@ -40,6 +40,7 @@ const CLASS_INFO = {
 		"name": "Ranger",
 		"title": "Master Archer",
 		"icon": "🏹",
+		"icon_tex": "res://assets/icons/ranger.jpg",
 		"color": Color(0.2, 0.75, 0.35),
 		"desc": "Precision multi-directional arrows, projectile catching, and recoil backflip shot."
 	},
@@ -47,6 +48,7 @@ const CLASS_INFO = {
 		"name": "Knight",
 		"title": "Iron Juggernaut",
 		"icon": "⚔️",
+		"icon_tex": "res://assets/icons/knight.jpg",
 		"color": Color(0.25, 0.55, 0.95),
 		"desc": "Broadsword slash deflects projectiles, shield guard parries arrows and spells."
 	},
@@ -54,6 +56,7 @@ const CLASS_INFO = {
 		"name": "Mage",
 		"title": "Pyromancer",
 		"icon": "🔮",
+		"icon_tex": "res://assets/icons/pyro.jpg",
 		"color": Color(0.95, 0.55, 0.15),
 		"desc": "Explosive firebolts that regenerate over time, and instantaneous void blink teleport."
 	},
@@ -61,6 +64,7 @@ const CLASS_INFO = {
 		"name": "Rogue",
 		"title": "Shadow Assassin",
 		"icon": "🗡️",
+		"icon_tex": "res://assets/icons/rogue.jpg",
 		"color": Color(0.75, 0.3, 0.95),
 		"desc": "Rapid throwing kunais, shadow dash ambushes through enemies."
 	},
@@ -68,6 +72,7 @@ const CLASS_INFO = {
 		"name": "Druid",
 		"title": "Shape Shifter",
 		"icon": "🐻",
+		"icon_tex": "res://assets/icons/druid.jpg",
 		"color": Color(0.6, 0.4, 0.1),
 		"desc": "Throws thorns. Bear Form. Dash turns into a Storm Crow. Shield is Phoenix Egg."
 	}
@@ -124,20 +129,22 @@ func _determine_url_and_connect():
 	var host = "127.0.0.1"
 	var is_ssl = false
 	if OS.has_feature("web"):
-		var js_host = JavaScriptBridge.eval("window.location.hostname", true)
-		if js_host and str(js_host) != "":
-			host = str(js_host)
-			
-		var js_port = JavaScriptBridge.eval("window.location.port", true)
-		var port_str = ""
-		if js_port and str(js_port) != "":
-			port_str = ":" + str(js_port)
-			
-		var js_proto = JavaScriptBridge.eval("window.location.protocol", true)
-		if str(js_proto) == "https:":
-			server_url = "wss://" + host + port_str
+		var js_host = str(JavaScriptBridge.eval("window.location.hostname", true))
+		if js_host == "nemr118.github.io":
+			server_url = "wss://towerbrawl-server.loca.lt"
+		elif js_host and js_host != "":
+			var host_str = js_host
+			var js_port = JavaScriptBridge.eval("window.location.port", true)
+			var port_str = ""
+			if js_port and str(js_port) != "":
+				port_str = ":" + str(js_port)
+			var js_proto = JavaScriptBridge.eval("window.location.protocol", true)
+			if str(js_proto) == "https:":
+				server_url = "wss://" + host_str + port_str
+			else:
+				server_url = "ws://" + host_str + port_str
 		else:
-			server_url = "ws://" + host + port_str
+			server_url = "wss://towerbrawl-server.loca.lt"
 	else:
 		server_url = "ws://127.0.0.1:8000" 
 		
