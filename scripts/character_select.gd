@@ -49,14 +49,14 @@ const SKILL_DETAILS = {
 }
 
 func _ready():
-	local_player_id = NetworkManager.my_player_id
-	active_player_ids = NetworkManager.active_players.duplicate()
-	locked_players = NetworkManager.locked_opponents.duplicate()
+	local_player_id = Global.my_player_id
+	active_player_ids = Global.active_players.duplicate()
+	locked_players = Global.locked_opponents.duplicate()
 	
-	NetworkManager.connect("connected_to_server", Callable(self, "_on_connected_to_server"))
-	NetworkManager.connect("player_joined_room", Callable(self, "_on_player_joined"))
-	NetworkManager.connect("player_left_room", Callable(self, "_on_player_left"))
-	NetworkManager.connect("opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
+	Global.connect("net_connected", Callable(self, "_on_connected_to_server"))
+	Global.connect("net_player_joined", Callable(self, "_on_player_joined"))
+	Global.connect("net_player_left", Callable(self, "_on_player_left"))
+	Global.connect("net_opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
 	
 	_sync_global_configs()
 	_update_showcase()
@@ -145,7 +145,7 @@ func _lock_in_champion():
 	lock_btn.disabled = true
 	lock_btn.modulate = Color(0.4, 0.9, 0.4)
 	
-	NetworkManager.send_data({
+	Global.send_net_data({
 		"type": "lock_in",
 		"class": chosen_class
 	})

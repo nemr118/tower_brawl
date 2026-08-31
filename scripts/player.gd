@@ -63,11 +63,11 @@ const KunaiScene = preload("res://scenes/kunai.tscn")
 
 func _ready():
 	add_to_group("players")
-	is_local_player = (player_id == NetworkManager.my_player_id)
+	is_local_player = (player_id == Global.my_player_id)
 	
 	if not is_local_player:
-		NetworkManager.connect("player_state_received", Callable(self, "_on_player_state_received"))
-		NetworkManager.connect("projectile_spawned", Callable(self, "_on_remote_projectile"))
+		Global.connect("net_player_state_received", Callable(self, "_on_player_state_received"))
+		Global.connect("net_projectile_spawned", Callable(self, "_on_remote_projectile"))
 		
 	_apply_class_defaults()
 	melee_area.monitoring = false
@@ -92,7 +92,7 @@ func _physics_process(delta: float):
 		
 	anim_time += delta * 12.0
 	
-	# Timers tick down for BOTH Local and Remote players so spawn shields NEVER get stuck!
+	# Timers tick down for BOTH Local and Remote players
 	if spawn_invuln_timer > 0.0:
 		spawn_invuln_timer -= delta
 	if shield_timer > 0.0:
@@ -206,7 +206,7 @@ func _sync_network_state(delta: float):
 	sync_timer += delta
 	if sync_timer >= 0.033:
 		sync_timer = 0.0
-		NetworkManager.send_data({
+		Global.send_net_data({
 			"type": "sync_pos",
 			"x": global_position.x,
 			"y": global_position.y,
@@ -267,7 +267,7 @@ func _perform_attack(aim_dir: Vector2):
 				get_parent().add_child(arrow)
 				arrow.init(player_id, spawn_pos, aim_dir)
 				_squash_and_stretch(0.85, 1.15)
-				NetworkManager.send_data({
+				Global.send_net_data({
 					"type": "spawn_projectile",
 					"weapon": "arrow",
 					"pos_x": spawn_pos.x,
@@ -287,7 +287,7 @@ func _perform_attack(aim_dir: Vector2):
 				get_parent().add_child(bolt)
 				bolt.init(player_id, spawn_pos, aim_dir)
 				_squash_and_stretch(0.8, 1.2)
-				NetworkManager.send_data({
+				Global.send_net_data({
 					"type": "spawn_projectile",
 					"weapon": "firebolt",
 					"pos_x": spawn_pos.x,
@@ -303,7 +303,7 @@ func _perform_attack(aim_dir: Vector2):
 				var kunai = KunaiScene.instantiate()
 				get_parent().add_child(kunai)
 				kunai.init(player_id, spawn_pos, aim_dir)
-				NetworkManager.send_data({
+				Global.send_net_data({
 					"type": "spawn_projectile",
 					"weapon": "kunai",
 					"pos_x": spawn_pos.x,
@@ -323,7 +323,7 @@ func _perform_special(aim_dir: Vector2):
 				arrow.init(player_id, global_position + aim_dir * 18.0, aim_dir)
 				velocity = -aim_dir * 310.0 + Vector2.UP * 160.0
 				_squash_and_stretch(0.7, 1.3)
-				NetworkManager.send_data({
+				Global.send_net_data({
 					"type": "spawn_projectile",
 					"weapon": "arrow",
 					"pos_x": global_position.x + aim_dir.x * 18.0,
@@ -402,9 +402,8 @@ func take_hit(killer_id: int, _knockback_dir: Vector2):
 	collision_shape.set_deferred("disabled", true)
 	emit_signal("player_died", killer_id, player_id)
 	
-	# If this is the local client who was hit, broadcast death packet
 	if is_local_player:
-		NetworkManager.send_data({
+		Global.send_net_data({
 			"type": "player_hit",
 			"killer": killer_id,
 			"victim": player_id

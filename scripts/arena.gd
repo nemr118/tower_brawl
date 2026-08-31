@@ -23,9 +23,9 @@ var current_round: int = 1
 @onready var touch_controls = $TouchControls
 
 func _ready():
-	NetworkManager.connect("player_hit_event", Callable(self, "_on_network_player_hit"))
-	NetworkManager.connect("round_end_sync", Callable(self, "_on_round_end_sync"))
-	NetworkManager.connect("new_round_sync", Callable(self, "_on_new_round_sync"))
+	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
+	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
+	Global.connect("net_new_round", Callable(self, "_on_new_round_sync"))
 	_start_new_match()
 
 func _input(event):
@@ -43,7 +43,7 @@ func _start_round():
 	_clear_projectiles()
 	
 	if touch_controls:
-		touch_controls.my_input_prefix = "p" + str(NetworkManager.my_player_id) + "_"
+		touch_controls.my_input_prefix = "p" + str(Global.my_player_id) + "_"
 	
 	for p_id in Global.player_configs:
 		if Global.player_configs[p_id]["active"]:
@@ -66,7 +66,7 @@ func _start_round():
 			player_instances[p_id] = p
 			
 	_update_hud()
-	_show_banner("ROUND " + str(current_round) + " - 4-PLAYER BATTLE!", 1.5)
+	_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
 
 func _clear_projectiles():
 	for p in get_tree().get_nodes_in_group("projectiles"):
@@ -113,8 +113,7 @@ func _check_round_end():
 			Global.player_scores[winner_id] += 1
 			_update_hud()
 			
-			# Broadcast authoritative round end to all 4 players
-			NetworkManager.send_data({
+			Global.send_net_data({
 				"type": "round_end",
 				"winner": winner_id,
 				"scores": Global.player_scores,
@@ -136,7 +135,7 @@ func _on_round_end_sync(winner_id: int, s1: int, s2: int, round_num: int):
 
 func _display_round_winner(winner_id: int):
 	var winner_class = Global.CLASS_INFO[Global.player_configs[winner_id]["class"]]["name"]
-	var is_me = (winner_id == NetworkManager.my_player_id)
+	var is_me = (winner_id == Global.my_player_id)
 	
 	if Global.player_scores[winner_id] >= Global.match_score_limit:
 		var txt = "👑 " + ("YOU WON THE MATCH!" if is_me else "PLAYER " + str(winner_id) + " (" + winner_class + ") WINS THE MATCH!") + " 👑"
@@ -183,7 +182,7 @@ func _update_panel(panel: Control, p_id: int):
 	var stock_lbl = panel.get_node("StockLabel")
 	var score_lbl = panel.get_node("ScoreLabel")
 	
-	name_lbl.text = "P" + str(p_id) + (" (You)" if p_id == NetworkManager.my_player_id else "") + " " + c_info["icon"]
+	name_lbl.text = "P" + str(p_id) + (" (You)" if p_id == Global.my_player_id else "") + " " + c_info["icon"]
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)
