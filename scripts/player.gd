@@ -30,7 +30,7 @@ var jump_buffer_timer: float = 0.0
 
 var is_facing_right: bool = true
 var is_dead: bool = false
-var spawn_invuln_timer: float = 1.2
+var spawn_invuln_timer: float = 1.0
 var anim_time: float = 0.0
 
 # Aiming System
@@ -92,17 +92,28 @@ func _physics_process(delta: float):
 		
 	anim_time += delta * 12.0
 	
-	# If this is a remote network player (opponent playing from phone/other device)
+	# Timers tick down for BOTH Local and Remote players so spawn shields NEVER get stuck!
+	if spawn_invuln_timer > 0.0:
+		spawn_invuln_timer -= delta
+	if shield_timer > 0.0:
+		shield_timer -= delta
+		if shield_timer <= 0.0:
+			is_shielding = false
+	if dash_timer > 0.0:
+		dash_timer -= delta
+		if dash_timer <= 0.0:
+			is_dashing = false
+			
+	# REMOTE PLAYER REPLICATION
 	if not is_local_player:
 		if target_net_pos.length_squared() > 0.1:
-			global_position = global_position.lerp(target_net_pos, 22.0 * delta)
+			global_position = global_position.lerp(target_net_pos, 24.0 * delta)
 		queue_redraw()
 		return
 		
-	# --- LOCAL PLAYER CONTROLLER ---
+	# LOCAL PLAYER CONTROLS
 	if attack_cooldown > 0.0: attack_cooldown -= delta
 	if special_cooldown > 0.0: special_cooldown -= delta
-	if spawn_invuln_timer > 0.0: spawn_invuln_timer -= delta
 	if dash_cooldown_timer > 0.0: dash_cooldown_timer -= delta
 	
 	if class_type == Global.ClassType.MAGE and mage_charges < 3:
@@ -117,27 +128,20 @@ func _physics_process(delta: float):
 			rogue_recharge_timer = 0.0
 			
 	if is_dashing:
-		dash_timer -= delta
 		velocity = dash_dir * DASH_SPEED
 		move_and_slide()
 		_check_screen_wrap()
 		_sync_network_state(delta)
 		queue_redraw()
-		if dash_timer <= 0.0:
-			is_dashing = false
-			velocity = dash_dir * (SPEED * 0.5)
 		return
 		
 	if is_shielding:
-		shield_timer -= delta
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
 		if not is_on_floor():
 			velocity.y += GRAVITY * delta
 		move_and_slide()
 		_sync_network_state(delta)
 		queue_redraw()
-		if shield_timer <= 0.0:
-			is_shielding = false
 		return
 
 	var prefix = "p" + str(player_id) + "_"
@@ -200,7 +204,7 @@ func _physics_process(delta: float):
 
 func _sync_network_state(delta: float):
 	sync_timer += delta
-	if sync_timer >= 0.033: # 30 updates / sec
+	if sync_timer >= 0.033:
 		sync_timer = 0.0
 		NetworkManager.send_data({
 			"type": "sync_pos",
@@ -390,7 +394,7 @@ func _check_screen_wrap():
 		velocity.y = 80.0
 
 func take_hit(killer_id: int, _knockback_dir: Vector2):
-	if is_dead or spawn_invuln_timer > 0.0:
+	if is_dead or spawn_invuln_timer > 0.0 or is_dashing or is_shielding:
 		return
 		
 	is_dead = true
@@ -398,6 +402,7 @@ func take_hit(killer_id: int, _knockback_dir: Vector2):
 	collision_shape.set_deferred("disabled", true)
 	emit_signal("player_died", killer_id, player_id)
 	
+	# If this is the local client who was hit, broadcast death packet
 	if is_local_player:
 		NetworkManager.send_data({
 			"type": "player_hit",
@@ -413,7 +418,7 @@ func respawn(spawn_pos: Vector2):
 	visible = true
 	is_dashing = false
 	is_shielding = false
-	spawn_invuln_timer = 1.3
+	spawn_invuln_timer = 1.0
 	collision_shape.set_deferred("disabled", false)
 	_apply_class_defaults()
 	_squash_and_stretch(0.5, 1.5)

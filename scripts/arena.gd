@@ -24,6 +24,8 @@ var current_round: int = 1
 
 func _ready():
 	NetworkManager.connect("player_hit_event", Callable(self, "_on_network_player_hit"))
+	NetworkManager.connect("round_end_sync", Callable(self, "_on_round_end_sync"))
+	NetworkManager.connect("new_round_sync", Callable(self, "_on_new_round_sync"))
 	_start_new_match()
 
 func _input(event):
@@ -32,10 +34,6 @@ func _input(event):
 			_cycle_player_class(1)
 		elif event.keycode == KEY_F2:
 			_cycle_player_class(2)
-		elif event.keycode == KEY_F3:
-			_cycle_player_class(3)
-		elif event.keycode == KEY_F4:
-			_cycle_player_class(4)
 		elif event.keycode == KEY_R:
 			Global.reset_scores()
 			_start_new_match()
@@ -58,16 +56,13 @@ func _start_round():
 	is_round_over = false
 	_clear_projectiles()
 	
-	# Set touch controller to control my assigned player ID
 	if touch_controls:
 		touch_controls.my_input_prefix = "p" + str(NetworkManager.my_player_id) + "_"
 	
-	# Reset stocks
 	for p_id in Global.player_configs:
 		if Global.player_configs[p_id]["active"]:
 			player_stocks[p_id] = Global.max_stocks
 			
-	# Spawn active players
 	for p_id in Global.player_configs:
 		if not Global.player_configs[p_id]["active"]:
 			continue
@@ -126,23 +121,53 @@ func _check_round_end():
 			
 	if alive_players.size() <= 1 and not is_round_over:
 		is_round_over = true
-		if alive_players.size() == 1:
-			var winner_id = alive_players[0]
+		var winner_id = alive_players[0] if alive_players.size() == 1 else 0
+		
+		if winner_id > 0:
 			Global.player_scores[winner_id] += 1
 			_update_hud()
 			
-			if Global.player_scores[winner_id] >= Global.match_score_limit:
-				_show_banner("👑 PLAYER " + str(winner_id) + " WINS THE MATCH! 👑\nPress [R] to Restart", 999.0)
-			else:
-				_show_banner("👑 PLAYER " + str(winner_id) + " WINS ROUND " + str(current_round) + "! 👑", 2.2)
-				await get_tree().create_timer(2.5).timeout
-				current_round += 1
-				_start_round()
+			# Broadcast authoritative round end to all clients
+			NetworkManager.send_data({
+				"type": "round_end",
+				"winner": winner_id,
+				"p1_score": Global.player_scores[1],
+				"p2_score": Global.player_scores[2],
+				"round": current_round
+			})
+			
+			_display_round_winner(winner_id)
 		else:
 			_show_banner("DRAW ROUND!", 2.0)
 			await get_tree().create_timer(2.2).timeout
 			current_round += 1
 			_start_round()
+
+func _on_round_end_sync(winner_id: int, s1: int, s2: int, round_num: int):
+	is_round_over = true
+	Global.player_scores[1] = s1
+	Global.player_scores[2] = s2
+	current_round = round_num
+	_update_hud()
+	_display_round_winner(winner_id)
+
+func _display_round_winner(winner_id: int):
+	var winner_class = Global.CLASS_INFO[Global.player_configs[winner_id]["class"]]["name"]
+	var is_me = (winner_id == NetworkManager.my_player_id)
+	
+	if Global.player_scores[winner_id] >= Global.match_score_limit:
+		var txt = "👑 " + ("YOU WON THE MATCH!" if is_me else "PLAYER " + str(winner_id) + " (" + winner_class + ") WINS THE MATCH!") + " 👑"
+		_show_banner(txt, 999.0)
+	else:
+		var txt = "👑 " + ("YOU WON ROUND " + str(current_round) + "!" if is_me else "PLAYER " + str(winner_id) + " (" + winner_class + ") WINS ROUND " + str(current_round) + "!") + " 👑"
+		_show_banner(txt, 2.2)
+		await get_tree().create_timer(2.6).timeout
+		current_round += 1
+		_start_round()
+
+func _on_new_round_sync(round_num: int):
+	current_round = round_num
+	_start_round()
 
 func _show_banner(text: String, duration: float):
 	banner_label.text = text

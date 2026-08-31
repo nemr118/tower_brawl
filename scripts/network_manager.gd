@@ -4,11 +4,14 @@ extends Node
 ## Handles real-time WebSocket communication for multi-screen, multi-device gameplay.
 
 signal connected_to_server(player_id)
+signal player_joined_room(p_id, active_players)
+signal player_left_room(p_id, active_players)
 signal opponent_locked_in(p_id, class_type)
 signal player_state_received(p_id, data)
 signal projectile_spawned(data)
 signal player_hit_event(killer_id, victim_id)
-signal round_start_event(round_num)
+signal round_end_sync(winner_id, p1_score, p2_score, round_num)
+signal new_round_sync(round_num)
 
 var ws: WebSocketPeer = WebSocketPeer.new()
 var is_connected: bool = false
@@ -61,8 +64,8 @@ func _process(_delta):
 	elif state == WebSocketPeer.STATE_CLOSED:
 		if is_connected:
 			is_connected = false
-			print("❌ Disconnected from Relay Server. Reconnecting in 2s...")
-			await get_tree().create_timer(2.0).timeout
+			print("❌ Disconnected from Relay Server. Reconnecting in 1.5s...")
+			await get_tree().create_timer(1.5).timeout
 			_connect_to_server()
 
 func send_data(dict: Dictionary):
@@ -82,6 +85,23 @@ func _handle_packet(msg_str: String):
 		my_player_id = int(data.get("id", 1))
 		print("🎮 Assigned Player ID: ", my_player_id)
 		emit_signal("connected_to_server", my_player_id)
+		
+		# Process any already locked opponents
+		var locked_map = data.get("locked_players", {})
+		for p_str in locked_map:
+			var p_id = int(p_str)
+			if p_id != my_player_id:
+				emit_signal("opponent_locked_in", p_id, int(locked_map[p_str]))
+				
+	elif type == "player_joined":
+		var p_id = int(data.get("id", 1))
+		var active = data.get("active_players", [])
+		emit_signal("player_joined_room", p_id, active)
+		
+	elif type == "player_left":
+		var p_id = int(data.get("id", 1))
+		var active = data.get("active_players", [])
+		emit_signal("player_left_room", p_id, active)
 		
 	elif type == "lock_in":
 		var p_id = int(data.get("sender", 1))
@@ -103,6 +123,13 @@ func _handle_packet(msg_str: String):
 		var victim = int(data.get("victim", 1))
 		emit_signal("player_hit_event", killer, victim)
 		
-	elif type == "start_round":
+	elif type == "round_end":
+		var winner = int(data.get("winner", 1))
+		var s1 = int(data.get("p1_score", 0))
+		var s2 = int(data.get("p2_score", 0))
 		var r_num = int(data.get("round", 1))
-		emit_signal("round_start_event", r_num)
+		emit_signal("round_end_sync", winner, s1, s2, r_num)
+		
+	elif type == "new_round":
+		var r_num = int(data.get("round", 1))
+		emit_signal("new_round_sync", r_num)

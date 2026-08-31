@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Dual HTTP (8000) & HTTPS (8443) Web Server + Dual WS (8081) & WSS (8444) Real-Time Game Relay.
-Supports encrypted WebSockets for mobile browsers under HTTPS to prevent Mixed-Content blocks.
+Rock-Solid Dual HTTP/HTTPS & WS/WSS Game Relay with Slot-Based Lobby Management.
+Guarantees reliable reconnection, slot cleanup, and synchronized match state.
 """
 
 import http.server
@@ -15,6 +15,7 @@ import struct
 import json
 import os
 import sys
+import time
 
 HTTP_PORT = 8000
 HTTPS_PORT = 8443
@@ -24,9 +25,11 @@ BUILD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build", "w
 CERT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cert.pem")
 KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "key.pem")
 
-connected_clients = []
-clients_lock = threading.Lock()
-next_player_id = 1
+# 4-Player Slot Array: slots[0] is Player 1, slots[1] is Player 2, etc.
+player_slots = [None, None, None, None]
+player_classes = {}
+player_locked = {}
+slots_lock = threading.Lock()
 
 class WebSocketHandler:
     GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -34,6 +37,7 @@ class WebSocketHandler:
     @classmethod
     def handle_handshake(cls, client_socket):
         try:
+            client_socket.settimeout(5.0)
             request = client_socket.recv(2048).decode('utf-8', errors='ignore')
             headers = {}
             for line in request.split("\r\n"):
@@ -53,9 +57,9 @@ class WebSocketHandler:
                 f"Sec-WebSocket-Accept: {accept_key}\r\n\r\n"
             )
             client_socket.sendall(response.encode('utf-8'))
+            client_socket.settimeout(None)
             return True
         except Exception as e:
-            print(f"Handshake error: {e}")
             return False
 
     @classmethod
@@ -66,7 +70,7 @@ class WebSocketHandler:
                 return None
             b1, b2 = head[0], head[1]
             opcode = b1 & 0x0f
-            if opcode == 8:
+            if opcode == 8: # Close
                 return None
 
             masked = (b2 & 0x80) != 0
@@ -117,45 +121,92 @@ class WebSocketHandler:
         except Exception:
             pass
 
-def broadcast(sender_sock, msg_str):
-    with clients_lock:
-        for client in connected_clients:
-            if client != sender_sock:
-                WebSocketHandler.send_frame(client, msg_str)
+def broadcast_to_all(msg_str, exclude_sock=None):
+    with slots_lock:
+        for sock in player_slots:
+            if sock and sock != exclude_sock:
+                WebSocketHandler.send_frame(sock, msg_str)
 
 def ws_client_thread(client_sock, addr, proto_label):
-    global next_player_id
     if not WebSocketHandler.handle_handshake(client_sock):
-        try:
-            client_sock.close()
-        except Exception:
-            pass
+        try: client_sock.close()
+        except: pass
         return
 
-    with clients_lock:
-        assigned_id = next_player_id
-        next_player_id = (next_player_id % 4) + 1
-        connected_clients.append(client_sock)
+    assigned_id = None
+    with slots_lock:
+        for i in range(4):
+            if player_slots[i] is None:
+                player_slots[i] = client_sock
+                assigned_id = i + 1
+                break
 
-    print(f"🎮 [{proto_label}] Player {assigned_id} connected from {addr} (Total: {len(connected_clients)})")
-    
-    assign_msg = json.dumps({"type": "assign_id", "id": assigned_id})
-    WebSocketHandler.send_frame(client_sock, assign_msg)
+    if assigned_id is None:
+        print(f"⚠️ Server full (4 players). Rejecting connection from {addr}")
+        try: client_sock.close()
+        except: pass
+        return
 
-    while True:
-        msg = WebSocketHandler.read_frame(client_sock)
-        if msg is None:
-            break
-        broadcast(client_sock, msg)
+    active_ids = [i+1 for i in range(4) if player_slots[i] is not None]
+    print(f"🎮 [{proto_label}] Player {assigned_id} CONNECTED from {addr} (Active: {active_ids})")
 
-    with clients_lock:
-        if client_sock in connected_clients:
-            connected_clients.remove(client_sock)
-    print(f"🔌 [{proto_label}] Player {assigned_id} disconnected (Remaining: {len(connected_clients)})")
+    # Send assigned ID to client
+    assign_packet = json.dumps({
+        "type": "assign_id",
+        "id": assigned_id,
+        "active_players": active_ids,
+        "locked_players": player_locked
+    })
+    WebSocketHandler.send_frame(client_sock, assign_packet)
+
+    # Notify others that a new player joined
+    join_packet = json.dumps({
+        "type": "player_joined",
+        "id": assigned_id,
+        "active_players": active_ids
+    })
+    broadcast_to_all(join_packet, exclude_sock=client_sock)
+
     try:
-        client_sock.close()
-    except Exception:
+        while True:
+            msg = WebSocketHandler.read_frame(client_sock)
+            if msg is None:
+                break
+            
+            # Intercept lobby lock-in to store in server state
+            try:
+                data = json.loads(msg)
+                if data.get("type") == "lock_in":
+                    p_class = data.get("class", 0)
+                    with slots_lock:
+                        player_locked[assigned_id] = p_class
+            except Exception:
+                pass
+                
+            broadcast_to_all(msg, exclude_sock=client_sock)
+    except Exception as e:
         pass
+
+    # Clean up slot on disconnect
+    with slots_lock:
+        if player_slots[assigned_id - 1] == client_sock:
+            player_slots[assigned_id - 1] = None
+        if assigned_id in player_locked:
+            del player_locked[assigned_id]
+        active_ids = [i+1 for i in range(4) if player_slots[i] is not None]
+
+    print(f"🔌 [{proto_label}] Player {assigned_id} DISCONNECTED (Remaining: {active_ids})")
+    
+    # Broadcast player left
+    leave_packet = json.dumps({
+        "type": "player_left",
+        "id": assigned_id,
+        "active_players": active_ids
+    })
+    broadcast_to_all(leave_packet)
+
+    try: client_sock.close()
+    except: pass
 
 def start_ws_server():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -184,7 +235,7 @@ def start_wss_server():
             client, addr = server.accept()
             t = threading.Thread(target=ws_client_thread, args=(client, addr, "WSS"), daemon=True)
             t.start()
-        except Exception as e:
+        except Exception:
             pass
 
 class GodotHTTPHandler(http.server.SimpleHTTPRequestHandler):
@@ -228,10 +279,10 @@ if __name__ == "__main__":
 
     local_ip = get_local_ip()
     print("\n" + "═"*65)
-    print("🎮 TOWERBRAWL DUAL WS/WSS & HTTP/HTTPS MULTIPLAYER RUNNING!")
+    print("🎮 TOWERBRAWL BULLETPROOF MULTIPLAYER SERVER RUNNING!")
     print(f"🔒 HTTPS (Phone):  https://{local_ip}:{HTTPS_PORT}")
     print(f"🌐 HTTP (Desktop): http://{local_ip}:{HTTP_PORT}")
-    print(f"⚡ WS Port:        {WS_PORT} (Plain) / {WSS_PORT} (Secure SSL)")
+    print(f"⚡ WS Relay:       ws://{local_ip}:{WS_PORT} & wss://{local_ip}:{WSS_PORT}")
     print("═"*65 + "\n")
 
     threading.Thread(target=start_ws_server, daemon=True).start()

@@ -51,6 +51,8 @@ const SKILL_DETAILS = {
 func _ready():
 	local_player_id = NetworkManager.my_player_id
 	NetworkManager.connect("connected_to_server", Callable(self, "_on_connected_to_server"))
+	NetworkManager.connect("player_joined_room", Callable(self, "_on_player_joined"))
+	NetworkManager.connect("player_left_room", Callable(self, "_on_player_left"))
 	NetworkManager.connect("opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
 	
 	_update_showcase()
@@ -58,7 +60,17 @@ func _ready():
 
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
-	print("🎯 Character Select updated local_player_id to: ", local_player_id)
+	print("🎯 Local player assigned to Slot P", local_player_id)
+	_update_roster()
+
+func _on_player_joined(p_id: int, _active):
+	print("👋 Player ", p_id, " joined the match room!")
+	_update_roster()
+
+func _on_player_left(p_id: int, _active):
+	print("🚪 Player ", p_id, " left the room.")
+	if p_id in locked_players:
+		locked_players.erase(p_id)
 	_update_roster()
 
 func _on_opponent_locked_in(opp_id: int, opp_class: int):
