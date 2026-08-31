@@ -1,10 +1,14 @@
 extends Node2D
 
+@onready var platforms_node = $Platforms
+var powerup_node: Area2D = null
+var is_arena_rotating: bool = false
+
 const PlayerScene = preload("res://scenes/player.tscn")
 
 var spawn_points = [
-	Vector2(90, 260),
-	Vector2(550, 260),
+	Vector2(110, 200),
+	Vector2(530, 200),
 	Vector2(170, 100),
 	Vector2(470, 100)
 ]
@@ -201,3 +205,68 @@ func _update_panel(panel: Control, p_id: int):
 	stock_lbl.text = hearts
 	
 	score_lbl.text = "👑 " + str(Global.player_scores[p_id])
+
+func _host_spawn_powerup():
+	if not is_instance_valid(powerup_node) and not is_arena_rotating:
+		Global.send_net_data({"type": "spawn_powerup", "x": 320.0, "y": 40.0})
+		_spawn_powerup(320.0, 40.0)
+
+func _on_net_spawn_powerup(x: float, y: float):
+	if Global.my_player_id != 1:
+		_spawn_powerup(x, y)
+
+func _spawn_powerup(px: float, py: float):
+	if is_instance_valid(powerup_node):
+		return
+		
+	powerup_node = Area2D.new()
+	powerup_node.global_position = Vector2(px, py)
+	powerup_node.collision_mask = 2
+	
+	var col = CollisionShape2D.new()
+	var shape = CircleShape2D.new()
+	shape.radius = 16.0
+	col.shape = shape
+	powerup_node.add_child(col)
+	
+	var vis = ColorRect.new()
+	vis.color = Color(1.0, 0.8, 0.0)
+	vis.custom_minimum_size = Vector2(24, 24)
+	vis.position = Vector2(-12, -12)
+	powerup_node.add_child(vis)
+	
+	var lbl = Label.new()
+	lbl.text = "🔄"
+	lbl.position = Vector2(-10, -12)
+	lbl.add_theme_font_size_override("font_size", 16)
+	powerup_node.add_child(lbl)
+	
+	add_child(powerup_node)
+	powerup_node.connect("body_entered", Callable(self, "_on_powerup_body_entered"))
+
+func _on_powerup_body_entered(body: Node2D):
+	if body.is_in_group("players") and body.player_id == Global.my_player_id:
+		Global.send_net_data({"type": "activate_powerup", "powerup_id": 1})
+		_activate_rotation()
+
+func _on_net_activate_powerup(pid: int):
+	_activate_rotation()
+	
+func _activate_rotation():
+	if is_instance_valid(powerup_node):
+		powerup_node.queue_free()
+		powerup_node = null
+		
+	if is_arena_rotating:
+		return
+		
+	is_arena_rotating = true
+	_show_banner("🌀 ARENA SHIFT! 🌀", 2.5)
+	
+	var tween = create_tween()
+	tween.set_trans(Tween.TRANS_SINE)
+	tween.set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(platforms_node, "rotation", platforms_node.rotation + PI, 2.5)
+	
+	await get_tree().create_timer(2.5).timeout
+	is_arena_rotating = false

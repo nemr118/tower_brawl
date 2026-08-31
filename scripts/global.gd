@@ -80,6 +80,8 @@ var player_names: Dictionary = {}
 var my_player_name: String = ""
 
 signal net_names_updated()
+signal net_spawn_powerup(x, y)
+signal net_activate_powerup(powerup_id)
 signal net_force_start()
 
 func _ready():
@@ -165,6 +167,10 @@ func _handle_net_packet(msg_str: String):
 		
 	var type = data.get("type", "")
 	
+	if type == "spawn_powerup":
+		emit_signal("net_spawn_powerup", data.get("x", 0.0), data.get("y", 0.0))
+	elif type == "activate_powerup":
+		emit_signal("net_activate_powerup", data.get("powerup_id", 0))
 	if type == "force_start":
 		emit_signal("net_force_start")
 	

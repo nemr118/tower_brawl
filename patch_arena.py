@@ -1,50 +1,12 @@
-[gd_scene load_steps=10 format=3]
+import re
 
-[ext_resource type="Script" path="res://scripts/arena.gd" id="1_arena"]
-[ext_resource type="PackedScene" path="res://scenes/touch_controls.tscn" id="3_touch"]
+with open("scenes/arena.tscn", "r") as f:
+    text = f.read()
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
-size = Vector2(160, 50)
+# Replace the sub_resource for ground
+text = text.replace('size = Vector2(640, 50)', 'size = Vector2(160, 50)')
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_ledge"]
-size = Vector2(110, 12)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_high_ledge"]
-size = Vector2(90, 12)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_center"]
-size = Vector2(130, 14)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_apex"]
-size = Vector2(80, 10)
-
-[sub_resource type="LabelSettings" id="LabelSettings_banner"]
-font_size = 20
-outline_size = 4
-outline_color = Color(0, 0, 0, 1)
-
-[sub_resource type="LabelSettings" id="LabelSettings_hud"]
-font_size = 10
-outline_size = 3
-outline_color = Color(0, 0, 0, 1)
-
-[node name="Arena" type="Node2D"]
-script = ExtResource("1_arena")
-
-[node name="Background" type="ColorRect" parent="."]
-offset_right = 640.0
-offset_bottom = 360.0
-color = Color(0.08, 0.08, 0.12, 1)
-
-[node name="MoonDecor" type="ColorRect" parent="Background"]
-layout_mode = 0
-offset_left = 285.0
-offset_top = 65.0
-offset_right = 355.0
-offset_bottom = 135.0
-color = Color(0.18, 0.2, 0.3, 0.35)
-
-[node name="Platforms" type="Node2D" parent="."]
+platforms_str = """[node name="Platforms" type="Node2D" parent="."]
 position = Vector2(320, 180)
 
 [node name="GroundLeft" type="StaticBody2D" parent="Platforms"]
@@ -214,119 +176,16 @@ color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterApex"]
 shape = SubResource("RectangleShape2D_apex")
+"""
 
-[node name="HUD" type="CanvasLayer" parent="."]
+start_idx = text.find('[node name="Platforms" type="Node2D" parent="."]')
+end_idx = text.find('[node name="HUD" type="CanvasLayer" parent="."]')
 
-[node name="TopBar" type="HBoxContainer" parent="HUD"]
-anchors_preset = 10
-anchor_right = 1.0
-offset_left = 10.0
-offset_top = 6.0
-offset_right = -10.0
-offset_bottom = 44.0
-grow_horizontal = 2
-theme_override_constants/separation = 8
+if start_idx != -1 and end_idx != -1:
+    text = text[:start_idx] + platforms_str + "\n" + text[end_idx:]
+    with open("scenes/arena.tscn", "w") as f:
+        f.write(text)
+    print("Patch applied")
+else:
+    print("Could not find start/end")
 
-[node name="P1Panel" type="VBoxContainer" parent="HUD/TopBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="NameLabel" type="Label" parent="HUD/TopBar/P1Panel"]
-layout_mode = 2
-text = "P1 🏹"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="StockLabel" type="Label" parent="HUD/TopBar/P1Panel"]
-layout_mode = 2
-text = "❤️❤️❤️"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P1Panel"]
-layout_mode = 2
-text = "👑 0"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="P2Panel" type="VBoxContainer" parent="HUD/TopBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="NameLabel" type="Label" parent="HUD/TopBar/P2Panel"]
-layout_mode = 2
-text = "P2 ⚔️"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="StockLabel" type="Label" parent="HUD/TopBar/P2Panel"]
-layout_mode = 2
-text = "❤️❤️❤️"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P2Panel"]
-layout_mode = 2
-text = "👑 0"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="P3Panel" type="VBoxContainer" parent="HUD/TopBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="NameLabel" type="Label" parent="HUD/TopBar/P3Panel"]
-layout_mode = 2
-text = "P3 🔮"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="StockLabel" type="Label" parent="HUD/TopBar/P3Panel"]
-layout_mode = 2
-text = "❤️❤️❤️"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P3Panel"]
-layout_mode = 2
-text = "👑 0"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="P4Panel" type="VBoxContainer" parent="HUD/TopBar"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="NameLabel" type="Label" parent="HUD/TopBar/P4Panel"]
-layout_mode = 2
-text = "P4 🗡️"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="StockLabel" type="Label" parent="HUD/TopBar/P4Panel"]
-layout_mode = 2
-text = "❤️❤️❤️"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P4Panel"]
-layout_mode = 2
-text = "👑 0"
-label_settings = SubResource("LabelSettings_hud")
-
-[node name="CenterBanner" type="Control" parent="HUD"]
-layout_mode = 3
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -220.0
-offset_top = -40.0
-offset_right = 220.0
-offset_bottom = 40.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="BannerLabel" type="Label" parent="HUD/CenterBanner"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "4-PLAYER BATTLE - FIGHT!"
-label_settings = SubResource("LabelSettings_banner")
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="TouchControls" parent="." instance=ExtResource("3_touch")]
