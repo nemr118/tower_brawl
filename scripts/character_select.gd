@@ -164,8 +164,12 @@ func _update_roster():
 	_update_player_card(p4_card, 4)
 
 func _update_player_card(card: Control, p_id: int):
-	var display_name = Global.player_names.get(p_id, "Player " + str(p_id))
 	var is_active = (p_id in active_player_ids or p_id == local_player_id)
+	
+	var display_name = Global.player_names.get(p_id, "Player " + str(p_id))
+	if p_id == local_player_id and Global.my_player_name != "":
+		display_name = Global.my_player_name
+		
 	var name_lbl = card.get_node("Name")
 	var status_lbl = card.get_node("Status")
 	var icon_lbl = card.get_node("Icon")

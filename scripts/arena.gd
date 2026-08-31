@@ -185,6 +185,9 @@ func _update_panel(panel: Control, p_id: int):
 	var score_lbl = panel.get_node("ScoreLabel")
 	
 	var disp_name = Global.player_names.get(p_id, "P" + str(p_id))
+	if p_id == Global.my_player_id and Global.my_player_name != "":
+		disp_name = Global.my_player_name
+		
 	name_lbl.text = disp_name + (" (You)" if p_id == Global.my_player_id else "") + " " + c_info["icon"]
 	name_lbl.modulate = c_info["color"]
 	
