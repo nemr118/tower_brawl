@@ -136,6 +136,7 @@ def broadcast(msg, exclude=None):
                     player_locked.pop(pid, None)
 
 def ws_client_thread(sock, addr, label, skip_handshake=False):
+    global global_match_state, global_playing_players, global_waiting_players, global_current_round, global_player_scores, global_player_stocks, global_alive_players, global_is_round_over
     if not skip_handshake and not ws_handshake(sock):
         try: sock.close()
         except: pass
