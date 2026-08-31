@@ -243,7 +243,7 @@ func _trigger_start(player_count: int):
 		force_start_btn.visible = false
 		
 	# Kick inactive players who didn't lock in
-	var final_active = []
+	var final_active: Array[int] = []
 	for p_id in active_player_ids:
 		if p_id in locked_players:
 			final_active.append(p_id)
