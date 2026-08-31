@@ -140,12 +140,25 @@ func _save_player_id():
 	# Persist our slot number so we can reclaim it after a page reload / reconnect
 	if OS.has_feature("web"):
 		JavaScriptBridge.eval("localStorage.setItem('towerbrawl_pid', '" + str(my_player_id) + "')", true)
+	else:
+		var f = FileAccess.open("user://towerbrawl_pid.sav", FileAccess.WRITE)
+		if f:
+			f.store_string(str(my_player_id))
+			f.close()
 
 func _load_saved_player_id() -> int:
 	if OS.has_feature("web"):
 		var val = JavaScriptBridge.eval("localStorage.getItem('towerbrawl_pid')", true)
 		if val != null and str(val) != "null" and str(val) != "":
 			return int(str(val))
+	else:
+		if FileAccess.file_exists("user://towerbrawl_pid.sav"):
+			var f = FileAccess.open("user://towerbrawl_pid.sav", FileAccess.READ)
+			if f:
+				var val = f.get_as_text()
+				f.close()
+				if val != "":
+					return int(val)
 	return 0  # 0 = no saved ID
 
 func _process(_delta):
