@@ -134,6 +134,9 @@ func _on_player_died(killer_id: int, victim_id: int):
 		_check_round_end()
 
 func _check_round_end():
+	if not Global.is_host():
+		return # Let the host evaluate round end to prevent desyncs!
+		
 	var alive_players = []
 	for p_id in player_stocks:
 		if player_stocks[p_id] > 0:
@@ -161,9 +164,17 @@ func _check_round_end():
 			current_round += 1
 			_start_round()
 
-func _on_round_end_sync(winner_id: int, s1: int, s2: int, round_num: int):
+func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int):
+	if is_round_over:
+		return # Ignore duplicate network triggers
+		
 	is_round_over = true
 	current_round = round_num
+	
+	# Sync the scores from the host
+	for p_id in scores:
+		Global.player_scores[int(p_id)] = int(scores[p_id])
+		
 	_update_hud()
 	_display_round_winner(winner_id)
 

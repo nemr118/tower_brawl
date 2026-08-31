@@ -21,7 +21,7 @@ signal net_opponent_locked_in(player_id, class_type)
 signal net_player_state_received(player_id, data)
 signal net_projectile_spawned(data)
 signal net_player_hit(killer_id, victim_id)
-signal net_round_end(winner_id, p1_score, p2_score, round_num)
+signal net_round_end(winner_id, scores, round_num)
 signal net_new_round(round_num)
 
 enum ClassType {
@@ -334,14 +334,23 @@ func _handle_net_packet(msg_str: String):
 		
 	elif type == "round_end":
 		var winner = int(data.get("winner", 1))
-		var s1 = int(data.get("p1_score", 0))
-		var s2 = int(data.get("p2_score", 0))
+		var scores = data.get("scores", {})
 		var r_num = int(data.get("round", 1))
-		emit_signal("net_round_end", winner, s1, s2, r_num)
+		emit_signal("net_round_end", winner, scores, r_num)
 		
 	elif type == "new_round":
 		var r_num = int(data.get("round", 1))
 		emit_signal("net_new_round", r_num)
+
+
+func is_host() -> bool:
+	var lowest = 999
+	for p_id in active_players:
+		if p_id < lowest:
+			lowest = p_id
+	if active_players.size() == 0:
+		return true
+	return my_player_id == lowest
 
 func reset_scores():
 	player_scores = {1: 0, 2: 0, 3: 0, 4: 0}
