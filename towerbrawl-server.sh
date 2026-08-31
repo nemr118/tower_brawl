@@ -1,14 +1,16 @@
 #!/bin/bash
-# Dedicated Background Server & Tunnel Manager for TowerBrawl
+# TowerBrawl Dedicated Server wrapper
 
 cd /home/nemr/Work/tower_brawl
+
+# Start Python server
 python3 serve_game.py &
 PYTHON_PID=$!
 
-trap "kill $PYTHON_PID; exit 0" SIGINT SIGTERM EXIT
+sleep 1
+echo "Starting cloudflare tunnel..."
+./cloudflared tunnel --url http://localhost:8000
 
-while true; do
-    echo "Starting localtunnel on towerbrawl-server.loca.lt..."
-    npx localtunnel --port 8000 --subdomain towerbrawl-server
-    sleep 3
-done
+# Cleanup trap
+trap "kill $PYTHON_PID; exit 0" SIGINT SIGTERM EXIT
+wait $PYTHON_PID

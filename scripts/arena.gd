@@ -42,7 +42,7 @@ var current_round: int = 1
 # ------------------------------------------------------------------------------
 func _ready():
 	Global.connect("net_player_died", Callable(self, "_on_net_player_died"))
-		Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
+	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
 	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
 	Global.connect("net_new_round", Callable(self, "_on_new_round_sync"))
 	Global.connect("net_return_to_lobby", Callable(self, "_on_return_to_lobby"))
@@ -106,7 +106,7 @@ func _start_round():
 			player_instances[p_id] = p
 			
 	_update_hud()
-		_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
+	_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
 	if Global.is_spectator:
 		await get_tree().create_timer(1.5).timeout
 		_show_banner("SPECTATING... WAITING FOR ROUND END", 999.0)
@@ -167,11 +167,11 @@ func _display_round_winner(winner_id: int):
 	
 	if Global.player_scores[winner_id] >= Global.match_score_limit:
 		var w_name = Global.player_names.get(winner_id, "PLAYER " + str(winner_id))
-		var txt = "👑 " + ("YOU WON THE MATCH!" if is_me else w_name + " (" + winner_class + ") WINS THE MATCH!") + " 👑"
+		var txt = "*** " + ("YOU WON THE MATCH!" if is_me else w_name + " (" + winner_class + ") WINS THE MATCH!") + " ***"
 		_show_banner(txt, 999.0)
 	else:
 		var w_name = Global.player_names.get(winner_id, "PLAYER " + str(winner_id))
-		var txt = "👑 " + ("YOU WON ROUND " + str(current_round) + "!" if is_me else w_name + " (" + winner_class + ") WINS ROUND " + str(current_round) + "!") + " 👑"
+		var txt = "*** " + ("YOU WON ROUND " + str(current_round) + "!" if is_me else w_name + " (" + winner_class + ") WINS ROUND " + str(current_round) + "!") + " ***"
 		_show_banner(txt, 2.2)
 		await get_tree().create_timer(2.6).timeout
 		current_round += 1
@@ -216,19 +216,19 @@ func _update_panel(panel: Control, p_id: int):
 	if p_id == Global.my_player_id and Global.my_player_name != "":
 		disp_name = Global.my_player_name
 		
-	name_lbl.text = disp_name + (" (You)" if p_id == Global.my_player_id else "") + " " + c_info["icon"]
+	name_lbl.text = disp_name + (" (You)" if p_id == Global.my_player_id else "") + " [" + c_info["name"] + "]"
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)
 	var hearts = ""
 	for i in range(Global.max_stocks):
 		if i < stocks:
-			hearts += "❤️"
+			hearts += "* "
 		else:
-			hearts += "🖤"
-	stock_lbl.text = hearts
+			hearts += "  "
+	stock_lbl.text = "LIVES: " + str(stocks)
 	
-	score_lbl.text = "👑 " + str(Global.player_scores[p_id])
+	score_lbl.text = "SCORE: " + str(Global.player_scores[p_id])
 
 func _host_spawn_powerup():
 	if not is_instance_valid(powerup_node) and not is_arena_rotating:
@@ -260,7 +260,7 @@ func _spawn_powerup(px: float, py: float):
 	powerup_node.add_child(vis)
 	
 	var lbl = Label.new()
-	lbl.text = "🔄"
+	lbl.text = "+"
 	lbl.position = Vector2(-10, -12)
 	lbl.add_theme_font_size_override("font_size", 16)
 	powerup_node.add_child(lbl)
@@ -285,7 +285,7 @@ func _activate_rotation():
 		return
 		
 	is_arena_rotating = true
-	_show_banner("🌀 ARENA SHIFT! 🌀", 2.5)
+	_show_banner("** ARENA SHIFT! **", 2.5)
 	
 	var tween = create_tween()
 	tween.set_trans(Tween.TRANS_SINE)

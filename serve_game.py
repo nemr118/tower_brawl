@@ -80,7 +80,7 @@ def ws_handshake(sock):
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
         ).encode())
-        sock.settimeout(None)
+        sock.settimeout(10.0)
         return True
     except Exception:
         return False
@@ -167,7 +167,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         player_names[reclaim_id] = str(hello["name"])[:12]
     except Exception:
         pass
-    sock.settimeout(None)
+    sock.settimeout(10.0)
 
     assigned_id = None
     with lobby_lock:
@@ -232,6 +232,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
             if msg is None:
                 break
             if not msg:
+                continue
+            if msg.strip() == '{"type":"ping"}' or msg.strip() == '{"type": "ping"}':
                 continue
             try:
                 data = json.loads(msg)

@@ -43,24 +43,24 @@ const CHAMPION_KEYS = [
 
 const SKILL_DETAILS = {
 	Global.ClassType.RANGER: {
-		"primary": "🏹 Precision Bow (3 Arrows - Pluck to reload, dash to catch)",
-		"special": "💨 Backflip Retreat Shot (Vaults backward while shooting forward)"
+		"primary": "Precision Bow (3 Arrows - Pluck to reload, dash to catch)",
+		"special": "Backflip Retreat Shot (Vaults backward while shooting forward)"
 	},
 	Global.ClassType.KNIGHT: {
-		"primary": "⚔️ Broadsword Slash (Heavy melee arc destroys projectiles)",
-		"special": "🛡️ Shield Parry (Reflects incoming arrows & firebolts at attacker)"
+		"primary": "Broadsword Slash (Heavy melee arc destroys projectiles)",
+		"special": "Shield Parry (Reflects incoming arrows & firebolts at attacker)"
 	},
 	Global.ClassType.MAGE: {
-		"primary": "🔮 Arcane Firebolt (3 Exploding fire charges)",
+		"primary": "Arcane Firebolt (3 Exploding fire charges)",
 		"special": "Void Blink (Instantaneous 95px teleport in aim direction)"
 	},
 	Global.ClassType.ROGUE: {
-		"primary": "🗡️ Thrown Kunai (4 Rapid throwing blades)",
-		"special": "🌑 Shadow Ambush (Hyper-dash slices through all enemies)"
+		"primary": "Thrown Kunai (4 Rapid throwing blades)",
+		"special": "Shadow Ambush (Hyper-dash slices through all enemies)"
 	},
 	Global.ClassType.DRUID: {
-		"primary": "🌿 Nature's Thorns / Bear Swipe",
-		"special": "🐻 Toggle Bear Form (Ground) / 🥚 Phoenix Shield (Air)"
+		"primary": "Nature's Thorns / Bear Swipe",
+		"special": "Toggle Bear Form (Ground) / Phoenix Shield (Air)"
 	}
 }
 
@@ -297,6 +297,7 @@ func _trigger_start(player_count: int):
 	for p_id in active_player_ids:
 		if p_id in locked_players:
 			final_active.append(p_id)
+			Global.player_configs[p_id]["active"] = true
 		else:
 			Global.player_configs[p_id]["active"] = false
 			
@@ -307,14 +308,14 @@ func _trigger_start(player_count: int):
 func _start_reveal_countdown(player_count: int):
 	banner_label.visible = true
 	var count_str = str(player_count) + "-PLAYER BATTLE"
-	banner_label.text = "" + count_str + " READY! ⚡\nRevealing Champions in 3..."
+	banner_label.text = "" + count_str + " READY!\nRevealing Champions in 3..."
 	await get_tree().create_timer(1.0).timeout
-	banner_label.text = "" + count_str + " READY! ⚡\nRevealing Champions in 2..."
+	banner_label.text = "" + count_str + " READY!\nRevealing Champions in 2..."
 	await get_tree().create_timer(1.0).timeout
-	banner_label.text = "" + count_str + " READY! ⚡\nRevealing Champions in 1..."
+	banner_label.text = "" + count_str + " READY!\nRevealing Champions in 1..."
 	await get_tree().create_timer(1.0).timeout
 	
-	banner_label.text = "CHAMPIONS REVEALED! ENTERING ARENA! 💥"
+	banner_label.text = "CHAMPIONS REVEALED! ENTERING ARENA! "
 	_update_roster()
 	
 	await get_tree().create_timer(1.6).timeout

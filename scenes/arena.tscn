@@ -233,17 +233,17 @@ size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P1Panel"]
 layout_mode = 2
-text = "P1 🏹"
+text = "P1"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P1Panel"]
 layout_mode = 2
-text = "❤️❤️❤️"
+text = "LIVES: 3"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="ScoreLabel" type="Label" parent="HUD/TopBar/P1Panel"]
 layout_mode = 2
-text = "👑 0"
+text = "SCORE: 0"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="P2Panel" type="VBoxContainer" parent="HUD/TopBar"]
@@ -252,17 +252,17 @@ size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P2Panel"]
 layout_mode = 2
-text = "P2 ⚔️"
+text = "P2"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P2Panel"]
 layout_mode = 2
-text = "❤️❤️❤️"
+text = "LIVES: 3"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="ScoreLabel" type="Label" parent="HUD/TopBar/P2Panel"]
 layout_mode = 2
-text = "👑 0"
+text = "SCORE: 0"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="P3Panel" type="VBoxContainer" parent="HUD/TopBar"]
@@ -271,17 +271,17 @@ size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P3Panel"]
 layout_mode = 2
-text = "P3 🔮"
+text = "P3"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P3Panel"]
 layout_mode = 2
-text = "❤️❤️❤️"
+text = "LIVES: 3"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="ScoreLabel" type="Label" parent="HUD/TopBar/P3Panel"]
 layout_mode = 2
-text = "👑 0"
+text = "SCORE: 0"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="P4Panel" type="VBoxContainer" parent="HUD/TopBar"]
@@ -290,17 +290,17 @@ size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P4Panel"]
 layout_mode = 2
-text = "P4 🗡️"
+text = "P4"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P4Panel"]
 layout_mode = 2
-text = "❤️❤️❤️"
+text = "LIVES: 3"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="ScoreLabel" type="Label" parent="HUD/TopBar/P4Panel"]
 layout_mode = 2
-text = "👑 0"
+text = "SCORE: 0"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="CenterBanner" type="Control" parent="HUD"]

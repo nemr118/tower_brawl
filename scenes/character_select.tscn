@@ -53,7 +53,7 @@ anchor_right = 1.0
 offset_top = 8.0
 offset_bottom = 30.0
 grow_horizontal = 2
-text = "⚡ 4-PLAYER TOWERBRAWL: CHOOSE YOUR CHAMPION ⚡"
+text = "4-PLAYER TOWERBRAWL: CHOOSE YOUR CHAMPION"
 label_settings = SubResource("LabelSettings_title")
 horizontal_alignment = 1
 
@@ -83,7 +83,7 @@ anchor_right = 1.0
 offset_top = 8.0
 offset_bottom = 34.0
 grow_horizontal = 2
-text = "🏹 RANGER"
+text = "RANGER"
 label_settings = SubResource("LabelSettings_champ_name")
 horizontal_alignment = 1
 
@@ -125,12 +125,12 @@ theme_override_constants/separation = 6
 [node name="PrimaryLabel" type="Label" parent="CardShowcase/Skills"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 10
-text = "🏹 Primary: Precision Bow (3 Arrows)"
+text = "Primary: Precision Bow (3 Arrows)"
 
 [node name="SpecialLabel" type="Label" parent="CardShowcase/Skills"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 10
-text = "💨 Special: Backflip Retreat Shot"
+text = "Special: Backflip Retreat Shot"
 
 [node name="NavButtons" type="HBoxContainer" parent="CardShowcase"]
 layout_mode = 1
@@ -171,7 +171,7 @@ offset_bottom = -10.0
 grow_horizontal = 2
 grow_vertical = 0
 theme_override_font_sizes/font_size = 13
-text = "⚡ LOCK IN CHAMPION"
+text = "LOCK IN CHAMPION"
 
 [node name="Roster" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -193,7 +193,7 @@ offset_top = 10.0
 offset_right = 38.0
 offset_bottom = 40.0
 theme_override_font_sizes/font_size = 18
-text = "🏹"
+text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
 
@@ -227,7 +227,7 @@ offset_top = 10.0
 offset_right = 38.0
 offset_bottom = 40.0
 theme_override_font_sizes/font_size = 18
-text = "🔒"
+text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
 
@@ -261,7 +261,7 @@ offset_top = 10.0
 offset_right = 38.0
 offset_bottom = 40.0
 theme_override_font_sizes/font_size = 18
-text = "🔒"
+text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
 
@@ -295,7 +295,7 @@ offset_top = 10.0
 offset_right = 38.0
 offset_bottom = 40.0
 theme_override_font_sizes/font_size = 18
-text = "🔒"
+text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
 
@@ -339,7 +339,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-text = "⚡ ALL PLAYERS LOCKED IN! ⚡"
+text = "ALL PLAYERS LOCKED IN!"
 label_settings = SubResource("LabelSettings_banner")
 horizontal_alignment = 1
 vertical_alignment = 1

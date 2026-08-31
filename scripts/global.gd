@@ -185,6 +185,8 @@ func _process(_delta):
 	var state = ws.get_ready_state()
 	
 	if state == WebSocketPeer.STATE_OPEN:
+		if Engine.get_process_frames() % 60 == 0:
+			send_net_data({"type": "ping"})
 		if not is_connected:
 			is_connected = true
 			is_connecting = false
