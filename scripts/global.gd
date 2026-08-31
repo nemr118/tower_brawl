@@ -58,6 +58,13 @@ const CLASS_INFO = {
 		"icon": "🗡️",
 		"color": Color(0.75, 0.3, 0.95),
 		"desc": "Rapid throwing kunais, shadow dash ambushes through enemies."
+	},
+	ClassType.DRUID: {
+		"name": "Druid",
+		"title": "Shape Shifter",
+		"icon": "🐻",
+		"color": Color(0.6, 0.4, 0.1),
+		"desc": "Throws thorns. Bear Form. Dash turns into a Storm Crow. Shield is Phoenix Egg."
 	}
 }
 
