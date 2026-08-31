@@ -240,11 +240,12 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         for i in range(1, 5):
                             global_player_scores[i] = 0
                             global_player_stocks[i] = 3
-                        global_alive_players = set(active)
+                        global_match_state = 'PLAYING'
+                        active_now = [i+1 for i in range(4) if player_slots[i]]
+                        global_alive_players = set(active_now)
+                        global_playing_players = list(active_now)
+                        global_waiting_players = []
                         global_is_round_over = False
-global_match_state = 'LOBBY'
-global_playing_players = []
-global_waiting_players = []
                         player_locked[assigned_id] = int(data.get("class", 0))
                     data["sender"] = assigned_id
                     msg = json.dumps(data)
@@ -283,22 +284,26 @@ global_waiting_players = []
                             }))
                             
                             def next_round():
-                                global global_current_round, global_is_round_over, global_alive_players, global_player_stocks
+                                global global_current_round, global_is_round_over, global_alive_players, global_player_stocks, global_match_state, global_waiting_players, global_playing_players
                                 import time
                                 time.sleep(2.6)
                                 with lobby_lock:
-                                    global_current_round += 1
-                                    global_is_round_over = False
-global_match_state = 'LOBBY'
-global_playing_players = []
-global_waiting_players = []
-                                    global_alive_players = set([i+1 for i in range(4) if player_slots[i]])
-                                    for i in range(1, 5):
-                                        global_player_stocks[i] = 3
-                                    broadcast(json.dumps({
-                                        "type": "new_round",
-                                        "round": global_current_round
-                                    }))
+                                    if len(global_waiting_players) > 0:
+                                        global_match_state = 'LOBBY'
+                                        global_waiting_players = []
+                                        global_playing_players = []
+                                        player_locked.clear()
+                                        broadcast(json.dumps({"type": "return_to_lobby"}))
+                                    else:
+                                        global_current_round += 1
+                                        global_is_round_over = False
+                                        global_alive_players = set([p for p in global_playing_players if player_slots[p-1]])
+                                        for i in range(1, 5):
+                                            global_player_stocks[i] = 3
+                                        broadcast(json.dumps({
+                                            "type": "new_round",
+                                            "round": global_current_round
+                                        }))
                                     
                             import threading
                             threading.Thread(target=next_round, daemon=True).start()
