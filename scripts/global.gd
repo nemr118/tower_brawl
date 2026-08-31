@@ -142,7 +142,9 @@ func _process(_delta):
 			print("✅ [Global] Connected!")
 			# Send hello immediately — server uses reclaim_id to restore our slot
 			var saved_id = _load_saved_player_id()
-			send_net_data({"type": "hello", "reclaim_id": saved_id})
+			if my_player_name == "":
+				my_player_name = _load_saved_player_name()
+			send_net_data({"type": "hello", "reclaim_id": saved_id, "name": my_player_name})
 			
 		while ws.get_available_packet_count() > 0:
 			var pkt = ws.get_packet()

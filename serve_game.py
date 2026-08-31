@@ -236,8 +236,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     with lobby_lock:
         if player_slots[assigned_id - 1] and player_slots[assigned_id - 1]["sock"] is sock:
             player_slots[assigned_id - 1] = None
-        player_locked.pop(assigned_id, None)
-        player_names.pop(assigned_id, None)
+            player_locked.pop(assigned_id, None)
+            player_names.pop(assigned_id, None)
         active = [i+1 for i in range(4) if player_slots[i]]
 
     print(f"[{label}] P{assigned_id} LEFT    remaining={active}")
