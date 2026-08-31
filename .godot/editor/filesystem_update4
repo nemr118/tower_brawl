@@ -1,0 +1,5 @@
+res://scripts/player.gd
+res://scripts/arena.gd
+res://scripts/character_select.gd
+res://scripts/network_manager.gd
+res://scripts/global.gd

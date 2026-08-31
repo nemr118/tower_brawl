@@ -9,7 +9,7 @@ var locked_players = {}
 var active_player_ids: Array[int] = [1]
 var is_revealing: bool = false
 
-@onready var title_label = $TitleBar
+@onready var title_label = $CardShowcase/ChampionTitle
 @onready var name_label = $CardShowcase/ChampionName
 @onready var desc_label = $CardShowcase/ChampionDesc
 @onready var primary_label = $CardShowcase/Skills/PrimaryLabel
@@ -212,7 +212,7 @@ func _check_all_ready():
 			
 	print("📊 Lobby Status: ", locked_count, "/", active_count, " locked in.")
 	
-	if active_count >= 1 and locked_count >= active_count and not is_revealing:
+	if active_count >= 2 and locked_count >= active_count and not is_revealing:
 		is_revealing = true
 		_start_reveal_countdown(active_count)
 
