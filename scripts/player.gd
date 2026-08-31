@@ -32,6 +32,9 @@ var dash_cooldown_timer: float = 0.0
 var dash_dir: Vector2 = Vector2.RIGHT
 
 var is_shielding: bool = false
+var is_bear_form: bool = false
+var is_egg: bool = false
+var egg_timer: float = 0.0
 var shield_timer: float = 0.0
 
 var coyote_timer: float = 0.0
@@ -66,6 +69,7 @@ var special_cooldown: float = 0.0
 const ArrowScene = preload("res://scenes/arrow.tscn")
 const FireboltScene = preload("res://scenes/firebolt.tscn")
 const KunaiScene = preload("res://scenes/kunai.tscn")
+const ThornScene = preload("res://scenes/thorn.tscn")
 
 @onready var collision_shape = $CollisionShape2D
 @onready var melee_area = $MeleeArea
@@ -109,6 +113,19 @@ func _physics_process(delta: float):
 	anim_time += delta * 12.0
 	
 	# Timers tick down for BOTH Local and Remote players
+	if is_egg:
+		egg_timer -= delta
+		if egg_timer <= 0.0:
+			is_egg = false
+			spawn_invuln_timer = 1.0
+			_squash_and_stretch(1.5, 1.5)
+		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
+		velocity.y += GRAVITY * delta
+		move_and_slide()
+		_sync_network_state(delta)
+		queue_redraw()
+		return
+		
 	if spawn_invuln_timer > 0.0:
 		spawn_invuln_timer -= delta
 	if shield_timer > 0.0:
@@ -237,7 +254,9 @@ func _sync_network_state(delta: float):
 			"aim_y": aim_direction.y,
 			"facing": is_facing_right,
 			"dash": is_dashing,
-			"shield": is_shielding
+			"shield": is_shielding,
+			"bear": is_bear_form,
+			"egg": is_egg
 		})
 
 func _on_player_state_received(p_id: int, data: Dictionary):
@@ -247,6 +266,8 @@ func _on_player_state_received(p_id: int, data: Dictionary):
 		is_facing_right = bool(data.get("facing", true))
 		is_dashing = bool(data.get("dash", false))
 		is_shielding = bool(data.get("shield", false))
+		is_bear_form = bool(data.get("bear", false))
+		is_egg = bool(data.get("egg", false))
 
 func _on_remote_projectile(data: Dictionary):
 	var p_id = int(data.get("sender", 1))
@@ -325,6 +346,18 @@ func _perform_attack(aim_dir: Vector2):
 					"dir_x": aim_dir.x,
 					"dir_y": aim_dir.y
 				})
+		Global.ClassType.DRUID:
+			if is_bear_form:
+				attack_cooldown = 0.5
+				_squash_and_stretch(1.2, 0.8)
+				_execute_shadow_slash()
+			else:
+				attack_cooldown = 0.35
+				var spawn_pos = global_position + aim_dir * 18.0
+				var thorn = ThornScene.instantiate()
+				get_parent().add_child(thorn)
+				thorn.init(player_id, spawn_pos, aim_dir)
+				_squash_and_stretch(0.9, 1.1)
 		Global.ClassType.ROGUE:
 			if rogue_kunai > 0:
 				rogue_kunai -= 1
@@ -371,6 +404,16 @@ func _perform_special(aim_dir: Vector2):
 			global_position += aim_dir * 95.0
 			velocity = aim_dir * 80.0
 			_squash_and_stretch(0.5, 1.5)
+		Global.ClassType.DRUID:
+			special_cooldown = 1.0
+			if is_on_floor():
+				is_bear_form = not is_bear_form
+				_squash_and_stretch(1.5, 0.7)
+			else:
+				is_shielding = true
+				shield_timer = 1.5
+				velocity = Vector2.ZERO
+				_squash_and_stretch(0.8, 1.2)
 		Global.ClassType.ROGUE:
 			special_cooldown = 1.1
 			_start_dash(aim_dir.x, aim_dir.y)
@@ -424,7 +467,16 @@ func _check_screen_wrap():
 		velocity.y = 80.0
 
 func take_hit(killer_id: int, _knockback_dir: Vector2):
-	if is_dead or spawn_invuln_timer > 0.0 or is_dashing or is_shielding:
+	if is_dead or spawn_invuln_timer > 0.0 or is_dashing:
+		return
+		
+	if is_shielding:
+		if class_type == Global.ClassType.DRUID:
+			is_shielding = false
+			is_egg = true
+			egg_timer = 3.0
+			velocity = Vector2.ZERO
+			_squash_and_stretch(1.4, 0.7)
 		return
 		
 	is_dead = true
@@ -447,6 +499,8 @@ func respawn(spawn_pos: Vector2):
 	visible = true
 	is_dashing = false
 	is_shielding = false
+	is_egg = false
+	is_bear_form = false
 	spawn_invuln_timer = 1.0
 	collision_shape.set_deferred("disabled", false)
 	_apply_class_defaults()
@@ -496,8 +550,13 @@ func _draw():
 		draw_arc(Vector2.ZERO, 19.0, 0.0, TAU, 24, Color(0.8, 0.95, 1.0), 3.0)
 		
 	if is_dashing:
-		draw_circle(-dash_dir * 12.0, 10.0, Color(base_col.r, base_col.g, base_col.b, 0.45))
-		draw_circle(-dash_dir * 22.0, 7.0, Color(base_col.r, base_col.g, base_col.b, 0.25))
+		if class_type == Global.ClassType.DRUID:
+			draw_circle(Vector2(0,-12), 10.0, Color(0.15, 0.15, 0.2)) # Crow body
+			var wing = 18.0 if sin(Time.get_ticks_msec() * 0.02) > 0 else 4.0
+			draw_line(Vector2(-wing, -12), Vector2(wing, -12), Color(0.2, 0.2, 0.25), 6.0) # Wings
+		else:
+			draw_circle(-dash_dir * 12.0, 10.0, Color(base_col.r, base_col.g, base_col.b, 0.45))
+			draw_circle(-dash_dir * 22.0, 7.0, Color(base_col.r, base_col.g, base_col.b, 0.25))
 
 	var aim_len = 36.0
 	var laser_start = aim_direction * 14.0
@@ -561,6 +620,19 @@ func _draw():
 			draw_line(Vector2.ZERO, staff_end, Color(0.4, 0.25, 0.15), 2.0)
 			draw_circle(staff_end, 4.5, Color(1.0, 0.5, 0.1, 0.9))
 			draw_circle(staff_end, 2.5, Color(1.0, 0.9, 0.5))
+		Global.ClassType.DRUID:
+			if is_egg:
+				draw_circle(Vector2(0, -7), 9.0, Color(1.0, 0.8, 0.4))
+				draw_circle(Vector2(0, -7), 6.0, Color(1.0, 0.4, 0.1))
+			elif is_bear_form:
+				draw_circle(Vector2(0, -14), 16.0, Color(0.35, 0.25, 0.15)) # Bear body
+				draw_circle(Vector2(12 * (1 if is_facing_right else -1), -22), 5.0, Color(0.2, 0.1, 0.05)) # Ear
+			else:
+				draw_colored_polygon(PackedVector2Array([Vector2(-8, -17 + breath), Vector2(0, -28 + breath), Vector2(8, -17 + breath)]), Color(0.2, 0.6, 0.2))
+				draw_circle(Vector2(0, -28 + breath), 4.0, Color(0.8, 0.9, 0.2))
+				
+				# Little floating orb / leaf
+				draw_circle(Vector2(-12, -20 + sin(Time.get_ticks_msec()*0.005)*3), 3.0, Color(0.4, 0.9, 0.4))
 		Global.ClassType.ROGUE:
 			draw_colored_polygon([Vector2(-7, -20 + breath), Vector2(0, -25 + breath), Vector2(7, -20 + breath), Vector2(7, -11 + breath), Vector2(-7, -11 + breath)], Color(0.18, 0.12, 0.25))
 			draw_rect(Rect2(eye_x, -16 + breath, 3, 2), Color(0.85, 0.3, 1.0), true)
