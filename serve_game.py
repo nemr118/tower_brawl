@@ -230,17 +230,25 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
         "player_names": names,
     }), exclude=sock)
 
+    import time
+    last_ping_time = time.time()
     try:
         while True:
             msg = ws_read(sock)
             if msg is None:
                 break
             if not msg:
-                continue
-            if msg.strip() == '{"type":"ping"}' or msg.strip() == '{"type": "ping"}':
+                if time.time() - last_ping_time > 15.0:
+                    print(f"[{label}] App-level ping timeout for P{assigned_id}")
+                    break
                 continue
             try:
                 data = json.loads(msg)
+                if data.get("type") == "ping":
+                    last_ping_time = time.time()
+                    continue
+                last_ping_time = time.time()
+
                 if data.get("type") == "set_name":
                     with lobby_lock:
                         player_names[assigned_id] = str(data.get("name", ""))[:12]

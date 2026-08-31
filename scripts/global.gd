@@ -109,7 +109,7 @@ var match_score_limit: int = 5
 var ws: WebSocketPeer = WebSocketPeer.new()
 var is_connected: bool = false
 var is_connecting: bool = false   # guard: never open two sockets at once
-var my_player_id: int = 1
+var my_player_id: int = 0
 var server_url: String = ""
 var active_players: Array[int] = []
 var locked_opponents: Dictionary = {}
@@ -202,10 +202,7 @@ func _process(_delta):
 			is_connecting = false
 			print("✅ [Global] Connected!")
 			# Send hello immediately — server uses reclaim_id to restore our slot
-			var saved_id = _load_saved_player_id()
-			if my_player_name == "":
-				my_player_name = _load_saved_player_name()
-			send_net_data({"type": "hello", "reclaim_id": saved_id, "name": my_player_name})
+			# Handshake done. Server will send spectator_state.
 			
 		while ws.get_available_packet_count() > 0:
 			var pkt = ws.get_packet()
@@ -240,7 +237,9 @@ func _handle_net_packet(msg_str: String):
 	if type == "force_start":
 		emit_signal("net_force_start")
 	
-	if type in ["assign_id", "player_joined", "player_left", "name_update"]:
+	if type in ["assign_id", "player_joined", "player_left", "name_update", "spectator_state"]:
+		if data.has("active_players"):
+			active_players = data.get("active_players", [])
 		if data.has("player_names"):
 			player_names.clear()
 			var p_names = data.get("player_names", {})

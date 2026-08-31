@@ -133,6 +133,24 @@ func _ready():
 	force_start_btn.visible = false
 	add_child(force_start_btn)
 	force_start_btn.connect("pressed", Callable(self, "_on_force_start_pressed"))
+	
+	# Spectator Join Overlay
+	var join_overlay = ColorRect.new()
+	join_overlay.name = "JoinOverlay"
+	join_overlay.color = Color(0, 0, 0, 0.8)
+	join_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	join_overlay.z_index = 100
+	add_child(join_overlay)
+	
+	var join_btn = Button.new()
+	join_btn.text = "JOIN MATCH"
+	join_btn.add_theme_font_size_override("font_size", 48)
+	join_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	join_btn.connect("pressed", Callable(self, "_on_join_pressed"))
+	join_overlay.add_child(join_btn)
+	
+	if Global.my_player_id > 0:
+		join_overlay.visible = false
 
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
@@ -145,7 +163,7 @@ func _on_player_joined(p_id: int, active_list):
 	active_player_ids.clear()
 	for x in active_list:
 		active_player_ids.append(int(x))
-	if not active_player_ids.has(local_player_id):
+	if local_player_id > 0 and not active_player_ids.has(local_player_id):
 		active_player_ids.append(local_player_id)
 		
 	_sync_global_configs()
@@ -157,7 +175,7 @@ func _on_player_left(p_id: int, active_list):
 	active_player_ids.clear()
 	for x in active_list:
 		active_player_ids.append(int(x))
-	if not active_player_ids.has(local_player_id):
+	if local_player_id > 0 and not active_player_ids.has(local_player_id):
 		active_player_ids.append(local_player_id)
 		
 	if p_id in locked_players:
@@ -422,3 +440,16 @@ func _confirm_name(n: String):
 	Global._save_player_name(n)
 	Global.send_net_data({"type": "set_name", "name": n})
 	_update_roster()
+
+func _on_join_pressed():
+	var saved_id = Global._load_saved_player_id()
+	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id})
+
+func _process(delta):
+	var overlay = get_node_or_null("JoinOverlay")
+	if overlay and overlay.visible and Global.my_player_id > 0:
+		overlay.visible = false
+		local_player_id = Global.my_player_id
+		if local_player_id > 0 and not active_player_ids.has(local_player_id):
+			active_player_ids.append(local_player_id)
+		_update_roster()

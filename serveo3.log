@@ -1,0 +1,9 @@
+Pseudo-terminal will not be allocated because stdin is not a terminal.
+[33mTo request a particular subdomain, you first need to register your SSH public key.
+To register, visit one the addresses below to login with your Google or GitHub account.
+After registering, you'll be able to request your subdomain the next time you connect
+to Serveo.
+[0m
+https://console.serveo.net/ssh/keys?add=SHA256%3Az7UzCusKfrlwLDFRqpJQ4L6WVwRB752XZVKoAliRCE4
+[32mForwarding HTTP traffic from https://67f81cc9f3118047-46-110-178-131.serveousercontent.com
+[0m
