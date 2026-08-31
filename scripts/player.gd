@@ -1,3 +1,12 @@
+# ==============================================================================
+# WELCOME TO PLAYER.GD! (The Character Script)
+# ==============================================================================
+# Hey there! This script acts as the "brain" for the characters on screen.
+# Every time you move, jump, or attack, this file is doing the math.
+# In programming, we use "variables" (think of them like labeled boxes) 
+# to store information like how fast we can run or how many lives we have left.
+# ==============================================================================
+
 extends CharacterBody2D
 
 signal player_died(killer_id, victim_id)
@@ -86,6 +95,13 @@ func _apply_class_defaults():
 		Global.ClassType.ROGUE:
 			rogue_kunai = 4
 
+
+	# ------------------------------------------------------------------------------
+	# THE GAME LOOP: _physics_process(delta)
+	# This function is the heartbeat of the game! It runs 60 times every second.
+	# "delta" is the tiny fraction of a second between frames. We use delta 
+	# to make sure the game runs at the same speed on fast and slow computers.
+	# ------------------------------------------------------------------------------
 func _physics_process(delta: float):
 	if is_dead:
 		return
@@ -263,6 +279,13 @@ func _start_dash(input_x: float, input_y: float):
 	dash_dir = dir.normalized()
 	_squash_and_stretch(1.4, 0.6)
 
+
+	# ------------------------------------------------------------------------------
+	# ATTACKING
+	# This function spawns arrows, fireballs, or sword slashes. 
+	# It uses "if" statements (which ask a Yes/No question) to figure out 
+	# which class you are playing before spawning the right weapon!
+	# ------------------------------------------------------------------------------
 func _perform_attack(aim_dir: Vector2):
 	match class_type:
 		Global.ClassType.RANGER:
@@ -447,6 +470,12 @@ func _squash_and_stretch(sx: float, sy: float):
 	scale = Vector2(sx, sy)
 	tween.tween_property(self, "scale", Vector2(1.0, 1.0), 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
+
+	# ------------------------------------------------------------------------------
+	# DRAWING THE CHARACTER
+	# We don't use 3D models here! Instead, we tell the computer to draw 
+	# simple shapes (circles, lines, and rectangles) to build our pixel heroes.
+	# ------------------------------------------------------------------------------
 func _draw():
 	if is_dead:
 		return

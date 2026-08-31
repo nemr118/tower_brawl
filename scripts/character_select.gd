@@ -1,3 +1,11 @@
+# ==============================================================================
+# CHARACTER_SELECT.GD (The Waiting Room)
+# ==============================================================================
+# This script powers the menu screen you see before the fight starts.
+# It uses UI (User Interface) elements like Labels and Buttons.
+# When everyone is "locked in", it tells Godot to switch to the Arena scene!
+# ==============================================================================
+
 extends Control
 
 ## Dynamic 4-Player Secret Character Selection Draft Screen

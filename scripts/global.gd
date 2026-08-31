@@ -1,3 +1,12 @@
+# ==============================================================================
+# WELCOME TO GLOBAL.GD! (The Networking Script)
+# ==============================================================================
+# This script is an "Autoload". That means it stays awake in the background
+# forever while the game runs. 
+# Its main job is sending invisible text messages (called JSON) over the 
+# internet so that phones and PCs can talk to each other in real-time!
+# ==============================================================================
+
 extends Node
 
 ## Global Game Manager & WebSocket Network Engine

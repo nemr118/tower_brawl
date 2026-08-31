@@ -1,3 +1,11 @@
+# ==============================================================================
+# WELCOME TO ARENA.GD! (The Game World Script)
+# ==============================================================================
+# This script is like the "Game Master" or Referee.
+# It doesn't control a single player. Instead, it builds the arena, decides 
+# where everyone spawns, keeps score, and drops power-ups from the sky.
+# ==============================================================================
+
 extends Node2D
 
 @onready var platforms_node = $Platforms
@@ -26,6 +34,12 @@ var current_round: int = 1
 @onready var p4_panel = $HUD/TopBar/P4Panel
 @onready var touch_controls = $TouchControls
 
+
+# ------------------------------------------------------------------------------
+# SETUP TIME!
+# _ready() is a special Godot function that runs exactly ONCE when the 
+# level first loads. It's like setting up a board game before you start playing.
+# ------------------------------------------------------------------------------
 func _ready():
 	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
 	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
@@ -52,6 +66,12 @@ func _start_new_match():
 	current_round = 1
 	_start_round()
 
+
+# ------------------------------------------------------------------------------
+# ROUND START
+# We use this function to clear out old projectiles, put players on their
+# starting platforms, and reset everyone's health.
+# ------------------------------------------------------------------------------
 func _start_round():
 	is_round_over = false
 	_clear_projectiles()
