@@ -174,7 +174,7 @@ func _lock_in_champion():
 	Global.player_configs[local_player_id]["class"] = chosen_class
 	locked_players[local_player_id] = chosen_class
 	
-	lock_btn.text = "✅ CHAMPION LOCKED IN!"
+	lock_btn.text = "[ CHAMPION LOCKED IN ]"
 	lock_btn.disabled = true
 	lock_btn.modulate = Color(0.4, 0.9, 0.4)
 	
@@ -207,7 +207,7 @@ func _update_player_card(card: Control, p_id: int):
 		card.color = Color(0.08, 0.08, 0.12, 0.4)
 		name_lbl.text = "Player " + str(p_id)
 		name_lbl.modulate = Color(0.4, 0.4, 0.4)
-		icon_lbl.text = "✖️"
+		icon_lbl.text = ""
 		status_lbl.text = "Empty Slot"
 		status_lbl.modulate = Color(0.35, 0.35, 0.35)
 		return
@@ -220,22 +220,22 @@ func _update_player_card(card: Control, p_id: int):
 		if p_id == local_player_id or is_revealing:
 			var c_type = locked_players[p_id]
 			var c_info = Global.CLASS_INFO[c_type]
-			icon_lbl.text = c_info["icon"]
+			icon_lbl.text = ""
 			status_lbl.text = c_info["name"].to_upper()
 			status_lbl.modulate = c_info["color"]
 		else:
-			icon_lbl.text = "🔒"
+			icon_lbl.text = "[LOCKED]"
 			status_lbl.text = "READY (SECRET)"
 			status_lbl.modulate = Color(1.0, 0.85, 0.3)
 	else:
 		if p_id == local_player_id:
 			var cur_c_type = CHAMPION_KEYS[selected_class_idx]
 			var cur_c_info = Global.CLASS_INFO[cur_c_type]
-			icon_lbl.text = cur_c_info["icon"]
+			icon_lbl.text = ""
 			status_lbl.text = "Selecting..."
 			status_lbl.modulate = Color(0.9, 0.9, 0.9)
 		else:
-			icon_lbl.text = "⏳"
+			icon_lbl.text = "[WAITING]"
 			status_lbl.text = "Choosing..."
 			status_lbl.modulate = Color(0.6, 0.6, 0.6)
 
