@@ -190,6 +190,16 @@ func _handle_net_packet(msg_str: String):
 		print("🎮 [Global] Assigned Player ID: ", my_player_id)
 		_save_player_id()   # persist so reconnects restore this slot
 		
+		# Remap local gamepad inputs to accept any controller (device: -1)
+		# This ensures phones with 1 connected controller (device 0) can play as P2, P3, or P4!
+		var prefix = "p" + str(my_player_id) + "_"
+		for action in InputMap.get_actions():
+			if action.begins_with(prefix):
+				var events = InputMap.action_get_events(action)
+				for ev in events:
+					if ev is InputEventJoypadButton or ev is InputEventJoypadMotion:
+						ev.device = -1
+		
 		active_players.clear()
 		for x in data.get("active_players", [1]):
 			active_players.append(int(x))
