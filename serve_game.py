@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-TowerBrawl Relay Server — Clean Single-Lobby Design
+TowerBrawl Relay Server
 - HTTP  :8000   desktop web game
 - HTTPS :8443   mobile web game (SSL)
 - WS    :8081   desktop WebSocket (plain)
 - WSS   :8444   mobile WebSocket (SSL)
 
 All four endpoints share ONE player_slots list.
-Dead-socket detection prevents stale slots from blocking reconnects.
 """
 
 import http.server
@@ -33,14 +32,14 @@ CERT_FILE = os.path.join(BASE_DIR, "cert.pem")
 KEY_FILE  = os.path.join(BASE_DIR, "key.pem")
 
 # ── Shared lobby ──────────────────────────────────────────────────────────────
-player_slots  = [None, None, None, None]   # index 0 = P1
-player_locked = {}                         # {player_id(int): class_int}
+# player_slots[i] = {"sock": socket, "addr": str}  or  None
+player_slots  = [None, None, None, None]
+player_locked = {}          # {player_id(int): class_int}
 lobby_lock    = threading.Lock()
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-# ── WebSocket helpers ─────────────────────────────────────────────────────────
 def _recvall(sock, n):
     buf = b""
     while len(buf) < n:
@@ -81,9 +80,9 @@ def ws_read(sock):
         head = _recvall(sock, 2)
         b1, b2 = head[0], head[1]
         opcode = b1 & 0x0F
-        if opcode == 8:          # close
+        if opcode == 8:
             return None
-        if opcode not in (1, 2): # skip ping/pong
+        if opcode not in (1, 2):
             return ""
         masked = bool(b2 & 0x80)
         plen   = b2 & 0x7F
@@ -117,46 +116,23 @@ def ws_send(sock, text):
     except Exception:
         return False
 
-def is_socket_alive(sock):
-    """Quick non-blocking check — returns False if the socket is dead."""
-    try:
-        sock.setblocking(False)
-        data = sock.recv(1, socket.MSG_PEEK)
-        sock.setblocking(True)
-        return True   # data waiting (or empty keep-alive)
-    except BlockingIOError:
-        sock.setblocking(True)
-        return True   # nothing waiting but socket is alive
-    except Exception:
-        try: sock.setblocking(True)
-        except: pass
-        return False  # closed / reset
-
 def broadcast(msg, exclude=None):
+    """Send msg to all connected slots. On send failure, mark slot as dead."""
     with lobby_lock:
-        targets = [(i, s) for i, s in enumerate(player_slots) if s and s is not exclude]
-    dead = []
-    for i, s in targets:
-        if not ws_send(s, msg):
-            dead.append((i, s))
-    # Evict any sockets that failed to receive
-    if dead:
+        targets = [(i, entry) for i, entry in enumerate(player_slots)
+                   if entry and entry["sock"] is not exclude]
+    dead_slots = []
+    for i, entry in targets:
+        if not ws_send(entry["sock"], msg):
+            dead_slots.append(i)
+    if dead_slots:
         with lobby_lock:
-            for i, s in dead:
-                if player_slots[i] is s:
+            for i in dead_slots:
+                if player_slots[i]:
+                    pid = i + 1
+                    print(f"[SERVER] Dead socket detected in slot {pid}, freeing")
                     player_slots[i] = None
-                    player_locked.pop(i + 1, None)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def evict_dead_slots():
-    """Scan all slots and free any that are no longer alive."""
-    with lobby_lock:
-        for i in range(4):
-            s = player_slots[i]
-            if s and not is_socket_alive(s):
-                print(f"[SERVER] Evicting dead socket in slot {i+1}")
-                player_slots[i] = None
-                player_locked.pop(i + 1, None)
+                    player_locked.pop(pid, None)
 
 def ws_client_thread(sock, addr, label):
     if not ws_handshake(sock):
@@ -164,14 +140,11 @@ def ws_client_thread(sock, addr, label):
         except: pass
         return
 
-    # Evict dead sockets before trying to claim a slot
-    evict_dead_slots()
-
     assigned_id = None
     with lobby_lock:
         for i in range(4):
             if player_slots[i] is None:
-                player_slots[i] = sock
+                player_slots[i] = {"sock": sock, "addr": str(addr)}
                 assigned_id = i + 1
                 break
 
@@ -181,7 +154,7 @@ def ws_client_thread(sock, addr, label):
         except: pass
         with lobby_lock:
             active = [i+1 for i in range(4) if player_slots[i]]
-        print(f"[{label}] Server full — rejected {addr}  slots={active}")
+        print(f"[{label}] Server full — rejected {addr}  active={active}")
         return
 
     with lobby_lock:
@@ -190,7 +163,6 @@ def ws_client_thread(sock, addr, label):
 
     print(f"[{label}] P{assigned_id} JOINED  active={active}  addr={addr}")
 
-    # Tell this client who they are and the current lobby state
     ws_send(sock, json.dumps({
         "type":           "assign_id",
         "id":             assigned_id,
@@ -198,14 +170,12 @@ def ws_client_thread(sock, addr, label):
         "locked_players": locked,
     }))
 
-    # Tell all existing clients a new player joined
     broadcast(json.dumps({
         "type":           "player_joined",
         "id":             assigned_id,
         "active_players": active,
     }), exclude=sock)
 
-    # ── Main receive loop ─────────────────────────────────────────────────────
     try:
         while True:
             msg = ws_read(sock)
@@ -213,7 +183,6 @@ def ws_client_thread(sock, addr, label):
                 break
             if not msg:
                 continue
-            # Track lock-ins so late-joiners get caught up
             try:
                 data = json.loads(msg)
                 if data.get("type") == "lock_in":
@@ -226,11 +195,10 @@ def ws_client_thread(sock, addr, label):
             broadcast(msg, exclude=sock)
     except Exception:
         pass
-    # ─────────────────────────────────────────────────────────────────────────
 
-    # Cleanup
+    # Cleanup — only free if this socket still owns the slot
     with lobby_lock:
-        if player_slots[assigned_id - 1] is sock:
+        if player_slots[assigned_id - 1] and player_slots[assigned_id - 1]["sock"] is sock:
             player_slots[assigned_id - 1] = None
         player_locked.pop(assigned_id, None)
         active = [i+1 for i in range(4) if player_slots[i]]
@@ -246,7 +214,6 @@ def ws_client_thread(sock, addr, label):
     try: sock.close()
     except: pass
 
-# ── Listeners ─────────────────────────────────────────────────────────────────
 def start_ws():
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
