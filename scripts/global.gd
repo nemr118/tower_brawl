@@ -10,6 +10,7 @@
 extends Node
 
 var is_mobile: bool = false
+var is_spectator: bool = false
 
 ## Global Game Manager & WebSocket Network Engine
 ## Central singleton for 4-Player Battle Royale, state sync, and class definitions.
@@ -21,6 +22,7 @@ signal net_opponent_locked_in(player_id, class_type)
 signal net_player_state_received(player_id, data)
 signal net_projectile_spawned(data)
 signal net_player_hit(killer_id, victim_id)
+signal net_return_to_lobby
 signal net_player_died(killer_id, victim_id, stock)
 signal net_round_end(winner_id, scores, round_num)
 signal net_new_round(round_num)
@@ -332,6 +334,12 @@ func _handle_net_packet(msg_str: String):
 		var killer = int(data.get("killer", 1))
 		var victim = int(data.get("victim", 1))
 		emit_signal("net_player_hit", killer, victim)
+		
+	elif type == "return_to_lobby":
+		is_spectator = false
+		locked_opponents.clear()
+		reset_scores()
+		emit_signal("net_return_to_lobby")
 		
 	elif type == "player_died":
 		var victim = int(data.get("victim", 0))

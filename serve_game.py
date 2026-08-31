@@ -184,6 +184,13 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
 
     with lobby_lock:
         active = [i+1 for i in range(4) if player_slots[i]]
+        if global_match_state == 'PLAYING':
+            if assigned_id not in global_playing_players and assigned_id not in global_waiting_players:
+                global_waiting_players.append(assigned_id)
+        else:
+            if assigned_id not in global_playing_players:
+                global_playing_players.append(assigned_id)
+                
         locked = {str(k): v for k, v in player_locked.items()}
         names  = {str(k): v for k, v in player_names.items()}
 
@@ -193,8 +200,13 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
         "type":           "assign_id",
         "id":             assigned_id,
         "active_players": active,
+        "playing_players": global_playing_players,
+        "match_state": global_match_state,
         "locked_players": locked,
         "player_names": names,
+        "current_round": global_current_round,
+        "scores": global_player_scores,
+        "stocks": global_player_stocks
     }))
 
     broadcast(json.dumps({
@@ -230,6 +242,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                             global_player_stocks[i] = 3
                         global_alive_players = set(active)
                         global_is_round_over = False
+global_match_state = 'LOBBY'
+global_playing_players = []
+global_waiting_players = []
                         player_locked[assigned_id] = int(data.get("class", 0))
                     data["sender"] = assigned_id
                     msg = json.dumps(data)
@@ -274,6 +289,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                                 with lobby_lock:
                                     global_current_round += 1
                                     global_is_round_over = False
+global_match_state = 'LOBBY'
+global_playing_players = []
+global_waiting_players = []
                                     global_alive_players = set([i+1 for i in range(4) if player_slots[i]])
                                     for i in range(1, 5):
                                         global_player_stocks[i] = 3

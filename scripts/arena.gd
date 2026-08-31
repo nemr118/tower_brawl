@@ -45,6 +45,7 @@ func _ready():
 		Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
 	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
 	Global.connect("net_new_round", Callable(self, "_on_new_round_sync"))
+	Global.connect("net_return_to_lobby", Callable(self, "_on_return_to_lobby"))
 
 	Global.connect("net_spawn_powerup", Callable(self, "_on_net_spawn_powerup"))
 	Global.connect("net_activate_powerup", Callable(self, "_on_net_activate_powerup"))
@@ -62,6 +63,10 @@ func _input(event):
 		if event.keycode == KEY_R:
 			Global.reset_scores()
 			_start_new_match()
+
+
+func _on_return_to_lobby():
+	get_tree().change_scene_to_file("res://scenes/character_select.tscn")
 
 func _start_new_match():
 	current_round = 1
@@ -101,7 +106,11 @@ func _start_round():
 			player_instances[p_id] = p
 			
 	_update_hud()
-	_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
+		_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
+	if Global.is_spectator:
+		await get_tree().create_timer(1.5).timeout
+		_show_banner("SPECTATING... WAITING FOR ROUND END", 999.0)
+
 
 func _clear_projectiles():
 	for p in get_tree().get_nodes_in_group("projectiles"):
