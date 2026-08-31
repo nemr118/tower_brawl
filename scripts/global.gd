@@ -9,6 +9,8 @@
 
 extends Node
 
+var is_mobile: bool = false
+
 ## Global Game Manager & WebSocket Network Engine
 ## Central singleton for 4-Player Battle Royale, state sync, and class definitions.
 
@@ -102,6 +104,13 @@ signal net_activate_powerup(powerup_id)
 signal net_force_start()
 
 func _ready():
+
+	is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.is_touchscreen_available()
+	if OS.has_feature("web"):
+		var ua = JavaScriptBridge.eval("/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);", true)
+		if ua:
+			is_mobile = true
+
 	_determine_url_and_connect()
 
 func _determine_url_and_connect():
@@ -236,11 +245,11 @@ func _handle_net_packet(msg_str: String):
 		
 		
 		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if not OS.has_feature("web") and my_player_id != 1:
+		if my_player_id != 1:
 			var prefix1 = "p1_"
 			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
 				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
-				var my_action = prefix + action_suffix
+				var my_action = "p" + str(my_player_id) + "_" + action_suffix
 				for ev in events1:
 					if ev is InputEventKey or ev is InputEventMouseButton:
 						InputMap.action_add_event(my_action, ev)
@@ -266,11 +275,11 @@ func _handle_net_packet(msg_str: String):
 		var p_id = int(data.get("id", 1))
 		
 		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if not OS.has_feature("web") and my_player_id != 1:
+		if my_player_id != 1:
 			var prefix1 = "p1_"
 			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
 				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
-				var my_action = prefix + action_suffix
+				var my_action = "p" + str(my_player_id) + "_" + action_suffix
 				for ev in events1:
 					if ev is InputEventKey or ev is InputEventMouseButton:
 						InputMap.action_add_event(my_action, ev)
@@ -286,11 +295,11 @@ func _handle_net_packet(msg_str: String):
 		var p_id = int(data.get("id", 1))
 		
 		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if not OS.has_feature("web") and my_player_id != 1:
+		if my_player_id != 1:
 			var prefix1 = "p1_"
 			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
 				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
-				var my_action = prefix + action_suffix
+				var my_action = "p" + str(my_player_id) + "_" + action_suffix
 				for ev in events1:
 					if ev is InputEventKey or ev is InputEventMouseButton:
 						InputMap.action_add_event(my_action, ev)

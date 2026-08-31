@@ -15,13 +15,20 @@ var joy_touch_index: int = -1
 var base_center: Vector2 = Vector2.ZERO
 var max_radius: float = 45.0
 
-var my_input_prefix: String = "p1_"
+
 
 func _ready():
+	Global.connect("net_connected", Callable(self, "_on_net_connected"))
 	# Automatically detect if running on mobile or touch device
 	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.is_touchscreen_available()
 	visible = is_mobile
 	_update_base_center()
+
+
+var my_input_prefix: String = "p1_"
+
+func _on_net_connected(id: int):
+	my_input_prefix = "p" + str(id) + "_"
 
 func _update_base_center():
 	base_center = joystick_base.global_position + joystick_base.size / 2.0
