@@ -81,8 +81,8 @@ func _on_player_died(killer_id: int, victim_id: int):
 	if victim_id in player_stocks:
 		player_stocks[victim_id] -= 1
 		
-	var victim_name = "Player " + str(victim_id)
-	var killer_name = "Player " + str(killer_id)
+	var victim_name = Global.player_names.get(victim_id, "Player " + str(victim_id))
+	var killer_name = Global.player_names.get(killer_id, "Player " + str(killer_id))
 	
 	if killer_id == victim_id:
 		_show_banner(victim_name + " fell!", 1.0)
@@ -138,10 +138,12 @@ func _display_round_winner(winner_id: int):
 	var is_me = (winner_id == Global.my_player_id)
 	
 	if Global.player_scores[winner_id] >= Global.match_score_limit:
-		var txt = "👑 " + ("YOU WON THE MATCH!" if is_me else "PLAYER " + str(winner_id) + " (" + winner_class + ") WINS THE MATCH!") + " 👑"
+		var w_name = Global.player_names.get(winner_id, "PLAYER " + str(winner_id))
+		var txt = "👑 " + ("YOU WON THE MATCH!" if is_me else w_name + " (" + winner_class + ") WINS THE MATCH!") + " 👑"
 		_show_banner(txt, 999.0)
 	else:
-		var txt = "👑 " + ("YOU WON ROUND " + str(current_round) + "!" if is_me else "PLAYER " + str(winner_id) + " (" + winner_class + ") WINS ROUND " + str(current_round) + "!") + " 👑"
+		var w_name = Global.player_names.get(winner_id, "PLAYER " + str(winner_id))
+		var txt = "👑 " + ("YOU WON ROUND " + str(current_round) + "!" if is_me else w_name + " (" + winner_class + ") WINS ROUND " + str(current_round) + "!") + " 👑"
 		_show_banner(txt, 2.2)
 		await get_tree().create_timer(2.6).timeout
 		current_round += 1
@@ -182,7 +184,8 @@ func _update_panel(panel: Control, p_id: int):
 	var stock_lbl = panel.get_node("StockLabel")
 	var score_lbl = panel.get_node("ScoreLabel")
 	
-	name_lbl.text = "P" + str(p_id) + (" (You)" if p_id == Global.my_player_id else "") + " " + c_info["icon"]
+	var disp_name = Global.player_names.get(p_id, "P" + str(p_id))
+	name_lbl.text = disp_name + (" (You)" if p_id == Global.my_player_id else "") + " " + c_info["icon"]
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)

@@ -34,7 +34,8 @@ KEY_FILE  = os.path.join(BASE_DIR, "key.pem")
 # ── Shared lobby ──────────────────────────────────────────────────────────────
 # player_slots[i] = {"sock": socket, "addr": str}  or  None
 player_slots  = [None, None, None, None]
-player_locked = {}          # {player_id(int): class_int}
+player_locked = {}
+player_names  = {}          # {player_id(int): class_int}
 lobby_lock    = threading.Lock()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,9 @@ def ws_client_thread(sock, addr, label):
             hello = json.loads(hello_msg)
             if hello.get("type") == "hello":
                 reclaim_id = int(hello.get("reclaim_id", 0))
+                if "name" in hello and hello["name"]:
+                    with lobby_lock:
+                        player_names[reclaim_id] = str(hello["name"])[:12]
     except Exception:
         pass
     sock.settimeout(None)
@@ -181,6 +185,7 @@ def ws_client_thread(sock, addr, label):
     with lobby_lock:
         active = [i+1 for i in range(4) if player_slots[i]]
         locked = {str(k): v for k, v in player_locked.items()}
+        names  = {str(k): v for k, v in player_names.items()}
 
     print(f"[{label}] P{assigned_id} JOINED  active={active}  addr={addr}")
 
@@ -189,12 +194,14 @@ def ws_client_thread(sock, addr, label):
         "id":             assigned_id,
         "active_players": active,
         "locked_players": locked,
+        "player_names": names,
     }))
 
     broadcast(json.dumps({
         "type":           "player_joined",
         "id":             assigned_id,
         "active_players": active,
+        "player_names": names,
     }), exclude=sock)
 
     try:
@@ -206,6 +213,14 @@ def ws_client_thread(sock, addr, label):
                 continue
             try:
                 data = json.loads(msg)
+                if data.get("type") == "set_name":
+                    with lobby_lock:
+                        player_names[assigned_id] = str(data.get("name", ""))[:12]
+                    broadcast(json.dumps({
+                        "type": "name_update",
+                        "player_names": {str(k): v for k, v in player_names.items()}
+                    }))
+                    continue
                 if data.get("type") == "lock_in":
                     with lobby_lock:
                         player_locked[assigned_id] = int(data.get("class", 0))
@@ -222,6 +237,7 @@ def ws_client_thread(sock, addr, label):
         if player_slots[assigned_id - 1] and player_slots[assigned_id - 1]["sock"] is sock:
             player_slots[assigned_id - 1] = None
         player_locked.pop(assigned_id, None)
+        player_names.pop(assigned_id, None)
         active = [i+1 for i in range(4) if player_slots[i]]
 
     print(f"[{label}] P{assigned_id} LEFT    remaining={active}")

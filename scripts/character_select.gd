@@ -8,6 +8,8 @@ var is_locked_in: bool = false
 var locked_players = {}
 var active_player_ids: Array[int] = []
 var is_revealing: bool = false
+var is_name_set: bool = false
+var name_input_ui: Control
 
 @onready var title_label = $CardShowcase/ChampionTitle
 @onready var name_label = $CardShowcase/ChampionName
@@ -57,6 +59,8 @@ func _ready():
 	Global.connect("net_player_joined", Callable(self, "_on_player_joined"))
 	Global.connect("net_player_left", Callable(self, "_on_player_left"))
 	Global.connect("net_opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
+	Global.connect("net_names_updated", Callable(self, "_update_roster"))
+	_setup_name_input_ui()
 	
 	_sync_global_configs()
 	_update_showcase()
@@ -107,7 +111,7 @@ func _on_opponent_locked_in(opp_id: int, opp_class: int):
 	_check_all_ready()
 
 func _input(event):
-	if is_revealing:
+	if not is_name_set or is_revealing:
 		return
 		
 	var prefix = "p" + str(local_player_id) + "_"
@@ -160,6 +164,7 @@ func _update_roster():
 	_update_player_card(p4_card, 4)
 
 func _update_player_card(card: Control, p_id: int):
+	var display_name = Global.player_names.get(p_id, "Player " + str(p_id))
 	var is_active = (p_id in active_player_ids or p_id == local_player_id)
 	var name_lbl = card.get_node("Name")
 	var status_lbl = card.get_node("Status")
@@ -176,7 +181,7 @@ func _update_player_card(card: Control, p_id: int):
 		
 	card.color = Color(0.15, 0.15, 0.22, 0.9)
 	name_lbl.modulate = Color(1.0, 1.0, 1.0)
-	name_lbl.text = "Player " + str(p_id) + (" (You)" if p_id == local_player_id else "")
+	name_lbl.text = display_name + (" (You)" if p_id == local_player_id else "")
 	
 	if p_id in locked_players:
 		if p_id == local_player_id or is_revealing:
@@ -243,3 +248,60 @@ func _on_btn_prev_pressed():
 func _on_btn_next_pressed():
 	if not is_locked_in:
 		_cycle_selection(1)
+
+func _setup_name_input_ui():
+	var saved_name = Global._load_saved_player_name()
+	if saved_name != "":
+		_confirm_name(saved_name)
+		return
+
+	is_name_set = false
+	name_input_ui = ColorRect.new()
+	name_input_ui.color = Color(0, 0, 0, 0.85)
+	name_input_ui.set_anchors_preset(PRESET_FULL_RECT)
+	add_child(name_input_ui)
+
+	var vbox = VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.set_anchors_preset(PRESET_CENTER)
+	name_input_ui.add_child(vbox)
+
+	var lbl = Label.new()
+	lbl.text = "ENTER YOUR NAME:"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 24)
+	vbox.add_child(lbl)
+
+	var edit = LineEdit.new()
+	edit.placeholder_text = "Player"
+	edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	edit.custom_minimum_size = Vector2(240, 40)
+	edit.max_length = 12
+	vbox.add_child(edit)
+	edit.grab_focus()
+
+	var btn = Button.new()
+	btn.text = "JOIN BRAWL"
+	btn.custom_minimum_size = Vector2(240, 50)
+	vbox.add_child(btn)
+
+	btn.connect("pressed", Callable(self, "_on_name_submit").bind(edit))
+	edit.connect("text_submitted", Callable(self, "_on_name_submit_text"))
+
+func _on_name_submit_text(t: String):
+	_on_name_submit(name_input_ui.get_node("VBoxContainer/LineEdit"))
+
+func _on_name_submit(edit: LineEdit):
+	var n = edit.text.strip_edges()
+	if n == "":
+		n = "Player"
+	_confirm_name(n)
+	if name_input_ui:
+		name_input_ui.queue_free()
+		name_input_ui = null
+
+func _confirm_name(n: String):
+	is_name_set = true
+	Global._save_player_name(n)
+	Global.send_net_data({"type": "set_name", "name": n})
+	_update_roster()

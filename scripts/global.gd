@@ -76,6 +76,10 @@ var my_player_id: int = 1
 var server_url: String = ""
 var active_players: Array[int] = []
 var locked_opponents: Dictionary = {}
+var player_names: Dictionary = {}
+var my_player_name: String = ""
+
+signal net_names_updated()
 
 func _ready():
 	_determine_url_and_connect()
@@ -160,6 +164,14 @@ func _handle_net_packet(msg_str: String):
 		
 	var type = data.get("type", "")
 	
+	if type in ["assign_id", "player_joined", "player_left", "name_update"]:
+		if data.has("player_names"):
+			player_names.clear()
+			var p_names = data.get("player_names", {})
+			for p_str in p_names:
+				player_names[int(p_str)] = str(p_names[p_str])
+		emit_signal("net_names_updated")
+		
 	if type == "assign_id":
 		my_player_id = int(data.get("id", 1))
 		print("🎮 [Global] Assigned Player ID: ", my_player_id)
@@ -234,3 +246,15 @@ func _handle_net_packet(msg_str: String):
 
 func reset_scores():
 	player_scores = {1: 0, 2: 0, 3: 0, 4: 0}
+
+func _save_player_name(n: String):
+	my_player_name = n
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("localStorage.setItem('towerbrawl_name', '" + n.replace("'", "\'") + "')", true)
+
+func _load_saved_player_name() -> String:
+	if OS.has_feature("web"):
+		var val = JavaScriptBridge.eval("localStorage.getItem('towerbrawl_name')", true)
+		if val != null and str(val) != "null" and str(val) != "":
+			return str(val)
+	return ""
