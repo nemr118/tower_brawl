@@ -172,7 +172,11 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     assigned_id = None
     with lobby_lock:
         # Try to reclaim previous slot first
-        if 1 <= reclaim_id <= 4 and player_slots[reclaim_id - 1] is None:
+        if 1 <= reclaim_id <= 4:
+            old_sock = player_slots[reclaim_id - 1]
+            if old_sock is not None:
+                try: old_sock["sock"].close()
+                except: pass
             player_slots[reclaim_id - 1] = {"sock": sock, "addr": str(addr)}
             assigned_id = reclaim_id
             print(f"[{label}] P{assigned_id} RECLAIMED slot  addr={addr}")
