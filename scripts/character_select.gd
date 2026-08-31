@@ -6,7 +6,7 @@ var local_player_id: int = 1
 var selected_class_idx: int = 0
 var is_locked_in: bool = false
 var locked_players = {}
-var active_player_ids: Array[int] = [1]
+var active_player_ids: Array[int] = []
 var is_revealing: bool = false
 
 @onready var title_label = $CardShowcase/ChampionTitle

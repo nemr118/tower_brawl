@@ -71,15 +71,20 @@ var match_score_limit: int = 5
 # --- REAL-TIME WEBSOCKET RELAY ---
 var ws: WebSocketPeer = WebSocketPeer.new()
 var is_connected: bool = false
+var is_connecting: bool = false   # guard: never open two sockets at once
 var my_player_id: int = 1
 var server_url: String = ""
-var active_players: Array[int] = [1]
+var active_players: Array[int] = []
 var locked_opponents: Dictionary = {}
 
 func _ready():
 	_determine_url_and_connect()
 
 func _determine_url_and_connect():
+	if is_connecting or is_connected:
+		return
+	is_connecting = true
+	
 	var host = "127.0.0.1"
 	var is_ssl = false
 	if OS.has_feature("web"):
@@ -97,10 +102,12 @@ func _determine_url_and_connect():
 	else:
 		server_url = "ws://" + str(host) + ":8081"
 		
-	print("🔌 [Global] Connecting to WebSocket Relay: ", server_url)
+	print("🔌 [Global] Connecting to: ", server_url)
+	ws = WebSocketPeer.new()   # fresh socket, never reuse a closed one
 	var err = ws.connect_to_url(server_url)
 	if err != OK:
 		print("⚠️ [Global] WebSocket connect error: ", err)
+		is_connecting = false
 
 func _process(_delta):
 	ws.poll()
@@ -109,7 +116,8 @@ func _process(_delta):
 	if state == WebSocketPeer.STATE_OPEN:
 		if not is_connected:
 			is_connected = true
-			print("✅ [Global] Connected to TowerBrawl Relay Server!")
+			is_connecting = false
+			print("✅ [Global] Connected!")
 			
 		while ws.get_available_packet_count() > 0:
 			var pkt = ws.get_packet()
@@ -117,10 +125,11 @@ func _process(_delta):
 			_handle_net_packet(msg)
 			
 	elif state == WebSocketPeer.STATE_CLOSED:
-		if is_connected:
+		if is_connected or is_connecting:
 			is_connected = false
-			print("❌ [Global] Disconnected from Relay Server. Reconnecting in 1.5s...")
-			await get_tree().create_timer(1.5).timeout
+			is_connecting = false
+			print("❌ [Global] Disconnected. Reconnecting in 2s...")
+			await get_tree().create_timer(2.0).timeout
 			_determine_url_and_connect()
 
 func send_net_data(dict: Dictionary):

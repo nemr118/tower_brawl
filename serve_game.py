@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-TowerBrawl Relay Server
-- HTTP  :8000  (desktop web game)
-- HTTPS :8443  (mobile web game with SSL)
-- WS    :8081  (desktop WebSocket — plain)
-- WSS   :8444  (mobile WebSocket — SSL)
+TowerBrawl Relay Server — Clean Single-Lobby Design
+- HTTP  :8000   desktop web game
+- HTTPS :8443   mobile web game (SSL)
+- WS    :8081   desktop WebSocket (plain)
+- WSS   :8444   mobile WebSocket (SSL)
 
-CRITICAL: All four endpoints share ONE lobby (player_slots).
-Desktop (ws://127.0.0.1:8081) and phones (wss://192.168.4.21:8444)
-are in the SAME match room and relay messages to each other.
+All four endpoints share ONE player_slots list.
+Dead-socket detection prevents stale slots from blocking reconnects.
 """
 
 import http.server
@@ -33,18 +32,27 @@ BUILD_DIR = os.path.join(BASE_DIR, "build", "web")
 CERT_FILE = os.path.join(BASE_DIR, "cert.pem")
 KEY_FILE  = os.path.join(BASE_DIR, "key.pem")
 
-# ── Shared lobby state ────────────────────────────────────────────────────────
-# ALL connections — both plain WS and SSL WSS — share this single list.
-player_slots  = [None, None, None, None]
-player_locked = {}
+# ── Shared lobby ──────────────────────────────────────────────────────────────
+player_slots  = [None, None, None, None]   # index 0 = P1
+player_locked = {}                         # {player_id(int): class_int}
 lobby_lock    = threading.Lock()
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+# ── WebSocket helpers ─────────────────────────────────────────────────────────
+def _recvall(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("socket closed")
+        buf += chunk
+    return buf
+
 def ws_handshake(sock):
     try:
-        sock.settimeout(5.0)
+        sock.settimeout(6.0)
         raw = sock.recv(4096).decode("utf-8", errors="ignore")
         headers = {}
         for line in raw.split("\r\n"):
@@ -68,25 +76,14 @@ def ws_handshake(sock):
     except Exception:
         return False
 
-def _recvall(sock, n):
-    buf = b""
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            raise ConnectionError("socket closed")
-        buf += chunk
-    return buf
-
 def ws_read(sock):
     try:
         head = _recvall(sock, 2)
-        if not head:
-            return None
         b1, b2 = head[0], head[1]
         opcode = b1 & 0x0F
-        if opcode == 8:
+        if opcode == 8:          # close
             return None
-        if opcode not in (1, 2):
+        if opcode not in (1, 2): # skip ping/pong
             return ""
         masked = bool(b2 & 0x80)
         plen   = b2 & 0x7F
@@ -111,26 +108,64 @@ def ws_send(sock, text):
         if n <= 125:
             frame.append(n)
         elif n <= 65535:
-            frame += bytearray([126]) + struct.pack(">H", n)
+            frame += bytes([126]) + struct.pack(">H", n)
         else:
-            frame += bytearray([127]) + struct.pack(">Q", n)
+            frame += bytes([127]) + struct.pack(">Q", n)
         frame += payload
         sock.sendall(bytes(frame))
         return True
     except Exception:
         return False
 
+def is_socket_alive(sock):
+    """Quick non-blocking check — returns False if the socket is dead."""
+    try:
+        sock.setblocking(False)
+        data = sock.recv(1, socket.MSG_PEEK)
+        sock.setblocking(True)
+        return True   # data waiting (or empty keep-alive)
+    except BlockingIOError:
+        sock.setblocking(True)
+        return True   # nothing waiting but socket is alive
+    except Exception:
+        try: sock.setblocking(True)
+        except: pass
+        return False  # closed / reset
+
 def broadcast(msg, exclude=None):
     with lobby_lock:
-        targets = [s for s in player_slots if s and s is not exclude]
-    for s in targets:
-        ws_send(s, msg)
+        targets = [(i, s) for i, s in enumerate(player_slots) if s and s is not exclude]
+    dead = []
+    for i, s in targets:
+        if not ws_send(s, msg):
+            dead.append((i, s))
+    # Evict any sockets that failed to receive
+    if dead:
+        with lobby_lock:
+            for i, s in dead:
+                if player_slots[i] is s:
+                    player_slots[i] = None
+                    player_locked.pop(i + 1, None)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def evict_dead_slots():
+    """Scan all slots and free any that are no longer alive."""
+    with lobby_lock:
+        for i in range(4):
+            s = player_slots[i]
+            if s and not is_socket_alive(s):
+                print(f"[SERVER] Evicting dead socket in slot {i+1}")
+                player_slots[i] = None
+                player_locked.pop(i + 1, None)
 
 def ws_client_thread(sock, addr, label):
     if not ws_handshake(sock):
         try: sock.close()
         except: pass
         return
+
+    # Evict dead sockets before trying to claim a slot
+    evict_dead_slots()
 
     assigned_id = None
     with lobby_lock:
@@ -144,15 +179,18 @@ def ws_client_thread(sock, addr, label):
         ws_send(sock, json.dumps({"type": "server_full"}))
         try: sock.close()
         except: pass
-        print(f"[{label}] Server full — rejected {addr}")
+        with lobby_lock:
+            active = [i+1 for i in range(4) if player_slots[i]]
+        print(f"[{label}] Server full — rejected {addr}  slots={active}")
         return
 
     with lobby_lock:
         active = [i+1 for i in range(4) if player_slots[i]]
         locked = {str(k): v for k, v in player_locked.items()}
 
-    print(f"[{label}] P{assigned_id} JOINED  active={active}")
+    print(f"[{label}] P{assigned_id} JOINED  active={active}  addr={addr}")
 
+    # Tell this client who they are and the current lobby state
     ws_send(sock, json.dumps({
         "type":           "assign_id",
         "id":             assigned_id,
@@ -160,12 +198,14 @@ def ws_client_thread(sock, addr, label):
         "locked_players": locked,
     }))
 
+    # Tell all existing clients a new player joined
     broadcast(json.dumps({
         "type":           "player_joined",
         "id":             assigned_id,
         "active_players": active,
     }), exclude=sock)
 
+    # ── Main receive loop ─────────────────────────────────────────────────────
     try:
         while True:
             msg = ws_read(sock)
@@ -173,6 +213,7 @@ def ws_client_thread(sock, addr, label):
                 break
             if not msg:
                 continue
+            # Track lock-ins so late-joiners get caught up
             try:
                 data = json.loads(msg)
                 if data.get("type") == "lock_in":
@@ -185,7 +226,9 @@ def ws_client_thread(sock, addr, label):
             broadcast(msg, exclude=sock)
     except Exception:
         pass
+    # ─────────────────────────────────────────────────────────────────────────
 
+    # Cleanup
     with lobby_lock:
         if player_slots[assigned_id - 1] is sock:
             player_slots[assigned_id - 1] = None
@@ -203,6 +246,7 @@ def ws_client_thread(sock, addr, label):
     try: sock.close()
     except: pass
 
+# ── Listeners ─────────────────────────────────────────────────────────────────
 def start_ws():
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -239,7 +283,7 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         super().end_headers()
     def log_message(self, fmt, *args):
-        pass  # suppress file-request noise; keep WS logs readable
+        pass
 
 def start_http():
     socketserver.TCPServer.allow_reuse_address = True
@@ -271,11 +315,9 @@ if __name__ == "__main__":
 
     ip = local_ip()
     print("\n" + "="*60)
-    print("  TOWERBRAWL 4-Player Family Server")
+    print("  TOWERBRAWL — 4-Player Family Server")
     print(f"  Phones / tablets  -> https://{ip}:{HTTPS_PORT}")
     print(f"  PC / browser      -> http://{ip}:{HTTP_PORT}")
-    print(f"  WS  (desktop)     -> ws://{ip}:{WS_PORT}")
-    print(f"  WSS (mobile)      -> wss://{ip}:{WSS_PORT}")
     print("  WS + WSS share ONE lobby. Everyone sees everyone.")
     print("="*60 + "\n")
 
