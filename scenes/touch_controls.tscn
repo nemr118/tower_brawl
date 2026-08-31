@@ -1,0 +1,90 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/touch_controls.gd" id="1_touch"]
+
+[node name="TouchControls" type="CanvasLayer"]
+layer = 5
+script = ExtResource("1_touch")
+
+[node name="JoystickBase" type="ColorRect" parent="."]
+offset_left = 35.0
+offset_top = 220.0
+offset_right = 145.0
+offset_bottom = 330.0
+color = Color(0.2, 0.3, 0.5, 0.25)
+
+[node name="Thumb" type="ColorRect" parent="JoystickBase"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -22.0
+offset_top = -22.0
+offset_right = 22.0
+offset_bottom = 22.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.38, 0.65, 0.98, 0.7)
+
+[node name="Buttons" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -180.0
+grow_horizontal = 0
+grow_vertical = 0
+
+[node name="BtnJump" type="Button" parent="Buttons"]
+layout_mode = 0
+offset_left = 70.0
+offset_top = 110.0
+offset_right = 125.0
+offset_bottom = 165.0
+text = "JUMP"
+
+[node name="BtnAttack" type="Button" parent="Buttons"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 55.0
+offset_right = 65.0
+offset_bottom = 110.0
+text = "ATK"
+
+[node name="BtnSpecial" type="Button" parent="Buttons"]
+layout_mode = 0
+offset_left = 70.0
+offset_top = 0.0
+offset_right = 125.0
+offset_bottom = 55.0
+text = "SPEC"
+
+[node name="BtnDash" type="Button" parent="Buttons"]
+layout_mode = 0
+offset_left = 130.0
+offset_top = 55.0
+offset_right = 185.0
+offset_bottom = 110.0
+text = "DASH"
+
+[node name="ToggleTouchBtn" type="Button" parent="."]
+offset_left = 10.0
+offset_top = 10.0
+offset_right = 95.0
+offset_bottom = 35.0
+theme_override_font_sizes/font_size = 9
+text = "TOUCH: ON"
+
+[connection signal="button_down" from="Buttons/BtnJump" to="." method="_on_btn_jump_pressed"]
+[connection signal="button_up" from="Buttons/BtnJump" to="." method="_on_btn_jump_released"]
+[connection signal="button_down" from="Buttons/BtnAttack" to="." method="_on_btn_attack_pressed"]
+[connection signal="button_up" from="Buttons/BtnAttack" to="." method="_on_btn_attack_released"]
+[connection signal="button_down" from="Buttons/BtnSpecial" to="." method="_on_btn_special_pressed"]
+[connection signal="button_up" from="Buttons/BtnSpecial" to="." method="_on_btn_special_released"]
+[connection signal="button_down" from="Buttons/BtnDash" to="." method="_on_btn_dash_pressed"]
+[connection signal="button_up" from="Buttons/BtnDash" to="." method="_on_btn_dash_released"]

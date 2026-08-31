@@ -9,7 +9,7 @@ config_version=5
 config/name="TowerBrawl"
 config/description="TowerFall x Brawlhalla style party brawler for family and friends"
 config/version="1.0.0"
-run/main_scene="res://scenes/arena.tscn"
+run/main_scene="res://scenes/character_select.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 boot_splash/bg_color=Color(0.08, 0.08, 0.12, 1)
 

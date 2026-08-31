@@ -1,0 +1,347 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/character_select.gd" id="1_select"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_title"]
+font_size = 18
+outline_size = 4
+outline_color = Color(0, 0, 0, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_sub"]
+font_size = 10
+font_color = Color(0.7, 0.75, 0.85, 1)
+outline_size = 2
+outline_color = Color(0, 0, 0, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_champ_name"]
+font_size = 22
+outline_size = 4
+outline_color = Color(0, 0, 0, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_champ_title"]
+font_size = 11
+font_color = Color(0.85, 0.75, 0.4, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_banner"]
+font_size = 16
+font_color = Color(1, 0.9, 0.3, 1)
+outline_size = 4
+outline_color = Color(0, 0, 0, 1)
+
+[node name="CharacterSelect" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_select")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.06, 0.06, 0.1, 1)
+
+[node name="TitleBar" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 10.0
+offset_bottom = 35.0
+grow_horizontal = 2
+text = "⚡ TOWERBRAWL: CHOOSE YOUR CHAMPION ⚡"
+label_settings = SubResource("LabelSettings_title")
+horizontal_alignment = 1
+
+[node name="SubTitle" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 32.0
+offset_bottom = 48.0
+grow_horizontal = 2
+text = "Secret Blind Pick: Opponents only see your card back until the match begins!"
+label_settings = SubResource("LabelSettings_sub")
+horizontal_alignment = 1
+
+[node name="CardShowcase" type="ColorRect" parent="."]
+layout_mode = 0
+offset_left = 30.0
+offset_top = 58.0
+offset_right = 380.0
+offset_bottom = 335.0
+color = Color(0.12, 0.12, 0.18, 0.9)
+
+[node name="ChampionName" type="Label" parent="CardShowcase"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 12.0
+offset_bottom = 40.0
+grow_horizontal = 2
+text = "🏹 RANGER"
+label_settings = SubResource("LabelSettings_champ_name")
+horizontal_alignment = 1
+
+[node name="ChampionTitle" type="Label" parent="CardShowcase"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 38.0
+offset_bottom = 54.0
+grow_horizontal = 2
+text = "« Master Archer »"
+label_settings = SubResource("LabelSettings_champ_title")
+horizontal_alignment = 1
+
+[node name="ChampionDesc" type="Label" parent="CardShowcase"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 15.0
+offset_top = 62.0
+offset_right = -15.0
+offset_bottom = 98.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 10
+text = "Precision arrows, catches incoming projectiles mid-air, and tactical backflip shot."
+autowrap_mode = 2
+
+[node name="Skills" type="VBoxContainer" parent="CardShowcase"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 15.0
+offset_top = 105.0
+offset_right = -15.0
+offset_bottom = 175.0
+grow_horizontal = 2
+theme_override_constants/separation = 6
+
+[node name="PrimaryLabel" type="Label" parent="CardShowcase/Skills"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "🏹 Primary: Precision Bow (3 Arrows)"
+
+[node name="SpecialLabel" type="Label" parent="CardShowcase/Skills"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "💨 Special: Backflip Retreat Shot"
+
+[node name="NavButtons" type="HBoxContainer" parent="CardShowcase"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 15.0
+offset_top = -90.0
+offset_right = -15.0
+offset_bottom = -55.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/separation = 12
+
+[node name="BtnPrev" type="Button" parent="CardShowcase/NavButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 11
+text = "« PREVIOUS"
+
+[node name="BtnNext" type="Button" parent="CardShowcase/NavButtons"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 11
+text = "NEXT »"
+
+[node name="LockInButton" type="Button" parent="CardShowcase"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 15.0
+offset_top = -45.0
+offset_right = -15.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_font_sizes/font_size = 13
+text = "⚡ LOCK IN CHAMPION"
+
+[node name="Roster" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_left = 405.0
+offset_top = 58.0
+offset_right = 610.0
+offset_bottom = 335.0
+theme_override_constants/separation = 8
+
+[node name="P1Card" type="ColorRect" parent="Roster"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+color = Color(0.15, 0.15, 0.22, 0.9)
+
+[node name="Icon" type="Label" parent="Roster/P1Card"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 14.0
+offset_right = 45.0
+offset_bottom = 46.0
+theme_override_font_sizes/font_size = 20
+text = "🏹"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Name" type="Label" parent="Roster/P1Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 10.0
+offset_right = 190.0
+offset_bottom = 28.0
+theme_override_font_sizes/font_size = 11
+text = "Player 1 (You)"
+
+[node name="Status" type="Label" parent="Roster/P1Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 30.0
+offset_right = 190.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 11
+text = "Choosing..."
+
+[node name="P2Card" type="ColorRect" parent="Roster"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+color = Color(0.15, 0.15, 0.22, 0.9)
+
+[node name="Icon" type="Label" parent="Roster/P2Card"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 14.0
+offset_right = 45.0
+offset_bottom = 46.0
+theme_override_font_sizes/font_size = 20
+text = "🔒"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Name" type="Label" parent="Roster/P2Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 10.0
+offset_right = 190.0
+offset_bottom = 28.0
+theme_override_font_sizes/font_size = 11
+text = "Player 2"
+
+[node name="Status" type="Label" parent="Roster/P2Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 30.0
+offset_right = 190.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 11
+text = "Choosing..."
+
+[node name="P3Card" type="ColorRect" parent="Roster"]
+visible = false
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+color = Color(0.15, 0.15, 0.22, 0.9)
+
+[node name="Icon" type="Label" parent="Roster/P3Card"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 14.0
+offset_right = 45.0
+offset_bottom = 46.0
+theme_override_font_sizes/font_size = 20
+text = "🔒"
+
+[node name="Name" type="Label" parent="Roster/P3Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 10.0
+offset_right = 190.0
+offset_bottom = 28.0
+theme_override_font_sizes/font_size = 11
+text = "Player 3"
+
+[node name="Status" type="Label" parent="Roster/P3Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 30.0
+offset_right = 190.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 11
+text = "Choosing..."
+
+[node name="P4Card" type="ColorRect" parent="Roster"]
+visible = false
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+color = Color(0.15, 0.15, 0.22, 0.9)
+
+[node name="Icon" type="Label" parent="Roster/P4Card"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 14.0
+offset_right = 45.0
+offset_bottom = 46.0
+theme_override_font_sizes/font_size = 20
+text = "🔒"
+
+[node name="Name" type="Label" parent="Roster/P4Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 10.0
+offset_right = 190.0
+offset_bottom = 28.0
+theme_override_font_sizes/font_size = 11
+text = "Player 4"
+
+[node name="Status" type="Label" parent="Roster/P4Card"]
+layout_mode = 0
+offset_left = 52.0
+offset_top = 30.0
+offset_right = 190.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 11
+text = "Choosing..."
+
+[node name="RevealBanner" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -250.0
+offset_top = -30.0
+offset_right = 250.0
+offset_bottom = 30.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="BannerLabel" type="Label" parent="RevealBanner"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "⚡ ALL PLAYERS LOCKED IN! ⚡"
+label_settings = SubResource("LabelSettings_banner")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[connection signal="pressed" from="CardShowcase/NavButtons/BtnPrev" to="." method="_on_btn_prev_pressed"]
+[connection signal="pressed" from="CardShowcase/NavButtons/BtnNext" to="." method="_on_btn_next_pressed"]
+[connection signal="pressed" from="CardShowcase/LockInButton" to="." method="_on_lock_in_button_pressed"]
