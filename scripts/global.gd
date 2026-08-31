@@ -198,9 +198,11 @@ func _handle_net_packet(msg_str: String):
 		for action in InputMap.get_actions():
 			if action.begins_with(prefix):
 				var events = InputMap.action_get_events(action)
+				InputMap.action_erase_events(action)
 				for ev in events:
 					if ev is InputEventJoypadButton or ev is InputEventJoypadMotion:
 						ev.device = -1
+					InputMap.action_add_event(action, ev)
 		
 		active_players.clear()
 		for x in data.get("active_players", [1]):
