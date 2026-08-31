@@ -17,6 +17,8 @@ var ws: WebSocketPeer = WebSocketPeer.new()
 var is_connected: bool = false
 var my_player_id: int = 1
 var server_url: String = ""
+var active_players: Array[int] = [1]
+var locked_opponents: Dictionary = {}
 
 func _ready():
 	_determine_url_and_connect()
@@ -84,28 +86,46 @@ func _handle_packet(msg_str: String):
 	if type == "assign_id":
 		my_player_id = int(data.get("id", 1))
 		print("🎮 Assigned Player ID: ", my_player_id)
-		emit_signal("connected_to_server", my_player_id)
 		
-		# Process any already locked opponents
+		active_players.clear()
+		for x in data.get("active_players", [1]):
+			active_players.append(int(x))
+		if not active_players.has(my_player_id):
+			active_players.append(my_player_id)
+			
+		emit_signal("connected_to_server", my_player_id)
+		emit_signal("player_joined_room", my_player_id, active_players)
+		
 		var locked_map = data.get("locked_players", {})
 		for p_str in locked_map:
 			var p_id = int(p_str)
+			var c_type = int(locked_map[p_str])
+			locked_opponents[p_id] = c_type
 			if p_id != my_player_id:
-				emit_signal("opponent_locked_in", p_id, int(locked_map[p_str]))
+				emit_signal("opponent_locked_in", p_id, c_type)
 				
 	elif type == "player_joined":
 		var p_id = int(data.get("id", 1))
-		var active = data.get("active_players", [])
-		emit_signal("player_joined_room", p_id, active)
+		active_players.clear()
+		for x in data.get("active_players", []):
+			active_players.append(int(x))
+		if not active_players.has(p_id):
+			active_players.append(p_id)
+		emit_signal("player_joined_room", p_id, active_players)
 		
 	elif type == "player_left":
 		var p_id = int(data.get("id", 1))
-		var active = data.get("active_players", [])
-		emit_signal("player_left_room", p_id, active)
+		active_players.clear()
+		for x in data.get("active_players", []):
+			active_players.append(int(x))
+		if locked_opponents.has(p_id):
+			locked_opponents.erase(p_id)
+		emit_signal("player_left_room", p_id, active_players)
 		
 	elif type == "lock_in":
 		var p_id = int(data.get("sender", 1))
 		var c_type = int(data.get("class", 0))
+		locked_opponents[p_id] = c_type
 		emit_signal("opponent_locked_in", p_id, c_type)
 		
 	elif type == "sync_pos":

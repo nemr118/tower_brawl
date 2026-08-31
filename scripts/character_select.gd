@@ -1,16 +1,15 @@
 extends Control
 
-## Dynamic Player Lobby & Secret Character Selection Draft Screen
-## Automatically starts with 2, 3, or 4 players based on who is connected!
+## Dynamic 4-Player Secret Character Selection Draft Screen
 
 var local_player_id: int = 1
 var selected_class_idx: int = 0
 var is_locked_in: bool = false
 var locked_players = {}
-var active_player_ids = [1]
+var active_player_ids: Array[int] = [1]
 var is_revealing: bool = false
 
-@onready var title_label = $CardShowcase/ChampionTitle
+@onready var title_label = $TitleBar
 @onready var name_label = $CardShowcase/ChampionName
 @onready var desc_label = $CardShowcase/ChampionDesc
 @onready var primary_label = $CardShowcase/Skills/PrimaryLabel
@@ -51,37 +50,54 @@ const SKILL_DETAILS = {
 
 func _ready():
 	local_player_id = NetworkManager.my_player_id
+	active_player_ids = NetworkManager.active_players.duplicate()
+	locked_players = NetworkManager.locked_opponents.duplicate()
+	
 	NetworkManager.connect("connected_to_server", Callable(self, "_on_connected_to_server"))
 	NetworkManager.connect("player_joined_room", Callable(self, "_on_player_joined"))
 	NetworkManager.connect("player_left_room", Callable(self, "_on_player_left"))
 	NetworkManager.connect("opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
 	
-	_update_active_players([1])
+	_sync_global_configs()
 	_update_showcase()
 	_update_roster()
 
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
 	print("🎯 Local player assigned to Slot P", local_player_id)
+	_sync_global_configs()
 	_update_roster()
 
 func _on_player_joined(p_id: int, active_list):
 	print("👋 Player ", p_id, " joined the match room! Active: ", active_list)
-	_update_active_players(active_list)
-	_update_roster()
-
-func _on_player_left(p_id: int, active_list):
-	print("🚪 Player ", p_id, " left the room. Active: ", active_list)
-	if p_id in locked_players:
-		locked_players.erase(p_id)
-	_update_active_players(active_list)
+	active_player_ids.clear()
+	for x in active_list:
+		active_player_ids.append(int(x))
+	if not active_player_ids.has(local_player_id):
+		active_player_ids.append(local_player_id)
+		
+	_sync_global_configs()
 	_update_roster()
 	_check_all_ready()
 
-func _update_active_players(active_list):
-	active_player_ids = active_list
+func _on_player_left(p_id: int, active_list):
+	print("🚪 Player ", p_id, " left the room. Active: ", active_list)
+	active_player_ids.clear()
+	for x in active_list:
+		active_player_ids.append(int(x))
+	if not active_player_ids.has(local_player_id):
+		active_player_ids.append(local_player_id)
+		
+	if p_id in locked_players:
+		locked_players.erase(p_id)
+		
+	_sync_global_configs()
+	_update_roster()
+	_check_all_ready()
+
+func _sync_global_configs():
 	for p_id in range(1, 5):
-		Global.player_configs[p_id]["active"] = (p_id in active_list or p_id == local_player_id)
+		Global.player_configs[p_id]["active"] = (p_id in active_player_ids or p_id == local_player_id)
 
 func _on_opponent_locked_in(opp_id: int, opp_class: int):
 	print("🔒 Opponent P", opp_id, " locked in secretly with class: ", opp_class)
@@ -115,9 +131,7 @@ func _update_showcase():
 	
 	name_label.text = c_info["icon"] + " " + c_info["name"].to_upper()
 	name_label.modulate = c_info["color"]
-	title_label.text = "« " + c_info["title"] + " »"
 	desc_label.text = c_info["desc"]
-	
 	primary_label.text = s_info["primary"]
 	special_label.text = s_info["special"]
 
@@ -152,7 +166,7 @@ func _update_player_card(card: Control, p_id: int):
 	var icon_lbl = card.get_node("Icon")
 	
 	if not is_active:
-		card.color = Color(0.08, 0.08, 0.12, 0.5)
+		card.color = Color(0.08, 0.08, 0.12, 0.4)
 		name_lbl.text = "Player " + str(p_id)
 		name_lbl.modulate = Color(0.4, 0.4, 0.4)
 		icon_lbl.text = "✖️"
@@ -196,14 +210,15 @@ func _check_all_ready():
 		if p_id in locked_players:
 			locked_count += 1
 			
-	# Start if all currently connected players (at least 2, or 1 for test) are locked in!
+	print("📊 Lobby Status: ", locked_count, "/", active_count, " locked in.")
+	
 	if active_count >= 1 and locked_count >= active_count and not is_revealing:
 		is_revealing = true
 		_start_reveal_countdown(active_count)
 
 func _start_reveal_countdown(player_count: int):
 	banner_label.visible = true
-	var count_str = str(player_count) + "-PLAYER MATCH"
+	var count_str = str(player_count) + "-PLAYER BATTLE"
 	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 3..."
 	await get_tree().create_timer(1.0).timeout
 	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 2..."
