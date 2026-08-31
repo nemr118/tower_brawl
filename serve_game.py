@@ -37,6 +37,15 @@ player_slots  = [None, None, None, None]
 player_locked = {}
 player_names  = {}          # {player_id(int): class_int}
 lobby_lock    = threading.Lock()
+
+global_match_state = 'LOBBY'
+global_playing_players = []
+global_waiting_players = []
+global_current_round = 1
+global_player_scores = {1: 0, 2: 0, 3: 0, 4: 0}
+global_player_stocks = {1: 3, 2: 3, 3: 3, 4: 3}
+global_alive_players = set()
+global_is_round_over = False
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"

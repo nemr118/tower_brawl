@@ -52,7 +52,7 @@ const SKILL_DETAILS = {
 	},
 	Global.ClassType.MAGE: {
 		"primary": "🔮 Arcane Firebolt (3 Exploding fire charges)",
-		"special": "⚡ Void Blink (Instantaneous 95px teleport in aim direction)"
+		"special": "Void Blink (Instantaneous 95px teleport in aim direction)"
 	},
 	Global.ClassType.ROGUE: {
 		"primary": "🗡️ Thrown Kunai (4 Rapid throwing blades)",
@@ -71,7 +71,7 @@ func _ready():
 	show_tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	show_tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	show_tr.size = Vector2(40, 40)
-	show_tr.position = Vector2(name_label.position.x - 45, name_label.position.y)
+	show_tr.position = Vector2(20, 2)
 	name_label.get_parent().add_child(show_tr)
 	name_label.get_parent().move_child(show_tr, name_label.get_index())
 
@@ -197,7 +197,7 @@ func _lock_in_champion():
 	Global.player_configs[local_player_id]["class"] = chosen_class
 	locked_players[local_player_id] = chosen_class
 	
-	lock_btn.text = "✅ CHAMPION LOCKED IN!"
+	lock_btn.text = "CHAMPION LOCKED IN!"
 	lock_btn.disabled = true
 	lock_btn.modulate = Color(0.4, 0.9, 0.4)
 	
@@ -224,13 +224,13 @@ func _update_player_card(card: Control, p_id: int):
 		
 	var name_lbl = card.get_node("Name")
 	var status_lbl = card.get_node("Status")
-	var icon_lbl = card.get_node("Icon")
+	var icon_lbl = card.get_node_or_null("Icon")
 	
 	if not is_active:
 		card.color = Color(0.08, 0.08, 0.12, 0.4)
 		name_lbl.text = "Player " + str(p_id)
 		name_lbl.modulate = Color(0.4, 0.4, 0.4)
-		icon_lbl.text = "✖️"
+		if card.has_node("IconTex"): card.get_node("IconTex").texture = load("res://assets/icons/empty.jpg")
 		status_lbl.text = "Empty Slot"
 		status_lbl.modulate = Color(0.35, 0.35, 0.35)
 		return
@@ -243,22 +243,22 @@ func _update_player_card(card: Control, p_id: int):
 		if p_id == local_player_id or is_revealing:
 			var c_type = locked_players[p_id]
 			var c_info = Global.CLASS_INFO[c_type]
-			icon_lbl.text = c_info["icon"]
+			if card.has_node("IconTex"): card.get_node("IconTex").texture = load(c_info["icon_tex"])
 			status_lbl.text = c_info["name"].to_upper()
 			status_lbl.modulate = c_info["color"]
 		else:
-			icon_lbl.text = "🔒"
+			if card.has_node("IconTex"): card.get_node("IconTex").texture = load("res://assets/icons/locked.jpg")
 			status_lbl.text = "READY (SECRET)"
 			status_lbl.modulate = Color(1.0, 0.85, 0.3)
 	else:
 		if p_id == local_player_id:
 			var cur_c_type = CHAMPION_KEYS[selected_class_idx]
 			var cur_c_info = Global.CLASS_INFO[cur_c_type]
-			icon_lbl.text = cur_c_info["icon"]
+			if card.has_node("IconTex"): card.get_node("IconTex").texture = load(cur_c_info["icon_tex"])
 			status_lbl.text = "Selecting..."
 			status_lbl.modulate = Color(0.9, 0.9, 0.9)
 		else:
-			icon_lbl.text = "⏳"
+			if card.has_node("IconTex"): card.get_node("IconTex").texture = load("res://assets/icons/waiting.jpg")
 			status_lbl.text = "Choosing..."
 			status_lbl.modulate = Color(0.6, 0.6, 0.6)
 
@@ -307,14 +307,14 @@ func _trigger_start(player_count: int):
 func _start_reveal_countdown(player_count: int):
 	banner_label.visible = true
 	var count_str = str(player_count) + "-PLAYER BATTLE"
-	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 3..."
+	banner_label.text = "" + count_str + " READY! ⚡\nRevealing Champions in 3..."
 	await get_tree().create_timer(1.0).timeout
-	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 2..."
+	banner_label.text = "" + count_str + " READY! ⚡\nRevealing Champions in 2..."
 	await get_tree().create_timer(1.0).timeout
-	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 1..."
+	banner_label.text = "" + count_str + " READY! ⚡\nRevealing Champions in 1..."
 	await get_tree().create_timer(1.0).timeout
 	
-	banner_label.text = "💥 CHAMPIONS REVEALED! ENTERING ARENA! 💥"
+	banner_label.text = "CHAMPIONS REVEALED! ENTERING ARENA! 💥"
 	_update_roster()
 	
 	await get_tree().create_timer(1.6).timeout
