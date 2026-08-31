@@ -1,0 +1,233 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/arena.gd" id="1_arena"]
+[ext_resource type="Script" path="res://scripts/platform.gd" id="2_platform"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
+size = Vector2(640, 50)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_ledge"]
+size = Vector2(110, 12)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_high_ledge"]
+size = Vector2(90, 12)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_center"]
+size = Vector2(130, 14)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_apex"]
+size = Vector2(80, 10)
+
+[sub_resource type="LabelSettings" id="LabelSettings_banner"]
+font_size = 20
+outline_size = 4
+outline_color = Color(0, 0, 0, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_hud"]
+font_size = 11
+outline_size = 3
+outline_color = Color(0, 0, 0, 1)
+
+[node name="Arena" type="Node2D"]
+script = ExtResource("1_arena")
+
+[node name="Platforms" type="Node2D" parent="."]
+
+[node name="Ground" type="StaticBody2D" parent="Platforms"]
+position = Vector2(320, 335)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(640, 50)
+is_ground = true
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/Ground"]
+shape = SubResource("RectangleShape2D_ground")
+
+[node name="LedgeLeft" type="StaticBody2D" parent="Platforms"]
+position = Vector2(110, 230)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(110, 12)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeLeft"]
+shape = SubResource("RectangleShape2D_ledge")
+one_way_collision = true
+
+[node name="LedgeRight" type="StaticBody2D" parent="Platforms"]
+position = Vector2(530, 230)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(110, 12)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeRight"]
+shape = SubResource("RectangleShape2D_ledge")
+one_way_collision = true
+
+[node name="LedgeHighLeft" type="StaticBody2D" parent="Platforms"]
+position = Vector2(170, 140)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(90, 12)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeHighLeft"]
+shape = SubResource("RectangleShape2D_high_ledge")
+one_way_collision = true
+
+[node name="LedgeHighRight" type="StaticBody2D" parent="Platforms"]
+position = Vector2(470, 140)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(90, 12)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeHighRight"]
+shape = SubResource("RectangleShape2D_high_ledge")
+one_way_collision = true
+
+[node name="CenterTower" type="StaticBody2D" parent="Platforms"]
+position = Vector2(320, 185)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(130, 14)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterTower"]
+shape = SubResource("RectangleShape2D_center")
+one_way_collision = true
+
+[node name="CenterApex" type="StaticBody2D" parent="Platforms"]
+position = Vector2(320, 95)
+collision_mask = 0
+script = ExtResource("2_platform")
+size = Vector2(80, 10)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterApex"]
+shape = SubResource("RectangleShape2D_apex")
+one_way_collision = true
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="TopBar" type="HBoxContainer" parent="HUD"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 12.0
+offset_top = 8.0
+offset_right = -12.0
+offset_bottom = 45.0
+grow_horizontal = 2
+theme_override_constants/separation = 16
+
+[node name="P1Panel" type="VBoxContainer" parent="HUD/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="NameLabel" type="Label" parent="HUD/TopBar/P1Panel"]
+layout_mode = 2
+text = "P1 🏹 Ranger"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="StockLabel" type="Label" parent="HUD/TopBar/P1Panel"]
+layout_mode = 2
+text = "❤️❤️❤️"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P1Panel"]
+layout_mode = 2
+text = "👑 0"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="P2Panel" type="VBoxContainer" parent="HUD/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="NameLabel" type="Label" parent="HUD/TopBar/P2Panel"]
+layout_mode = 2
+text = "P2 ⚔️ Knight"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="StockLabel" type="Label" parent="HUD/TopBar/P2Panel"]
+layout_mode = 2
+text = "❤️❤️❤️"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P2Panel"]
+layout_mode = 2
+text = "👑 0"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="P3Panel" type="VBoxContainer" parent="HUD/TopBar"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="NameLabel" type="Label" parent="HUD/TopBar/P3Panel"]
+layout_mode = 2
+text = "P3 🔮 Mage"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="StockLabel" type="Label" parent="HUD/TopBar/P3Panel"]
+layout_mode = 2
+text = "❤️❤️❤️"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P3Panel"]
+layout_mode = 2
+text = "👑 0"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="P4Panel" type="VBoxContainer" parent="HUD/TopBar"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="NameLabel" type="Label" parent="HUD/TopBar/P4Panel"]
+layout_mode = 2
+text = "P4 🗡️ Rogue"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="StockLabel" type="Label" parent="HUD/TopBar/P4Panel"]
+layout_mode = 2
+text = "❤️❤️❤️"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="ScoreLabel" type="Label" parent="HUD/TopBar/P4Panel"]
+layout_mode = 2
+text = "👑 0"
+label_settings = SubResource("LabelSettings_hud")
+
+[node name="CenterBanner" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -40.0
+offset_right = 200.0
+offset_bottom = 40.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="BannerLabel" type="Label" parent="HUD/CenterBanner"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "ROUND 1 - FIGHT!"
+label_settings = SubResource("LabelSettings_banner")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="BottomGuide" type="Label" parent="HUD"]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+text = "P1: [WASD] + [J] Attack [K] Special [L] Dash  |  P2: [Arrows] + [/] Attack [.] Special [,] Dash  |  [Gamepads Supported]  |  [F1/F2] Switch Hero  |  [R] Reset"
+label_settings = SubResource("LabelSettings_hud")
+horizontal_alignment = 1
+vertical_alignment = 1
