@@ -37,7 +37,8 @@ const CHAMPION_KEYS = [
 	Global.ClassType.RANGER,
 	Global.ClassType.KNIGHT,
 	Global.ClassType.MAGE,
-	Global.ClassType.ROGUE
+	Global.ClassType.ROGUE,
+	Global.ClassType.DRUID
 ]
 
 const SKILL_DETAILS = {
@@ -56,6 +57,10 @@ const SKILL_DETAILS = {
 	Global.ClassType.ROGUE: {
 		"primary": "🗡️ Thrown Kunai (4 Rapid throwing blades)",
 		"special": "🌑 Shadow Ambush (Hyper-dash slices through all enemies)"
+	},
+	Global.ClassType.DRUID: {
+		"primary": "🌿 Nature's Thorns / Bear Swipe",
+		"special": "🐻 Toggle Bear Form (Ground) / 🥚 Phoenix Shield (Air)"
 	}
 }
 

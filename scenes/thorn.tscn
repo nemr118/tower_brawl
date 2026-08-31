@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/thorn.gd" id="1_thorn"]
+
+[node name="Thorn" type="Area2D"]
+collision_layer = 8
+collision_mask = 7
+script = ExtResource("1_thorn")

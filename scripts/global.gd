@@ -26,7 +26,8 @@ enum ClassType {
 	RANGER,
 	KNIGHT,
 	MAGE,
-	ROGUE
+	ROGUE,
+	DRUID
 }
 
 const CLASS_INFO = {
