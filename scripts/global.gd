@@ -164,6 +164,9 @@ func _handle_net_packet(msg_str: String):
 		
 	var type = data.get("type", "")
 	
+	if type == "force_start":
+		emit_signal("net_force_start")
+	
 	if type in ["assign_id", "player_joined", "player_left", "name_update"]:
 		if data.has("player_names"):
 			player_names.clear()
