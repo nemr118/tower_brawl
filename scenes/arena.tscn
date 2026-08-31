@@ -1,7 +1,6 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/arena.gd" id="1_arena"]
-[ext_resource type="Script" path="res://scripts/platform.gd" id="2_platform"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
 size = Vector2(640, 50)
@@ -31,14 +30,38 @@ outline_color = Color(0, 0, 0, 1)
 [node name="Arena" type="Node2D"]
 script = ExtResource("1_arena")
 
+[node name="Background" type="ColorRect" parent="."]
+offset_right = 640.0
+offset_bottom = 360.0
+color = Color(0.08, 0.08, 0.12, 1)
+
+[node name="MoonDecor" type="ColorRect" parent="Background"]
+layout_mode = 0
+offset_left = 285.0
+offset_top = 65.0
+offset_right = 355.0
+offset_bottom = 135.0
+color = Color(0.18, 0.2, 0.3, 0.35)
+
 [node name="Platforms" type="Node2D" parent="."]
 
 [node name="Ground" type="StaticBody2D" parent="Platforms"]
 position = Vector2(320, 335)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(640, 50)
-is_ground = true
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/Ground"]
+offset_left = -320.0
+offset_top = -25.0
+offset_right = 320.0
+offset_bottom = 25.0
+color = Color(0.2, 0.22, 0.28, 1)
+
+[node name="GrassTrim" type="ColorRect" parent="Platforms/Ground"]
+offset_left = -320.0
+offset_top = -25.0
+offset_right = 320.0
+offset_bottom = -21.0
+color = Color(0.4, 0.75, 0.4, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/Ground"]
 shape = SubResource("RectangleShape2D_ground")
@@ -46,8 +69,20 @@ shape = SubResource("RectangleShape2D_ground")
 [node name="LedgeLeft" type="StaticBody2D" parent="Platforms"]
 position = Vector2(110, 230)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(110, 12)
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeLeft"]
+offset_left = -55.0
+offset_top = -6.0
+offset_right = 55.0
+offset_bottom = 6.0
+color = Color(0.35, 0.25, 0.2, 1)
+
+[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeLeft"]
+offset_left = -55.0
+offset_top = -6.0
+offset_right = 55.0
+offset_bottom = -4.0
+color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeLeft"]
 shape = SubResource("RectangleShape2D_ledge")
@@ -56,8 +91,20 @@ one_way_collision = true
 [node name="LedgeRight" type="StaticBody2D" parent="Platforms"]
 position = Vector2(530, 230)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(110, 12)
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeRight"]
+offset_left = -55.0
+offset_top = -6.0
+offset_right = 55.0
+offset_bottom = 6.0
+color = Color(0.35, 0.25, 0.2, 1)
+
+[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeRight"]
+offset_left = -55.0
+offset_top = -6.0
+offset_right = 55.0
+offset_bottom = -4.0
+color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeRight"]
 shape = SubResource("RectangleShape2D_ledge")
@@ -66,8 +113,20 @@ one_way_collision = true
 [node name="LedgeHighLeft" type="StaticBody2D" parent="Platforms"]
 position = Vector2(170, 140)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(90, 12)
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeHighLeft"]
+offset_left = -45.0
+offset_top = -6.0
+offset_right = 45.0
+offset_bottom = 6.0
+color = Color(0.35, 0.25, 0.2, 1)
+
+[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeHighLeft"]
+offset_left = -45.0
+offset_top = -6.0
+offset_right = 45.0
+offset_bottom = -4.0
+color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeHighLeft"]
 shape = SubResource("RectangleShape2D_high_ledge")
@@ -76,8 +135,20 @@ one_way_collision = true
 [node name="LedgeHighRight" type="StaticBody2D" parent="Platforms"]
 position = Vector2(470, 140)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(90, 12)
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeHighRight"]
+offset_left = -45.0
+offset_top = -6.0
+offset_right = 45.0
+offset_bottom = 6.0
+color = Color(0.35, 0.25, 0.2, 1)
+
+[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeHighRight"]
+offset_left = -45.0
+offset_top = -6.0
+offset_right = 45.0
+offset_bottom = -4.0
+color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeHighRight"]
 shape = SubResource("RectangleShape2D_high_ledge")
@@ -86,8 +157,20 @@ one_way_collision = true
 [node name="CenterTower" type="StaticBody2D" parent="Platforms"]
 position = Vector2(320, 185)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(130, 14)
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/CenterTower"]
+offset_left = -65.0
+offset_top = -7.0
+offset_right = 65.0
+offset_bottom = 7.0
+color = Color(0.35, 0.25, 0.2, 1)
+
+[node name="WoodTrim" type="ColorRect" parent="Platforms/CenterTower"]
+offset_left = -65.0
+offset_top = -7.0
+offset_right = 65.0
+offset_bottom = -5.0
+color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterTower"]
 shape = SubResource("RectangleShape2D_center")
@@ -96,8 +179,20 @@ one_way_collision = true
 [node name="CenterApex" type="StaticBody2D" parent="Platforms"]
 position = Vector2(320, 95)
 collision_mask = 0
-script = ExtResource("2_platform")
-size = Vector2(80, 10)
+
+[node name="VisualBase" type="ColorRect" parent="Platforms/CenterApex"]
+offset_left = -40.0
+offset_top = -5.0
+offset_right = 40.0
+offset_bottom = 5.0
+color = Color(0.35, 0.25, 0.2, 1)
+
+[node name="WoodTrim" type="ColorRect" parent="Platforms/CenterApex"]
+offset_left = -40.0
+offset_top = -5.0
+offset_right = 40.0
+offset_bottom = -3.0
+color = Color(0.65, 0.5, 0.35, 1)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterApex"]
 shape = SubResource("RectangleShape2D_apex")
