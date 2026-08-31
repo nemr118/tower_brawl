@@ -239,7 +239,10 @@ func _handle_net_packet(msg_str: String):
 	
 	if type in ["assign_id", "player_joined", "player_left", "name_update", "spectator_state"]:
 		if data.has("active_players"):
-			active_players = data.get("active_players", [])
+			active_players.clear()
+			var a_players = data.get("active_players", [])
+			for x in a_players:
+				active_players.append(int(x))
 		if data.has("player_names"):
 			player_names.clear()
 			var p_names = data.get("player_names", {})
