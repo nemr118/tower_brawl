@@ -3,7 +3,7 @@
 [ext_resource type="Script" path="res://scripts/character_select.gd" id="1_select"]
 
 [sub_resource type="LabelSettings" id="LabelSettings_title"]
-font_size = 18
+font_size = 17
 outline_size = 4
 outline_color = Color(0, 0, 0, 1)
 
@@ -14,7 +14,7 @@ outline_size = 2
 outline_color = Color(0, 0, 0, 1)
 
 [sub_resource type="LabelSettings" id="LabelSettings_champ_name"]
-font_size = 22
+font_size = 20
 outline_size = 4
 outline_color = Color(0, 0, 0, 1)
 
@@ -50,10 +50,10 @@ color = Color(0.06, 0.06, 0.1, 1)
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_top = 10.0
-offset_bottom = 35.0
+offset_top = 8.0
+offset_bottom = 30.0
 grow_horizontal = 2
-text = "⚡ TOWERBRAWL: CHOOSE YOUR CHAMPION ⚡"
+text = "⚡ 4-PLAYER TOWERBRAWL: CHOOSE YOUR CHAMPION ⚡"
 label_settings = SubResource("LabelSettings_title")
 horizontal_alignment = 1
 
@@ -61,27 +61,27 @@ horizontal_alignment = 1
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_top = 32.0
-offset_bottom = 48.0
+offset_top = 28.0
+offset_bottom = 44.0
 grow_horizontal = 2
-text = "Secret Blind Pick: Opponents only see your card back until the match begins!"
+text = "Secret Blind Pick: Lock in your champion privately on your screen!"
 label_settings = SubResource("LabelSettings_sub")
 horizontal_alignment = 1
 
 [node name="CardShowcase" type="ColorRect" parent="."]
 layout_mode = 0
-offset_left = 30.0
-offset_top = 58.0
-offset_right = 380.0
-offset_bottom = 335.0
+offset_left = 20.0
+offset_top = 50.0
+offset_right = 370.0
+offset_bottom = 345.0
 color = Color(0.12, 0.12, 0.18, 0.9)
 
 [node name="ChampionName" type="Label" parent="CardShowcase"]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_top = 12.0
-offset_bottom = 40.0
+offset_top = 8.0
+offset_bottom = 34.0
 grow_horizontal = 2
 text = "🏹 RANGER"
 label_settings = SubResource("LabelSettings_champ_name")
@@ -91,8 +91,8 @@ horizontal_alignment = 1
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_top = 38.0
-offset_bottom = 54.0
+offset_top = 32.0
+offset_bottom = 48.0
 grow_horizontal = 2
 text = "« Master Archer »"
 label_settings = SubResource("LabelSettings_champ_title")
@@ -103,12 +103,12 @@ layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
 offset_left = 15.0
-offset_top = 62.0
+offset_top = 54.0
 offset_right = -15.0
-offset_bottom = 98.0
+offset_bottom = 88.0
 grow_horizontal = 2
 theme_override_font_sizes/font_size = 10
-text = "Precision arrows, catches incoming projectiles mid-air, and tactical backflip shot."
+text = "Precision multi-directional arrows, projectile catching, and recoil backflip shot."
 autowrap_mode = 2
 
 [node name="Skills" type="VBoxContainer" parent="CardShowcase"]
@@ -116,9 +116,9 @@ layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
 offset_left = 15.0
-offset_top = 105.0
+offset_top = 96.0
 offset_right = -15.0
-offset_bottom = 175.0
+offset_bottom = 166.0
 grow_horizontal = 2
 theme_override_constants/separation = 6
 
@@ -175,145 +175,147 @@ text = "⚡ LOCK IN CHAMPION"
 
 [node name="Roster" type="VBoxContainer" parent="."]
 layout_mode = 0
-offset_left = 405.0
-offset_top = 58.0
-offset_right = 610.0
-offset_bottom = 335.0
-theme_override_constants/separation = 8
+offset_left = 390.0
+offset_top = 50.0
+offset_right = 620.0
+offset_bottom = 345.0
+theme_override_constants/separation = 6
 
 [node name="P1Card" type="ColorRect" parent="Roster"]
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 52)
 layout_mode = 2
 color = Color(0.15, 0.15, 0.22, 0.9)
 
 [node name="Icon" type="Label" parent="Roster/P1Card"]
 layout_mode = 0
-offset_left = 10.0
-offset_top = 14.0
-offset_right = 45.0
-offset_bottom = 46.0
-theme_override_font_sizes/font_size = 20
+offset_left = 8.0
+offset_top = 10.0
+offset_right = 38.0
+offset_bottom = 40.0
+theme_override_font_sizes/font_size = 18
 text = "🏹"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Name" type="Label" parent="Roster/P1Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 10.0
-offset_right = 190.0
-offset_bottom = 28.0
+offset_left = 44.0
+offset_top = 6.0
+offset_right = 215.0
+offset_bottom = 24.0
 theme_override_font_sizes/font_size = 11
 text = "Player 1 (You)"
 
 [node name="Status" type="Label" parent="Roster/P1Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 30.0
-offset_right = 190.0
-offset_bottom = 48.0
-theme_override_font_sizes/font_size = 11
+offset_left = 44.0
+offset_top = 26.0
+offset_right = 215.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 10
 text = "Choosing..."
 
 [node name="P2Card" type="ColorRect" parent="Roster"]
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 52)
 layout_mode = 2
 color = Color(0.15, 0.15, 0.22, 0.9)
 
 [node name="Icon" type="Label" parent="Roster/P2Card"]
 layout_mode = 0
-offset_left = 10.0
-offset_top = 14.0
-offset_right = 45.0
-offset_bottom = 46.0
-theme_override_font_sizes/font_size = 20
+offset_left = 8.0
+offset_top = 10.0
+offset_right = 38.0
+offset_bottom = 40.0
+theme_override_font_sizes/font_size = 18
 text = "🔒"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Name" type="Label" parent="Roster/P2Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 10.0
-offset_right = 190.0
-offset_bottom = 28.0
+offset_left = 44.0
+offset_top = 6.0
+offset_right = 215.0
+offset_bottom = 24.0
 theme_override_font_sizes/font_size = 11
 text = "Player 2"
 
 [node name="Status" type="Label" parent="Roster/P2Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 30.0
-offset_right = 190.0
-offset_bottom = 48.0
-theme_override_font_sizes/font_size = 11
-text = "Choosing..."
+offset_left = 44.0
+offset_top = 26.0
+offset_right = 215.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 10
+text = "Waiting..."
 
 [node name="P3Card" type="ColorRect" parent="Roster"]
-visible = false
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 52)
 layout_mode = 2
 color = Color(0.15, 0.15, 0.22, 0.9)
 
 [node name="Icon" type="Label" parent="Roster/P3Card"]
 layout_mode = 0
-offset_left = 10.0
-offset_top = 14.0
-offset_right = 45.0
-offset_bottom = 46.0
-theme_override_font_sizes/font_size = 20
+offset_left = 8.0
+offset_top = 10.0
+offset_right = 38.0
+offset_bottom = 40.0
+theme_override_font_sizes/font_size = 18
 text = "🔒"
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="Name" type="Label" parent="Roster/P3Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 10.0
-offset_right = 190.0
-offset_bottom = 28.0
+offset_left = 44.0
+offset_top = 6.0
+offset_right = 215.0
+offset_bottom = 24.0
 theme_override_font_sizes/font_size = 11
 text = "Player 3"
 
 [node name="Status" type="Label" parent="Roster/P3Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 30.0
-offset_right = 190.0
-offset_bottom = 48.0
-theme_override_font_sizes/font_size = 11
-text = "Choosing..."
+offset_left = 44.0
+offset_top = 26.0
+offset_right = 215.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 10
+text = "Waiting..."
 
 [node name="P4Card" type="ColorRect" parent="Roster"]
-visible = false
-custom_minimum_size = Vector2(0, 60)
+custom_minimum_size = Vector2(0, 52)
 layout_mode = 2
 color = Color(0.15, 0.15, 0.22, 0.9)
 
 [node name="Icon" type="Label" parent="Roster/P4Card"]
 layout_mode = 0
-offset_left = 10.0
-offset_top = 14.0
-offset_right = 45.0
-offset_bottom = 46.0
-theme_override_font_sizes/font_size = 20
+offset_left = 8.0
+offset_top = 10.0
+offset_right = 38.0
+offset_bottom = 40.0
+theme_override_font_sizes/font_size = 18
 text = "🔒"
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="Name" type="Label" parent="Roster/P4Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 10.0
-offset_right = 190.0
-offset_bottom = 28.0
+offset_left = 44.0
+offset_top = 6.0
+offset_right = 215.0
+offset_bottom = 24.0
 theme_override_font_sizes/font_size = 11
 text = "Player 4"
 
 [node name="Status" type="Label" parent="Roster/P4Card"]
 layout_mode = 0
-offset_left = 52.0
-offset_top = 30.0
-offset_right = 190.0
-offset_bottom = 48.0
-theme_override_font_sizes/font_size = 11
-text = "Choosing..."
+offset_left = 44.0
+offset_top = 26.0
+offset_right = 215.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 10
+text = "Waiting..."
 
 [node name="RevealBanner" type="Control" parent="."]
 layout_mode = 1

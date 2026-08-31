@@ -24,7 +24,7 @@ outline_size = 4
 outline_color = Color(0, 0, 0, 1)
 
 [sub_resource type="LabelSettings" id="LabelSettings_hud"]
-font_size = 11
+font_size = 10
 outline_size = 3
 outline_color = Color(0, 0, 0, 1)
 
@@ -204,12 +204,12 @@ one_way_collision = true
 [node name="TopBar" type="HBoxContainer" parent="HUD"]
 anchors_preset = 10
 anchor_right = 1.0
-offset_left = 12.0
-offset_top = 8.0
-offset_right = -12.0
-offset_bottom = 45.0
+offset_left = 10.0
+offset_top = 6.0
+offset_right = -10.0
+offset_bottom = 44.0
 grow_horizontal = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 8
 
 [node name="P1Panel" type="VBoxContainer" parent="HUD/TopBar"]
 layout_mode = 2
@@ -217,7 +217,7 @@ size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P1Panel"]
 layout_mode = 2
-text = "P1 🏹 Ranger"
+text = "P1 🏹"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P1Panel"]
@@ -236,7 +236,7 @@ size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P2Panel"]
 layout_mode = 2
-text = "P2 ⚔️ Knight"
+text = "P2 ⚔️"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P2Panel"]
@@ -250,13 +250,12 @@ text = "👑 0"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="P3Panel" type="VBoxContainer" parent="HUD/TopBar"]
-visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P3Panel"]
 layout_mode = 2
-text = "P3 🔮 Mage"
+text = "P3 🔮"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P3Panel"]
@@ -270,13 +269,12 @@ text = "👑 0"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="P4Panel" type="VBoxContainer" parent="HUD/TopBar"]
-visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="NameLabel" type="Label" parent="HUD/TopBar/P4Panel"]
 layout_mode = 2
-text = "P4 🗡️ Rogue"
+text = "P4 🗡️"
 label_settings = SubResource("LabelSettings_hud")
 
 [node name="StockLabel" type="Label" parent="HUD/TopBar/P4Panel"]
@@ -296,9 +294,9 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -200.0
+offset_left = -220.0
 offset_top = -40.0
-offset_right = 200.0
+offset_right = 220.0
 offset_bottom = 40.0
 grow_horizontal = 2
 grow_vertical = 2
@@ -310,7 +308,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-text = "ROUND 1 - FIGHT!"
+text = "4-PLAYER BATTLE - FIGHT!"
 label_settings = SubResource("LabelSettings_banner")
 horizontal_alignment = 1
 vertical_alignment = 1

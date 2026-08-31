@@ -5,8 +5,8 @@ const PlayerScene = preload("res://scenes/player.tscn")
 var spawn_points = [
 	Vector2(90, 260),
 	Vector2(550, 260),
-	Vector2(160, 140),
-	Vector2(480, 140)
+	Vector2(170, 100),
+	Vector2(470, 100)
 ]
 
 var player_stocks = {}
@@ -30,23 +30,9 @@ func _ready():
 
 func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_F1:
-			_cycle_player_class(1)
-		elif event.keycode == KEY_F2:
-			_cycle_player_class(2)
-		elif event.keycode == KEY_R:
+		if event.keycode == KEY_R:
 			Global.reset_scores()
 			_start_new_match()
-
-func _cycle_player_class(p_id: int):
-	var current_class = Global.player_configs[p_id]["class"]
-	var next_class = (current_class + 1) % 4
-	Global.player_configs[p_id]["class"] = next_class
-	if p_id in player_instances and is_instance_valid(player_instances[p_id]):
-		player_instances[p_id].class_type = next_class
-		player_instances[p_id]._apply_class_defaults()
-	_update_hud()
-	_show_banner("P" + str(p_id) + " is now " + Global.CLASS_INFO[next_class]["name"] + "!", 1.2)
 
 func _start_new_match():
 	current_round = 1
@@ -80,7 +66,7 @@ func _start_round():
 			player_instances[p_id] = p
 			
 	_update_hud()
-	_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
+	_show_banner("ROUND " + str(current_round) + " - 4-PLAYER BATTLE!", 1.5)
 
 func _clear_projectiles():
 	for p in get_tree().get_nodes_in_group("projectiles"):
@@ -99,9 +85,9 @@ func _on_player_died(killer_id: int, victim_id: int):
 	var killer_name = "Player " + str(killer_id)
 	
 	if killer_id == victim_id:
-		_show_banner(victim_name + " was eliminated!", 1.0)
+		_show_banner(victim_name + " fell!", 1.0)
 	else:
-		_show_banner(killer_name + " defeated " + victim_name + "!", 1.0)
+		_show_banner(killer_name + " knocked out " + victim_name + "!", 1.0)
 		
 	_update_hud()
 	
@@ -127,12 +113,11 @@ func _check_round_end():
 			Global.player_scores[winner_id] += 1
 			_update_hud()
 			
-			# Broadcast authoritative round end to all clients
+			# Broadcast authoritative round end to all 4 players
 			NetworkManager.send_data({
 				"type": "round_end",
 				"winner": winner_id,
-				"p1_score": Global.player_scores[1],
-				"p2_score": Global.player_scores[2],
+				"scores": Global.player_scores,
 				"round": current_round
 			})
 			
@@ -145,8 +130,6 @@ func _check_round_end():
 
 func _on_round_end_sync(winner_id: int, s1: int, s2: int, round_num: int):
 	is_round_over = true
-	Global.player_scores[1] = s1
-	Global.player_scores[2] = s2
 	current_round = round_num
 	_update_hud()
 	_display_round_winner(winner_id)
@@ -200,16 +183,16 @@ func _update_panel(panel: Control, p_id: int):
 	var stock_lbl = panel.get_node("StockLabel")
 	var score_lbl = panel.get_node("ScoreLabel")
 	
-	name_lbl.text = "P" + str(p_id) + (" (You)" if p_id == NetworkManager.my_player_id else "") + " " + c_info["icon"] + " " + c_info["name"]
+	name_lbl.text = "P" + str(p_id) + (" (You)" if p_id == NetworkManager.my_player_id else "") + " " + c_info["icon"]
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)
 	var hearts = ""
 	for i in range(Global.max_stocks):
 		if i < stocks:
-			hearts += "❤️ "
+			hearts += "❤️"
 		else:
-			hearts += "🖤 "
+			hearts += "🖤"
 	stock_lbl.text = hearts
 	
 	score_lbl.text = "👑 " + str(Global.player_scores[p_id])
