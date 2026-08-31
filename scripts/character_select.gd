@@ -81,6 +81,18 @@ func _ready():
 	_update_showcase()
 	_update_roster()
 
+	# Force Start button for Host
+	force_start_btn = Button.new()
+	force_start_btn.text = "FORCE START"
+	force_start_btn.add_theme_font_size_override("font_size", 18)
+	force_start_btn.custom_minimum_size = Vector2(200, 45)
+	force_start_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	force_start_btn.position = Vector2(640 - 210, 360 - 55)
+	force_start_btn.add_theme_color_override("font_color", Color(1.0, 0.4, 0.4))
+	force_start_btn.visible = false
+	add_child(force_start_btn)
+	force_start_btn.connect("pressed", Callable(self, "_on_force_start_pressed"))
+
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
 	print("🎯 Local player assigned to Slot P", local_player_id)
@@ -137,7 +149,9 @@ func _input(event):
 		elif event.is_action_pressed(prefix + "right") or event.is_action_pressed("ui_right"):
 			_cycle_selection(1)
 		elif event.is_action_pressed(prefix + "jump") or event.is_action_pressed(prefix + "attack") or event.is_action_pressed("ui_accept"):
-			_lock_in_champion()
+			# Ignore mouse clicks for shortcuts so they don't instantly lock when clicking 'Next'
+			if not (event is InputEventMouseButton):
+				_lock_in_champion()
 
 func _cycle_selection(dir: int):
 	selected_class_idx = (selected_class_idx + dir + CHAMPION_KEYS.size()) % CHAMPION_KEYS.size()
@@ -296,17 +310,6 @@ func _on_btn_next_pressed():
 		_cycle_selection(1)
 
 
-	# Force Start button for Host
-	force_start_btn = Button.new()
-	force_start_btn.text = "FORCE START"
-	force_start_btn.add_theme_font_size_override("font_size", 18)
-	force_start_btn.custom_minimum_size = Vector2(200, 45)
-	force_start_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	force_start_btn.position = Vector2(640 - 210, 360 - 55)
-	force_start_btn.add_theme_color_override("font_color", Color(1.0, 0.4, 0.4))
-	force_start_btn.visible = false
-	add_child(force_start_btn)
-	force_start_btn.connect("pressed", Callable(self, "_on_force_start_pressed"))
 
 func _setup_name_input_ui():
 	var saved_name = Global._load_saved_player_name()
