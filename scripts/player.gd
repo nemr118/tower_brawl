@@ -32,6 +32,10 @@ var is_facing_right: bool = true
 var is_dead: bool = false
 var respawn_timer: float = 0.0
 var spawn_invuln_timer: float = 1.2
+var anim_time: float = 0.0
+
+# Aiming System
+var aim_direction: Vector2 = Vector2.RIGHT
 
 # Class Resources
 var max_arrows: int = 3
@@ -59,6 +63,8 @@ func _ready():
 	add_to_group("players")
 	_apply_class_defaults()
 	melee_area.monitoring = false
+	aim_direction = Vector2.RIGHT if player_id == 1 else Vector2.LEFT
+	is_facing_right = (player_id == 1)
 
 func _apply_class_defaults():
 	match class_type:
@@ -76,6 +82,8 @@ func _physics_process(delta: float):
 	if is_dead:
 		return
 		
+	anim_time += delta * 12.0
+	
 	# Timers
 	if attack_cooldown > 0.0: attack_cooldown -= delta
 	if special_cooldown > 0.0: special_cooldown -= delta
@@ -121,16 +129,24 @@ func _physics_process(delta: float):
 	# Input Prefix (p1_, p2_, p3_, p4_)
 	var prefix = "p" + str(player_id) + "_"
 	
-	# Horizontal Movement
+	# Horizontal & Vertical Aiming / Movement Inputs
 	var input_x = Input.get_axis(prefix + "left", prefix + "right")
 	var input_y = Input.get_axis(prefix + "up", prefix + "down")
 	
-	if input_x > 0.1:
-		is_facing_right = true
-		velocity.x = move_toward(velocity.x, SPEED, ACCEL * delta)
-	elif input_x < -0.1:
-		is_facing_right = false
-		velocity.x = move_toward(velocity.x, -SPEED, ACCEL * delta)
+	# Update Aim Direction (Supports full 360° analog sticks & 8-way directional keys!)
+	var raw_aim = Vector2(input_x, input_y)
+	if raw_aim.length_squared() > 0.08:
+		aim_direction = raw_aim.normalized()
+		if input_x > 0.15:
+			is_facing_right = true
+		elif input_x < -0.15:
+			is_facing_right = false
+	else:
+		aim_direction = Vector2.RIGHT if is_facing_right else Vector2.LEFT
+
+	# Movement Acceleration
+	if abs(input_x) > 0.1:
+		velocity.x = move_toward(velocity.x, sign(input_x) * SPEED, ACCEL * delta)
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
 		
@@ -165,13 +181,13 @@ func _physics_process(delta: float):
 	if Input.is_action_just_pressed(prefix + "dash") and dash_cooldown_timer <= 0.0:
 		_start_dash(input_x, input_y)
 		
-	# Attack Input
+	# Attack Input (Fires in exact aimed direction!)
 	if Input.is_action_just_pressed(prefix + "attack") and attack_cooldown <= 0.0:
-		_perform_attack(input_x, input_y)
+		_perform_attack(aim_direction)
 		
 	# Special Input
 	if Input.is_action_just_pressed(prefix + "special") and special_cooldown <= 0.0:
-		_perform_special(input_x, input_y)
+		_perform_special(aim_direction)
 
 	move_and_slide()
 	_check_screen_wrap()
@@ -185,22 +201,17 @@ func _start_dash(input_x: float, input_y: float):
 	
 	var dir = Vector2(input_x, input_y)
 	if dir.length_squared() < 0.1:
-		dir = Vector2.RIGHT if is_facing_right else Vector2.LEFT
+		dir = aim_direction
 	dash_dir = dir.normalized()
 	_squash_and_stretch(1.4, 0.6)
 
-func _perform_attack(input_x: float, input_y: float):
-	var aim_dir = Vector2(input_x, input_y)
-	if aim_dir.length_squared() < 0.1:
-		aim_dir = Vector2.RIGHT if is_facing_right else Vector2.LEFT
-	aim_dir = aim_dir.normalized()
-	
+func _perform_attack(aim_dir: Vector2):
 	match class_type:
 		Global.ClassType.RANGER:
 			if current_arrows > 0:
 				current_arrows -= 1
 				attack_cooldown = 0.32
-				var spawn_pos = global_position + aim_dir * 14.0
+				var spawn_pos = global_position + aim_dir * 18.0
 				var arrow = ArrowScene.instantiate()
 				get_parent().add_child(arrow)
 				arrow.init(player_id, spawn_pos, aim_dir)
@@ -212,57 +223,49 @@ func _perform_attack(input_x: float, input_y: float):
 			if mage_charges > 0:
 				mage_charges -= 1
 				attack_cooldown = 0.35
-				var spawn_pos = global_position + aim_dir * 14.0
+				var spawn_pos = global_position + aim_dir * 18.0
 				var bolt = FireboltScene.instantiate()
 				get_parent().add_child(bolt)
 				bolt.init(player_id, spawn_pos, aim_dir)
+				_squash_and_stretch(0.8, 1.2)
 		Global.ClassType.ROGUE:
 			if rogue_kunai > 0:
 				rogue_kunai -= 1
 				attack_cooldown = 0.22
-				var spawn_pos = global_position + aim_dir * 14.0
+				var spawn_pos = global_position + aim_dir * 18.0
 				var kunai = KunaiScene.instantiate()
 				get_parent().add_child(kunai)
 				kunai.init(player_id, spawn_pos, aim_dir)
 
-func _perform_special(input_x: float, input_y: float):
+func _perform_special(aim_dir: Vector2):
 	match class_type:
 		Global.ClassType.RANGER:
-			# Backflip Retreat Shot
 			if current_arrows > 0:
 				special_cooldown = 0.8
 				current_arrows -= 1
-				var shoot_dir = Vector2.RIGHT if is_facing_right else Vector2.LEFT
 				var arrow = ArrowScene.instantiate()
 				get_parent().add_child(arrow)
-				arrow.init(player_id, global_position + shoot_dir * 14.0, shoot_dir)
-				# Vault backward
-				velocity = Vector2(-shoot_dir.x * 260.0, -320.0)
+				arrow.init(player_id, global_position + aim_dir * 18.0, aim_dir)
+				# Vault backward opposite to aim!
+				velocity = -aim_dir * 310.0 + Vector2.UP * 160.0
 				_squash_and_stretch(0.7, 1.3)
 		Global.ClassType.KNIGHT:
-			# Shield Parry Guard
 			special_cooldown = 0.75
 			is_shielding = true
 			shield_timer = 0.38
 			_squash_and_stretch(1.25, 0.8)
 		Global.ClassType.MAGE:
-			# Arcane Void Blink (Teleport 90px in direction)
 			special_cooldown = 1.0
-			var blink_dir = Vector2(input_x, input_y)
-			if blink_dir.length_squared() < 0.1:
-				blink_dir = Vector2.RIGHT if is_facing_right else Vector2.LEFT
-			blink_dir = blink_dir.normalized()
-			global_position += blink_dir * 85.0
-			velocity = blink_dir * 80.0
+			global_position += aim_dir * 95.0
+			velocity = aim_dir * 80.0
 			_squash_and_stretch(0.5, 1.5)
 		Global.ClassType.ROGUE:
-			# Shadow Dash Ambush
 			special_cooldown = 1.1
-			_start_dash(input_x, input_y)
+			_start_dash(aim_dir.x, aim_dir.y)
 			_execute_shadow_slash()
 
 func _execute_sword_slash(dir: Vector2):
-	melee_area.position = dir * 18.0
+	melee_area.position = dir * 20.0
 	melee_area.rotation = dir.angle()
 	melee_area.monitoring = true
 	_squash_and_stretch(1.3, 0.7)
@@ -290,7 +293,7 @@ func _check_head_stomp():
 			var col = get_slide_collision(i)
 			var collider = col.get_collider()
 			if collider != null and collider.is_in_group("players") and collider != self:
-				if col.get_normal().y < -0.6: # Landing on head from above
+				if col.get_normal().y < -0.6:
 					velocity.y = -390.0
 					_squash_and_stretch(0.6, 1.4)
 					collider.take_hit(player_id, Vector2.DOWN)
@@ -354,59 +357,124 @@ func _draw():
 	var facing_mul = 1.0 if is_facing_right else -1.0
 	var class_info = Global.CLASS_INFO[class_type]
 	var base_col: Color = class_info["color"]
+	var run_cycle = sin(anim_time) * 2.5 if abs(velocity.x) > 20.0 and is_on_floor() else 0.0
+	var breath = sin(anim_time * 0.4) * 0.8
 	
+	# Spawn invulnerability glowing halo
 	if spawn_invuln_timer > 0.0:
-		draw_circle(Vector2.ZERO, 15.0, Color(1.0, 1.0, 0.6, 0.35))
+		draw_arc(Vector2.ZERO, 18.0 + breath, 0.0, TAU, 20, Color(1.0, 0.9, 0.3, 0.6), 2.0)
+		draw_circle(Vector2.ZERO, 16.0, Color(1.0, 1.0, 0.6, 0.25))
 		
+	# Shield bubble (Knight)
 	if is_shielding:
-		draw_circle(Vector2.ZERO, 16.0, Color(0.4, 0.7, 1.0, 0.5))
-		draw_arc(Vector2.ZERO, 16.0, 0.0, TAU, 16, Color(0.8, 0.95, 1.0), 2.5)
+		draw_circle(Vector2.ZERO, 19.0, Color(0.3, 0.6, 1.0, 0.45))
+		draw_arc(Vector2.ZERO, 19.0, 0.0, TAU, 24, Color(0.8, 0.95, 1.0), 3.0)
 		
+	# Dash ghost trail effect
 	if is_dashing:
-		draw_circle(-dash_dir * 10.0, 9.0, Color(base_col.r, base_col.g, base_col.b, 0.4))
-		
-	# Body / Tunic
-	draw_rect(Rect2(-7, -10, 14, 18), base_col, true)
-	draw_rect(Rect2(-7, -10, 14, 18), Color(0.1, 0.1, 0.15), false, 1.5)
+		draw_circle(-dash_dir * 12.0, 10.0, Color(base_col.r, base_col.g, base_col.b, 0.45))
+		draw_circle(-dash_dir * 22.0, 7.0, Color(base_col.r, base_col.g, base_col.b, 0.25))
+
+	# Aiming Laser / Tracer Dot
+	var aim_len = 36.0
+	var laser_start = aim_direction * 14.0
+	var laser_end = aim_direction * aim_len
+	draw_line(laser_start, laser_end, Color(1.0, 1.0, 1.0, 0.3), 1.0)
+	draw_circle(laser_end, 2.0, Color(1.0, 0.9, 0.3, 0.75))
+
+	# Dynamic Cape with physics waving
+	var cape_col = Color(base_col.r * 0.6, base_col.g * 0.6, base_col.b * 0.6)
+	var cape_wave = sin(anim_time * 0.8) * 3.0 - (velocity.x * 0.03)
+	var cape_pts = [
+		Vector2(-4 * facing_mul, -8),
+		Vector2(2 * facing_mul, -8),
+		Vector2((-9 * facing_mul) + cape_wave, 8),
+		Vector2((-14 * facing_mul) + cape_wave * 1.3, 7)
+	]
+	draw_colored_polygon(cape_pts, cape_col)
+
+	# Boots / Feet
+	var foot_l = Vector2(-4, 9 + run_cycle)
+	var foot_r = Vector2(4, 9 - run_cycle)
+	draw_rect(Rect2(foot_l.x - 2, foot_l.y - 2, 4, 3), Color(0.18, 0.12, 0.1), true)
+	draw_rect(Rect2(foot_r.x - 2, foot_r.y - 2, 4, 3), Color(0.18, 0.12, 0.1), true)
+
+	# Tunic & Belt
+	draw_rect(Rect2(-7, -10 + breath, 14, 18), base_col, true)
+	draw_rect(Rect2(-7, -10 + breath, 14, 18), Color(0.08, 0.08, 0.12), false, 1.5)
+	draw_rect(Rect2(-7, -2 + breath, 14, 3), Color(0.3, 0.2, 0.1), true) # Belt
+	draw_rect(Rect2(-2, -3 + breath, 4, 5), Color(0.95, 0.8, 0.2), true) # Gold Buckle
 	
-	# Head
-	draw_rect(Rect2(-6, -18, 12, 10), Color(0.98, 0.85, 0.72), true)
+	# Head & Face
+	draw_rect(Rect2(-6, -18 + breath, 12, 10), Color(0.98, 0.85, 0.72), true)
+	draw_rect(Rect2(-6, -18 + breath, 12, 10), Color(0.1, 0.08, 0.1), false, 1.0)
 	
-	# Eyes
+	# Expressive Eyes
 	var eye_x = 2 * facing_mul
-	draw_rect(Rect2(eye_x, -16, 2, 3), Color(0.1, 0.1, 0.2), true)
+	draw_rect(Rect2(eye_x, -15 + breath, 2, 3), Color(0.1, 0.1, 0.2), true)
+	draw_rect(Rect2(eye_x + (1 if is_facing_right else 0), -15 + breath, 1, 1), Color(1.0, 1.0, 1.0), true) # Glint
 	
+	# Detailed Class Hats / Gear & Rotating Weapons
 	match class_type:
 		Global.ClassType.RANGER:
-			draw_colored_polygon([Vector2(-8, -17), Vector2(0, -23), Vector2(8, -17)], Color(0.15, 0.6, 0.25))
-			draw_line(Vector2(2 * facing_mul, -22), Vector2(6 * facing_mul, -27), Color(0.95, 0.2, 0.2), 2.0)
-			draw_arc(Vector2(9 * facing_mul, -4), 8.0, -1.2, 1.2, 8, Color(0.65, 0.4, 0.2), 2.0)
+			# Robin Hood feathered cap
+			draw_colored_polygon([Vector2(-8, -17 + breath), Vector2(0, -24 + breath), Vector2(8, -17 + breath)], Color(0.15, 0.55, 0.25))
+			draw_line(Vector2(2 * facing_mul, -22 + breath), Vector2(7 * facing_mul, -28 + breath), Color(0.95, 0.2, 0.2), 2.5) # Red feather
+			# Wooden Recurve Bow rotating toward aim_direction!
+			var bow_pos = aim_direction * 12.0
+			var bow_angle = aim_direction.angle()
+			var bow_t = Transform2D(bow_angle, bow_pos)
+			var b1 = bow_t * Vector2(-2, -10)
+			var b2 = bow_t * Vector2(5, 0)
+			var b3 = bow_t * Vector2(-2, 10)
+			draw_line(b1, b2, Color(0.55, 0.35, 0.15), 2.5)
+			draw_line(b2, b3, Color(0.55, 0.35, 0.15), 2.5)
+			draw_line(b1, b3, Color(0.9, 0.9, 0.9, 0.8), 1.0) # Bowstring
 		Global.ClassType.KNIGHT:
-			draw_rect(Rect2(-7, -21, 14, 8), Color(0.7, 0.75, 0.8), true)
-			draw_rect(Rect2(-7, -21, 14, 8), Color(0.2, 0.2, 0.25), false, 1.2)
-			draw_line(Vector2(0, -21), Vector2(0, -26), Color(0.9, 0.15, 0.15), 3.0)
-			draw_line(Vector2(8 * facing_mul, 4), Vector2(14 * facing_mul, -10), Color(0.85, 0.85, 0.9), 2.5)
+			# Greathelm with glowing visor
+			draw_rect(Rect2(-7, -21 + breath, 14, 9), Color(0.7, 0.75, 0.8), true)
+			draw_rect(Rect2(-7, -21 + breath, 14, 9), Color(0.2, 0.2, 0.25), false, 1.2)
+			draw_line(Vector2(-4, -16 + breath), Vector2(4, -16 + breath), Color(0.1, 0.1, 0.15), 2.0)
+			draw_line(Vector2(0, -21 + breath), Vector2(0, -28 + breath), Color(0.95, 0.2, 0.2), 3.5) # Crimson plume
+			# Broadsword rotating toward aim
+			var sword_pos = aim_direction * 10.0
+			var sword_end = sword_pos + aim_direction * 18.0
+			draw_line(sword_pos, sword_end, Color(0.9, 0.92, 0.98), 3.0)
+			draw_line(sword_pos - aim_direction.orthogonal() * 5.0, sword_pos + aim_direction.orthogonal() * 5.0, Color(0.85, 0.7, 0.2), 2.5) # Guard
 		Global.ClassType.MAGE:
-			draw_colored_polygon([Vector2(-9, -17), Vector2(0, -28), Vector2(9, -17)], Color(0.3, 0.15, 0.5))
-			draw_circle(Vector2(0, -28), 2.5, Color(1.0, 0.8, 0.2))
-			draw_circle(Vector2(10 * facing_mul, -4), 4.0, Color(1.0, 0.5, 0.1))
+			# Wizard Pointed Hat with Golden Rune
+			draw_colored_polygon([Vector2(-9, -17 + breath), Vector2(0, -29 + breath), Vector2(9, -17 + breath)], Color(0.25, 0.12, 0.45))
+			draw_circle(Vector2(0, -29 + breath), 3.0, Color(1.0, 0.8, 0.2))
+			# Wizard Staff with rotating Arcane Crystal
+			var staff_end = aim_direction * 16.0
+			draw_line(Vector2.ZERO, staff_end, Color(0.4, 0.25, 0.15), 2.0)
+			draw_circle(staff_end, 4.5, Color(1.0, 0.5, 0.1, 0.9))
+			draw_circle(staff_end, 2.5, Color(1.0, 0.9, 0.5))
 		Global.ClassType.ROGUE:
-			draw_colored_polygon([Vector2(-7, -19), Vector2(0, -23), Vector2(7, -19), Vector2(7, -11), Vector2(-7, -11)], Color(0.2, 0.15, 0.25))
-			draw_line(Vector2(7 * facing_mul, 0), Vector2(13 * facing_mul, -4), Color(0.9, 0.9, 0.95), 2.0)
-			draw_line(Vector2(5 * facing_mul, 4), Vector2(11 * facing_mul, 2), Color(0.9, 0.9, 0.95), 2.0)
+			# Shadow Assassin Hood & Mask
+			draw_colored_polygon([Vector2(-7, -20 + breath), Vector2(0, -25 + breath), Vector2(7, -20 + breath), Vector2(7, -11 + breath), Vector2(-7, -11 + breath)], Color(0.18, 0.12, 0.25))
+			# Glowing Purple Ninja Eyes
+			draw_rect(Rect2(eye_x, -16 + breath, 3, 2), Color(0.85, 0.3, 1.0), true)
+			# Dual Daggers
+			var d1 = aim_direction * 14.0
+			var d2 = aim_direction * 10.0 + aim_direction.orthogonal() * 6.0
+			draw_line(Vector2.ZERO, d1, Color(0.9, 0.95, 1.0), 2.0)
+			draw_line(Vector2.ZERO, d2, Color(0.9, 0.95, 1.0), 2.0)
 
+	# Quiver / Ammo display above player head
 	if class_type == Global.ClassType.RANGER:
 		for i in range(max_arrows):
 			var ax = -8 + i * 8
-			var col = Color(1.0, 0.85, 0.2) if i < current_arrows else Color(0.4, 0.4, 0.4, 0.5)
-			draw_line(Vector2(ax, -25), Vector2(ax, -30), col, 2.0)
+			var col = Color(1.0, 0.85, 0.2) if i < current_arrows else Color(0.3, 0.3, 0.3, 0.5)
+			draw_line(Vector2(ax, -30 + breath), Vector2(ax, -36 + breath), col, 2.5)
+			draw_line(Vector2(ax - 2, -34 + breath), Vector2(ax, -36 + breath), col, 1.5)
 	elif class_type == Global.ClassType.MAGE:
 		for i in range(3):
 			var mx = -8 + i * 8
-			var col = Color(1.0, 0.5, 0.1) if i < mage_charges else Color(0.4, 0.4, 0.4, 0.5)
-			draw_circle(Vector2(mx, -26), 2.5, col)
+			var col = Color(1.0, 0.5, 0.1) if i < mage_charges else Color(0.3, 0.3, 0.3, 0.5)
+			draw_circle(Vector2(mx, -32 + breath), 3.0, col)
 	elif class_type == Global.ClassType.ROGUE:
 		for i in range(4):
 			var kx = -9 + i * 6
-			var col = Color(0.8, 0.4, 1.0) if i < rogue_kunai else Color(0.4, 0.4, 0.4, 0.5)
-			draw_circle(Vector2(kx, -26), 2.0, col)
+			var col = Color(0.85, 0.35, 1.0) if i < rogue_kunai else Color(0.3, 0.3, 0.3, 0.5)
+			draw_circle(Vector2(kx, -32 + breath), 2.5, col)

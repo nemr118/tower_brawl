@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>TowerBrawl Wireless Gamepad</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body {
+      background: radial-gradient(circle at center, #1e1b4b 0%, #09090b 100%);
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: rgba(15, 23, 42, 0.85);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(8px);
+      z-index: 10;
+    }
+    .status-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 12px;
+      background: rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 8px #4ade80;
+    }
+    .top-btns {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-aux {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #f8fafc;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-aux:active {
+      background: rgba(255, 255, 255, 0.25);
+      transform: scale(0.96);
+    }
+    .player-select {
+      background: #1e1b4b;
+      color: #fbbf24;
+      border: 1px solid #fbbf24;
+      font-weight: 800;
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    /* Left Half: Virtual Joystick */
+    .joystick-zone {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px dashed rgba(255, 255, 255, 0.05);
+    }
+    .joystick-base {
+      width: 160px;
+      height: 160px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(30, 27, 75, 0.4) 100%);
+      border: 2px solid rgba(59, 130, 246, 0.4);
+      box-shadow: 0 0 25px rgba(59, 130, 246, 0.2);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .joystick-thumb {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #60a5fa 0%, #2563eb 100%);
+      border: 2px solid #93c5fd;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6), 0 0 15px rgba(59, 130, 246, 0.6);
+      position: absolute;
+      transition: transform 0.05s ease-out;
+      pointer-events: none;
+    }
+    .joystick-label {
+      position: absolute;
+      bottom: 20px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.3);
+      text-transform: uppercase;
+    }
+    /* Right Half: Arcade Buttons */
+    .buttons-zone {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .diamond-pad {
+      position: relative;
+      width: 220px;
+      height: 220px;
+    }
+    .action-btn {
+      position: absolute;
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      border: none;
+      font-size: 12px;
+      font-weight: 900;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 6px 15px rgba(0, 0, 0, 0.5);
+      transition: transform 0.06s, filter 0.06s;
+    }
+    .action-btn:active, .action-btn.active {
+      transform: scale(0.92);
+      filter: brightness(1.3);
+    }
+    .btn-icon {
+      font-size: 18px;
+      margin-bottom: 2px;
+    }
+    /* Jump - Bottom (A) */
+    .btn-jump {
+      bottom: 0px;
+      left: 76px;
+      background: radial-gradient(circle at 35% 35%, #4ade80, #16a34a);
+      box-shadow: 0 6px 20px rgba(22, 163, 74, 0.4);
+    }
+    /* Attack - Left (X) */
+    .btn-attack {
+      top: 76px;
+      left: 0px;
+      background: radial-gradient(circle at 35% 35%, #f87171, #dc2626);
+      box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4);
+    }
+    /* Special - Top (Y) */
+    .btn-special {
+      top: 0px;
+      left: 76px;
+      background: radial-gradient(circle at 35% 35%, #60a5fa, #2563eb);
+      box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+    }
+    /* Dash - Right (B) */
+    .btn-dash {
+      top: 76px;
+      right: 0px;
+      background: radial-gradient(circle at 35% 35%, #facc15, #ca8a04);
+      box-shadow: 0 6px 20px rgba(202, 138, 4, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="status-pill" id="statusPill">
+      <div class="status-dot"></div>
+      <span id="statusText">CONNECTING...</span>
+    </div>
+    <div class="top-btns">
+      <select id="playerSelect" class="player-select">
+        <option value="2" selected>Player 2</option>
+        <option value="1">Player 1</option>
+        <option value="3">Player 3</option>
+        <option value="4">Player 4</option>
+      </select>
+      <button class="btn-aux" id="btnSwitchHero">⚔️ SWITCH</button>
+      <button class="btn-aux" id="btnResetMatch">🔄 RESTART</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left: 360 Joystick -->
+    <div class="joystick-zone" id="joystickZone">
+      <div class="joystick-base" id="joystickBase">
+        <div class="joystick-thumb" id="joystickThumb"></div>
+      </div>
+      <div class="joystick-label">MOVE / AIM 360°</div>
+    </div>
+
+    <!-- Right: Arcade Diamond Buttons -->
+    <div class="buttons-zone">
+      <div class="diamond-pad">
+        <button class="action-btn btn-special" data-action="special">
+          <span class="btn-icon">⚡</span>
+          <span>SPECIAL</span>
+        </button>
+        <button class="action-btn btn-attack" data-action="attack">
+          <span class="btn-icon">🏹</span>
+          <span>ATTACK</span>
+        </button>
+        <button class="action-btn btn-dash" data-action="dash">
+          <span class="btn-icon">💨</span>
+          <span>DASH</span>
+        </button>
+        <button class="action-btn btn-jump" data-action="jump">
+          <span class="btn-icon">▲</span>
+          <span>JUMP</span>
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let ws = null;
+    let playerId = 2;
+
+    const statusPill = document.getElementById('statusPill');
+    const statusText = document.getElementById('statusText');
+    const playerSelect = document.getElementById('playerSelect');
+
+    playerSelect.addEventListener('change', (e) => {
+      playerId = parseInt(e.target.value);
+    });
+
+    function connectWS() {
+      const wsUrl = `ws://${window.location.hostname}:8081`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        statusText.textContent = "CONNECTED (P" + playerId + ")";
+        statusPill.style.color = "#4ade80";
+        statusPill.style.background = "rgba(34, 197, 94, 0.2)";
+      };
+
+      ws.onclose = () => {
+        statusText.textContent = "DISCONNECTED";
+        statusPill.style.color = "#f87171";
+        statusPill.style.background = "rgba(239, 68, 68, 0.2)";
+        setTimeout(connectWS, 1500);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    function sendPacket(data) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        data.p = playerId;
+        ws.send(JSON.stringify(data));
+      }
+    }
+
+    // --- Virtual Joystick Math ---
+    const joystickZone = document.getElementById('joystickZone');
+    const joystickBase = document.getElementById('joystickBase');
+    const joystickThumb = document.getElementById('joystickThumb');
+
+    let isTouchingJoystick = false;
+    let joyTouchId = null;
+    let baseCenter = { x: 0, y: 0 };
+    const maxRadius = 55;
+
+    function updateBaseCenter() {
+      const rect = joystickBase.getBoundingClientRect();
+      baseCenter = {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      };
+    }
+    window.addEventListener('resize', updateBaseCenter);
+    setTimeout(updateBaseCenter, 200);
+
+    joystickZone.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (joyTouchId !== null) return;
+      const touch = e.changedTouches[0];
+      joyTouchId = touch.identifier;
+      isTouchingJoystick = true;
+      updateBaseCenter();
+      handleJoyMove(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+      if (!isTouchingJoystick) return;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        if (touch.identifier === joyTouchId) {
+          handleJoyMove(touch.clientX, touch.clientY);
+          break;
+        }
+      }
+    }, { passive: false });
+
+    function endJoystick(e) {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === joyTouchId) {
+          isTouchingJoystick = false;
+          joyTouchId = null;
+          joystickThumb.style.transform = 'translate(0px, 0px)';
+          sendPacket({ action: "move", x: 0.0, y: 0.0 });
+          break;
+        }
+      }
+    }
+    window.addEventListener('touchend', endJoystick);
+    window.addEventListener('touchcancel', endJoystick);
+
+    function handleJoyMove(clientX, clientY) {
+      const dx = clientX - baseCenter.x;
+      const dy = clientY - baseCenter.y;
+      const dist = Math.hypot(dx, dy);
+      const angle = Math.atan2(dy, dx);
+
+      const clampedDist = Math.min(dist, maxRadius);
+      const thumbX = Math.cos(angle) * clampedDist;
+      const thumbY = Math.sin(angle) * clampedDist;
+
+      joystickThumb.style.transform = `translate(${thumbX}px, ${thumbY}px)`;
+
+      const normX = thumbX / maxRadius;
+      const normY = thumbY / maxRadius;
+      sendPacket({ action: "move", x: normX, y: normY });
+    }
+
+    // --- Action Buttons ---
+    document.querySelectorAll('.action-btn').forEach(btn => {
+      const actionName = btn.getAttribute('data-action');
+
+      btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        btn.classList.add('active');
+        if (navigator.vibrate) navigator.vibrate(15);
+        sendPacket({ action: "press", btn: actionName });
+      }, { passive: false });
+
+      btn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        btn.classList.remove('active');
+        sendPacket({ action: "release", btn: actionName });
+      }, { passive: false });
+
+      btn.addEventListener('touchcancel', (e) => {
+        btn.classList.remove('active');
+        sendPacket({ action: "release", btn: actionName });
+      });
+    });
+
+    // --- Aux Buttons ---
+    document.getElementById('btnSwitchHero').addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (navigator.vibrate) navigator.vibrate(20);
+      sendPacket({ action: "switch_hero" });
+    });
+
+    document.getElementById('btnResetMatch').addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (navigator.vibrate) navigator.vibrate(30);
+      sendPacket({ action: "restart" });
+    });
+
+    connectWS();
+  </script>
+</body>
+</html>
