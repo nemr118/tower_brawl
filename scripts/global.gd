@@ -41,6 +41,8 @@ const CLASS_INFO = {
 		"title": "Master Archer",
 		"icon": "🏹",
 		"icon_tex": "res://assets/icons/ranger.jpg",
+		"primary_icon": "res://assets/icons/skill_ranger_1.jpg",
+		"special_icon": "res://assets/icons/skill_ranger_2.jpg",
 		"color": Color(0.2, 0.75, 0.35),
 		"desc": "Precision multi-directional arrows, projectile catching, and recoil backflip shot."
 	},
@@ -49,6 +51,8 @@ const CLASS_INFO = {
 		"title": "Iron Juggernaut",
 		"icon": "⚔️",
 		"icon_tex": "res://assets/icons/knight.jpg",
+		"primary_icon": "res://assets/icons/skill_knight_1.jpg",
+		"special_icon": "res://assets/icons/skill_knight_2.jpg",
 		"color": Color(0.25, 0.55, 0.95),
 		"desc": "Broadsword slash deflects projectiles, shield guard parries arrows and spells."
 	},
@@ -57,6 +61,8 @@ const CLASS_INFO = {
 		"title": "Pyromancer",
 		"icon": "🔮",
 		"icon_tex": "res://assets/icons/pyro.jpg",
+		"primary_icon": "res://assets/icons/skill_pyro_1.jpg",
+		"special_icon": "res://assets/icons/skill_pyro_2.jpg",
 		"color": Color(0.95, 0.55, 0.15),
 		"desc": "Explosive firebolts that regenerate over time, and instantaneous void blink teleport."
 	},
@@ -65,6 +71,8 @@ const CLASS_INFO = {
 		"title": "Shadow Assassin",
 		"icon": "🗡️",
 		"icon_tex": "res://assets/icons/rogue.jpg",
+		"primary_icon": "res://assets/icons/skill_rogue_1.jpg",
+		"special_icon": "res://assets/icons/skill_rogue_2.jpg",
 		"color": Color(0.75, 0.3, 0.95),
 		"desc": "Rapid throwing kunais, shadow dash ambushes through enemies."
 	},
@@ -73,6 +81,8 @@ const CLASS_INFO = {
 		"title": "Shape Shifter",
 		"icon": "🐻",
 		"icon_tex": "res://assets/icons/druid.jpg",
+		"primary_icon": "res://assets/icons/skill_druid_1.jpg",
+		"special_icon": "res://assets/icons/skill_druid_2.jpg",
 		"color": Color(0.6, 0.4, 0.1),
 		"desc": "Throws thorns. Bear Form. Dash turns into a Storm Crow. Shield is Phoenix Egg."
 	}

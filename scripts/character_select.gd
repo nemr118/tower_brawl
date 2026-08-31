@@ -210,6 +210,14 @@ func _update_showcase():
 	desc_label.text = c_info["desc"]
 	primary_label.text = s_info["primary"]
 	special_label.text = s_info["special"]
+	
+	var p_icon = primary_label.get_node_or_null("PrimaryIcon")
+	if p_icon and c_info.has("primary_icon"):
+		p_icon.texture = load(c_info["primary_icon"])
+		
+	var s_icon = special_label.get_node_or_null("SpecialIcon")
+	if s_icon and c_info.has("special_icon"):
+		s_icon.texture = load(c_info["special_icon"])
 
 func _lock_in_champion():
 	is_locked_in = true
