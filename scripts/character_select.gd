@@ -65,6 +65,26 @@ const SKILL_DETAILS = {
 }
 
 func _ready():
+
+	# Primary Icon
+	var p_icon = TextureRect.new()
+	p_icon.name = "PrimaryIcon"
+	p_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	p_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	p_icon.size = Vector2(18, 18)
+	p_icon.position = Vector2(0, 0)
+	p_icon.texture = load("res://assets/icons/primary.jpg")
+	primary_label.add_child(p_icon)
+
+	# Special Icon
+	var s_icon = TextureRect.new()
+	s_icon.name = "SpecialIcon"
+	s_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	s_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	s_icon.size = Vector2(18, 18)
+	s_icon.position = Vector2(0, 0)
+	s_icon.texture = load("res://assets/icons/special.jpg")
+	special_label.add_child(s_icon)
 	# UI Hooks for IconTex
 	var show_tr = TextureRect.new()
 	show_tr.name = "IconTex"
@@ -188,8 +208,8 @@ func _update_showcase():
 		name_label.get_parent().get_node("IconTex").texture = load(c_info["icon_tex"])
 	name_label.modulate = c_info["color"]
 	desc_label.text = c_info["desc"]
-	primary_label.text = s_info["primary"]
-	special_label.text = s_info["special"]
+	primary_label.text = "   " + s_info["primary"]
+	special_label.text = "   " + s_info["special"]
 
 func _lock_in_champion():
 	is_locked_in = true

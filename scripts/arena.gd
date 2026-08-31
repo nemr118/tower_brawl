@@ -216,19 +216,43 @@ func _update_panel(panel: Control, p_id: int):
 	if p_id == Global.my_player_id and Global.my_player_name != "":
 		disp_name = Global.my_player_name
 		
-	name_lbl.text = disp_name + (" (You)" if p_id == Global.my_player_id else "") + " [" + c_info["name"] + "]"
+	var class_icon = name_lbl.get_node_or_null("ClassIcon")
+	if not class_icon:
+		class_icon = TextureRect.new()
+		class_icon.name = "ClassIcon"
+		class_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		class_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		class_icon.size = Vector2(16, 16)
+		class_icon.position = Vector2(0, 2)
+		name_lbl.add_child(class_icon)
+	class_icon.texture = load(c_info["icon_tex"])
+	name_lbl.text = "   " + disp_name + (" (You)" if p_id == Global.my_player_id else "")
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)
-	var hearts = ""
-	for i in range(Global.max_stocks):
-		if i < stocks:
-			hearts += "* "
-		else:
-			hearts += "  "
-	stock_lbl.text = "LIVES: " + str(stocks)
+	var stock_icon = stock_lbl.get_node_or_null("StockIcon")
+	if not stock_icon:
+		stock_icon = TextureRect.new()
+		stock_icon.name = "StockIcon"
+		stock_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		stock_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		stock_icon.size = Vector2(16, 16)
+		stock_icon.position = Vector2(0, 2)
+		stock_lbl.add_child(stock_icon)
+	stock_icon.texture = load("res://assets/icons/heart.jpg")
+	stock_lbl.text = "   x " + str(stocks)
 	
-	score_lbl.text = "SCORE: " + str(Global.player_scores[p_id])
+	var score_icon = score_lbl.get_node_or_null("ScoreIcon")
+	if not score_icon:
+		score_icon = TextureRect.new()
+		score_icon.name = "ScoreIcon"
+		score_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		score_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		score_icon.size = Vector2(16, 16)
+		score_icon.position = Vector2(0, 2)
+		score_lbl.add_child(score_icon)
+	score_icon.texture = load("res://assets/icons/crown.jpg")
+	score_lbl.text = "   " + str(Global.player_scores[p_id])
 
 func _host_spawn_powerup():
 	if not is_instance_valid(powerup_node) and not is_arena_rotating:
@@ -253,17 +277,10 @@ func _spawn_powerup(px: float, py: float):
 	col.shape = shape
 	powerup_node.add_child(col)
 	
-	var vis = ColorRect.new()
-	vis.color = Color(1.0, 0.8, 0.0)
-	vis.custom_minimum_size = Vector2(24, 24)
-	vis.position = Vector2(-12, -12)
-	powerup_node.add_child(vis)
-	
-	var lbl = Label.new()
-	lbl.text = "+"
-	lbl.position = Vector2(-10, -12)
-	lbl.add_theme_font_size_override("font_size", 16)
-	powerup_node.add_child(lbl)
+	var tex = Sprite2D.new()
+	tex.texture = load("res://assets/icons/pickup.jpg")
+	tex.scale = Vector2(0.12, 0.12)  # Scale a 256x256 image to ~30x30
+	powerup_node.add_child(tex)
 	
 	add_child(powerup_node)
 	powerup_node.connect("body_entered", Callable(self, "_on_powerup_body_entered"))
