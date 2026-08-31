@@ -1,12 +1,13 @@
 extends Control
 
-## Secret Character Selection Draft Screen
-## Synchronized in Real-Time over WebSockets across Phones, Tablets, and PCs!
+## Dynamic Player Lobby & Secret Character Selection Draft Screen
+## Automatically starts with 2, 3, or 4 players based on who is connected!
 
 var local_player_id: int = 1
 var selected_class_idx: int = 0
 var is_locked_in: bool = false
 var locked_players = {}
+var active_player_ids = [1]
 var is_revealing: bool = false
 
 @onready var title_label = $CardShowcase/ChampionTitle
@@ -55,6 +56,7 @@ func _ready():
 	NetworkManager.connect("player_left_room", Callable(self, "_on_player_left"))
 	NetworkManager.connect("opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
 	
+	_update_active_players([1])
 	_update_showcase()
 	_update_roster()
 
@@ -63,15 +65,23 @@ func _on_connected_to_server(p_id: int):
 	print("🎯 Local player assigned to Slot P", local_player_id)
 	_update_roster()
 
-func _on_player_joined(p_id: int, _active):
-	print("👋 Player ", p_id, " joined the match room!")
+func _on_player_joined(p_id: int, active_list):
+	print("👋 Player ", p_id, " joined the match room! Active: ", active_list)
+	_update_active_players(active_list)
 	_update_roster()
 
-func _on_player_left(p_id: int, _active):
-	print("🚪 Player ", p_id, " left the room.")
+func _on_player_left(p_id: int, active_list):
+	print("🚪 Player ", p_id, " left the room. Active: ", active_list)
 	if p_id in locked_players:
 		locked_players.erase(p_id)
+	_update_active_players(active_list)
 	_update_roster()
+	_check_all_ready()
+
+func _update_active_players(active_list):
+	active_player_ids = active_list
+	for p_id in range(1, 5):
+		Global.player_configs[p_id]["active"] = (p_id in active_list or p_id == local_player_id)
 
 func _on_opponent_locked_in(opp_id: int, opp_class: int):
 	print("🔒 Opponent P", opp_id, " locked in secretly with class: ", opp_class)
@@ -121,7 +131,6 @@ func _lock_in_champion():
 	lock_btn.disabled = true
 	lock_btn.modulate = Color(0.4, 0.9, 0.4)
 	
-	# Broadcast secret lock-in over WebSocket!
 	NetworkManager.send_data({
 		"type": "lock_in",
 		"class": chosen_class
@@ -137,15 +146,22 @@ func _update_roster():
 	_update_player_card(p4_card, 4)
 
 func _update_player_card(card: Control, p_id: int):
-	if not Global.player_configs[p_id]["active"]:
-		card.visible = false
-		return
-		
-	card.visible = true
+	var is_active = (p_id in active_player_ids or p_id == local_player_id)
 	var name_lbl = card.get_node("Name")
 	var status_lbl = card.get_node("Status")
 	var icon_lbl = card.get_node("Icon")
 	
+	if not is_active:
+		card.color = Color(0.08, 0.08, 0.12, 0.5)
+		name_lbl.text = "Player " + str(p_id)
+		name_lbl.modulate = Color(0.4, 0.4, 0.4)
+		icon_lbl.text = "✖️"
+		status_lbl.text = "Empty Slot"
+		status_lbl.modulate = Color(0.35, 0.35, 0.35)
+		return
+		
+	card.color = Color(0.15, 0.15, 0.22, 0.9)
+	name_lbl.modulate = Color(1.0, 1.0, 1.0)
 	name_lbl.text = "Player " + str(p_id) + (" (You)" if p_id == local_player_id else "")
 	
 	if p_id in locked_players:
@@ -172,23 +188,27 @@ func _update_player_card(card: Control, p_id: int):
 			status_lbl.modulate = Color(0.6, 0.6, 0.6)
 
 func _check_all_ready():
-	var all_ready = true
-	for p_id in Global.player_configs:
-		if Global.player_configs[p_id]["active"] and p_id not in locked_players:
-			all_ready = false
-			break
+	var active_count = 0
+	var locked_count = 0
+	
+	for p_id in active_player_ids:
+		active_count += 1
+		if p_id in locked_players:
+			locked_count += 1
 			
-	if all_ready and not is_revealing:
+	# Start if all currently connected players (at least 2, or 1 for test) are locked in!
+	if active_count >= 1 and locked_count >= active_count and not is_revealing:
 		is_revealing = true
-		_start_reveal_countdown()
+		_start_reveal_countdown(active_count)
 
-func _start_reveal_countdown():
+func _start_reveal_countdown(player_count: int):
 	banner_label.visible = true
-	banner_label.text = "⚡ ALL PLAYERS LOCKED IN! ⚡\nRevealing Champions in 3..."
+	var count_str = str(player_count) + "-PLAYER MATCH"
+	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 3..."
 	await get_tree().create_timer(1.0).timeout
-	banner_label.text = "⚡ ALL PLAYERS LOCKED IN! ⚡\nRevealing Champions in 2..."
+	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 2..."
 	await get_tree().create_timer(1.0).timeout
-	banner_label.text = "⚡ ALL PLAYERS LOCKED IN! ⚡\nRevealing Champions in 1..."
+	banner_label.text = "⚡ " + count_str + " READY! ⚡\nRevealing Champions in 1..."
 	await get_tree().create_timer(1.0).timeout
 	
 	banner_label.text = "💥 CHAMPIONS REVEALED! ENTERING ARENA! 💥"
