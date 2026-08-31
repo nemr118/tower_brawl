@@ -80,6 +80,7 @@ var player_names: Dictionary = {}
 var my_player_name: String = ""
 
 signal net_names_updated()
+signal net_force_start()
 
 func _ready():
 	_determine_url_and_connect()

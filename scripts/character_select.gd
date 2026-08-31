@@ -335,10 +335,13 @@ func _setup_name_input_ui():
 	edit.connect("text_submitted", Callable(self, "_on_name_submit_text"))
 
 func _on_name_submit_text(t: String):
-	_on_name_submit(name_input_ui.get_node("VBoxContainer/LineEdit"))
+	_confirm_name_and_close(t)
 
 func _on_name_submit(edit: LineEdit):
-	var n = edit.text.strip_edges()
+	_confirm_name_and_close(edit.text)
+	
+func _confirm_name_and_close(text_val: String):
+	var n = text_val.strip_edges()
 	if n == "":
 		n = "Player"
 	_confirm_name(n)
