@@ -482,11 +482,11 @@ func take_hit(killer_id: int, _knockback_dir: Vector2):
 	is_dead = true
 	visible = false
 	collision_shape.set_deferred("disabled", true)
-	emit_signal("player_died", killer_id, player_id)
+	
 	
 	if is_local_player:
 		Global.send_net_data({
-			"type": "player_hit",
+			"type": "player_died",
 			"killer": killer_id,
 			"victim": player_id
 		})

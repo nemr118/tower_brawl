@@ -41,7 +41,8 @@ var current_round: int = 1
 # level first loads. It's like setting up a board game before you start playing.
 # ------------------------------------------------------------------------------
 func _ready():
-	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
+	Global.connect("net_player_died", Callable(self, "_on_net_player_died"))
+		Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
 	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
 	Global.connect("net_new_round", Callable(self, "_on_new_round_sync"))
 
@@ -111,9 +112,11 @@ func _on_network_player_hit(killer_id: int, victim_id: int):
 		if not player_instances[victim_id].is_dead:
 			player_instances[victim_id].take_hit(killer_id, Vector2.ZERO)
 
-func _on_player_died(killer_id: int, victim_id: int):
-	if victim_id in player_stocks:
-		player_stocks[victim_id] -= 1
+
+func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int):
+	player_stocks[victim_id] = new_stock
+	if victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
+		player_instances[victim_id].force_die()
 		
 	var victim_name = Global.player_names.get(victim_id, "Player " + str(victim_id))
 	var killer_name = Global.player_names.get(killer_id, "Player " + str(killer_id))
@@ -125,44 +128,15 @@ func _on_player_died(killer_id: int, victim_id: int):
 		
 	_update_hud()
 	
-	if player_stocks[victim_id] > 0:
+	if new_stock > 0:
 		await get_tree().create_timer(1.2).timeout
 		if not is_round_over and victim_id in player_instances:
 			var spawn_pos = spawn_points[victim_id - 1]
 			player_instances[victim_id].respawn(spawn_pos)
-	else:
-		_check_round_end()
 
+# Obsolete: We don't check round end locally anymore! The server does it!
 func _check_round_end():
-	if not Global.is_host():
-		return # Let the host evaluate round end to prevent desyncs!
-		
-	var alive_players = []
-	for p_id in player_stocks:
-		if player_stocks[p_id] > 0:
-			alive_players.append(p_id)
-			
-	if alive_players.size() <= 1 and not is_round_over:
-		is_round_over = true
-		var winner_id = alive_players[0] if alive_players.size() == 1 else 0
-		
-		if winner_id > 0:
-			Global.player_scores[winner_id] += 1
-			_update_hud()
-			
-			Global.send_net_data({
-				"type": "round_end",
-				"winner": winner_id,
-				"scores": Global.player_scores,
-				"round": current_round
-			})
-			
-			_display_round_winner(winner_id)
-		else:
-			_show_banner("DRAW ROUND!", 2.0)
-			await get_tree().create_timer(2.2).timeout
-			current_round += 1
-			_start_round()
+	pass
 
 func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int):
 	if is_round_over:
