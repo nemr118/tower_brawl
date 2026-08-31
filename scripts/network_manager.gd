@@ -16,17 +16,26 @@ var my_player_id: int = 1
 var server_url: String = ""
 
 func _ready():
-	# Determine server host IP
+	_determine_url_and_connect()
+
+func _determine_url_and_connect():
 	var host = "127.0.0.1"
+	var is_ssl = false
 	if OS.has_feature("web"):
-		# In web browser, connect back to window.location.hostname
-		host = JavaScriptBridge.eval("window.location.hostname", true)
-		if not host or host == "":
-			host = "127.0.0.1"
+		var js_host = JavaScriptBridge.eval("window.location.hostname", true)
+		if js_host and str(js_host) != "":
+			host = str(js_host)
+		var js_proto = JavaScriptBridge.eval("window.location.protocol", true)
+		if str(js_proto) == "https:":
+			is_ssl = true
 	else:
 		host = "127.0.0.1"
 		
-	server_url = "ws://" + str(host) + ":8081"
+	if is_ssl:
+		server_url = "wss://" + str(host) + ":8444"
+	else:
+		server_url = "ws://" + str(host) + ":8081"
+		
 	_connect_to_server()
 
 func _connect_to_server():

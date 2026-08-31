@@ -58,10 +58,11 @@ func _ready():
 
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
+	print("🎯 Character Select updated local_player_id to: ", local_player_id)
 	_update_roster()
 
 func _on_opponent_locked_in(opp_id: int, opp_class: int):
-	print("🔒 Opponent P", opp_id, " locked in secretly!")
+	print("🔒 Opponent P", opp_id, " locked in secretly with class: ", opp_class)
 	Global.player_configs[opp_id]["class"] = opp_class
 	locked_players[opp_id] = opp_class
 	_update_roster()
@@ -147,9 +148,16 @@ func _update_player_card(card: Control, p_id: int):
 			status_lbl.text = "READY (SECRET)"
 			status_lbl.modulate = Color(1.0, 0.85, 0.3)
 	else:
-		icon_lbl.text = "⏳"
-		status_lbl.text = "Choosing..."
-		status_lbl.modulate = Color(0.6, 0.6, 0.6)
+		if p_id == local_player_id:
+			var cur_c_type = CHAMPION_KEYS[selected_class_idx]
+			var cur_c_info = Global.CLASS_INFO[cur_c_type]
+			icon_lbl.text = cur_c_info["icon"]
+			status_lbl.text = "Selecting..."
+			status_lbl.modulate = Color(0.9, 0.9, 0.9)
+		else:
+			icon_lbl.text = "⏳"
+			status_lbl.text = "Choosing..."
+			status_lbl.modulate = Color(0.6, 0.6, 0.6)
 
 func _check_all_ready():
 	var all_ready = true
