@@ -98,16 +98,19 @@ func _determine_url_and_connect():
 		var js_host = JavaScriptBridge.eval("window.location.hostname", true)
 		if js_host and str(js_host) != "":
 			host = str(js_host)
+			
+		var js_port = JavaScriptBridge.eval("window.location.port", true)
+		var port_str = ""
+		if js_port and str(js_port) != "":
+			port_str = ":" + str(js_port)
+			
 		var js_proto = JavaScriptBridge.eval("window.location.protocol", true)
 		if str(js_proto) == "https:":
-			is_ssl = true
+			server_url = "wss://" + host + port_str
+		else:
+			server_url = "ws://" + host + port_str
 	else:
-		host = "127.0.0.1"
-		
-	if is_ssl:
-		server_url = "wss://" + str(host) + ":8444"
-	else:
-		server_url = "ws://" + str(host) + ":8081"
+		server_url = "ws://127.0.0.1:8000" 
 		
 	print("🔌 [Global] Connecting to: ", server_url)
 	ws = WebSocketPeer.new()   # fresh socket, never reuse a closed one

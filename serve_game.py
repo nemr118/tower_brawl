@@ -135,8 +135,8 @@ def broadcast(msg, exclude=None):
                     player_slots[i] = None
                     player_locked.pop(pid, None)
 
-def ws_client_thread(sock, addr, label):
-    if not ws_handshake(sock):
+def ws_client_thread(sock, addr, label, skip_handshake=False):
+    if not skip_handshake and not ws_handshake(sock):
         try: sock.close()
         except: pass
         return
@@ -280,6 +280,43 @@ def start_wss():
 class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BUILD_DIR, **kwargs)
+
+    def handle_one_request(self):
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+            if not self.raw_requestline:
+                self.close_connection = True
+                return
+            if not self.parse_request():
+                return
+            
+            # Hijack WebSocket
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                key = self.headers.get("Sec-WebSocket-Key", "")
+                if key:
+                    accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+                    self.connection.sendall((
+                        "HTTP/1.1 101 Switching Protocols\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+                    ).encode())
+                    self.close_connection = True
+                    ws_client_thread(self.connection, self.client_address, "MERGED-WS", skip_handshake=True)
+                    return
+
+            mname = 'do_' + self.command
+            if not hasattr(self, mname):
+                self.send_error(501, "Unsupported method (%r)" % self.command)
+                return
+            method = getattr(self, mname)
+            method()
+            self.wfile.flush()
+        except socket.timeout as e:
+            self.log_error("Request timed out: %r", e)
+            self.close_connection = True
+            return
+
     def end_headers(self):
         self.send_header("Cross-Origin-Opener-Policy",   "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
@@ -290,15 +327,15 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 def start_http():
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("0.0.0.0", HTTP_PORT), GameHTTPHandler) as h:
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    with socketserver.ThreadingTCPServer(("0.0.0.0", HTTP_PORT), GameHTTPHandler) as h:
         h.serve_forever()
 
 def start_https():
-    socketserver.TCPServer.allow_reuse_address = True
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
-    with socketserver.TCPServer(("0.0.0.0", HTTPS_PORT), GameHTTPHandler) as h:
+    with socketserver.ThreadingTCPServer(("0.0.0.0", HTTPS_PORT), GameHTTPHandler) as h:
         h.socket = ctx.wrap_socket(h.socket, server_side=True)
         h.serve_forever()
 
