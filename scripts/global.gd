@@ -234,6 +234,17 @@ func _handle_net_packet(msg_str: String):
 						ev.device = -1
 					InputMap.action_add_event(action, ev)
 		
+		
+		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
+		if not OS.has_feature("web") and my_player_id != 1:
+			var prefix1 = "p1_"
+			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
+				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
+				var my_action = prefix + action_suffix
+				for ev in events1:
+					if ev is InputEventKey or ev is InputEventMouseButton:
+						InputMap.action_add_event(my_action, ev)
+
 		active_players.clear()
 		for x in data.get("active_players", [1]):
 			active_players.append(int(x))
@@ -253,6 +264,17 @@ func _handle_net_packet(msg_str: String):
 				
 	elif type == "player_joined":
 		var p_id = int(data.get("id", 1))
+		
+		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
+		if not OS.has_feature("web") and my_player_id != 1:
+			var prefix1 = "p1_"
+			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
+				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
+				var my_action = prefix + action_suffix
+				for ev in events1:
+					if ev is InputEventKey or ev is InputEventMouseButton:
+						InputMap.action_add_event(my_action, ev)
+
 		active_players.clear()
 		for x in data.get("active_players", []):
 			active_players.append(int(x))
@@ -262,6 +284,17 @@ func _handle_net_packet(msg_str: String):
 		
 	elif type == "player_left":
 		var p_id = int(data.get("id", 1))
+		
+		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
+		if not OS.has_feature("web") and my_player_id != 1:
+			var prefix1 = "p1_"
+			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
+				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
+				var my_action = prefix + action_suffix
+				for ev in events1:
+					if ev is InputEventKey or ev is InputEventMouseButton:
+						InputMap.action_add_event(my_action, ev)
+
 		active_players.clear()
 		for x in data.get("active_players", []):
 			active_players.append(int(x))
