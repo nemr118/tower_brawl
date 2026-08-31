@@ -30,13 +30,33 @@ func _ready():
 	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
 	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
 	Global.connect("net_new_round", Callable(self, "_on_new_round_sync"))
+
+	Global.connect("net_spawn_powerup", Callable(self, "_on_net_spawn_powerup"))
+	Global.connect("net_activate_powerup", Callable(self, "_on_net_activate_powerup"))
+	
+	if Global.my_player_id == 1:
+		var pt = Timer.new()
+		pt.wait_time = 15.0
+		pt.autostart = true
+		pt.connect("timeout", Callable(self, "_host_spawn_powerup"))
+		add_child(pt)
 	_start_new_match()
 
 func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_R:
 			Global.reset_scores()
-			_start_new_match()
+		
+	Global.connect("net_spawn_powerup", Callable(self, "_on_net_spawn_powerup"))
+	Global.connect("net_activate_powerup", Callable(self, "_on_net_activate_powerup"))
+	
+	if Global.my_player_id == 1:
+		var pt = Timer.new()
+		pt.wait_time = 15.0
+		pt.autostart = true
+		pt.connect("timeout", Callable(self, "_host_spawn_powerup"))
+		add_child(pt)
+	_start_new_match()
 
 func _start_new_match():
 	current_round = 1
