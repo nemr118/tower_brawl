@@ -16,6 +16,7 @@ boot_splash/bg_color=Color(0.08, 0.08, 0.12, 1)
 [autoload]
 
 Global="*res://scripts/global.gd"
+NetworkManager="*res://scripts/network_manager.gd"
 NetworkController="*res://scripts/network_controller.gd"
 
 [display]

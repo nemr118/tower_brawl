@@ -1,6 +1,7 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/arena.gd" id="1_arena"]
+[ext_resource type="PackedScene" path="res://scenes/touch_controls.tscn" id="3_touch"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
 size = Vector2(640, 50)
@@ -314,15 +315,4 @@ label_settings = SubResource("LabelSettings_banner")
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="BottomGuide" type="Label" parent="HUD"]
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_top = -20.0
-grow_horizontal = 2
-grow_vertical = 0
-text = "P1: [WASD] + [J] Attack [K] Special [L] Dash  |  P2: [Arrows] + [/] Attack [.] Special [,] Dash  |  [Gamepads Supported]  |  [F1/F2] Switch Hero  |  [R] Reset"
-label_settings = SubResource("LabelSettings_hud")
-horizontal_alignment = 1
-vertical_alignment = 1
+[node name="TouchControls" parent="." instance=ExtResource("3_touch")]

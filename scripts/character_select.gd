@@ -1,11 +1,9 @@
 extends Control
 
 ## Secret Character Selection Draft Screen
-## Allows each player on their own device to secretly choose and lock in their champion.
-## Opponents only see a mystery locked card until the 3.. 2.. 1.. Champion Reveal!
+## Synchronized in Real-Time over WebSockets across Phones, Tablets, and PCs!
 
-@export var local_player_id: int = 1
-
+var local_player_id: int = 1
 var selected_class_idx: int = 0
 var is_locked_in: bool = false
 var locked_players = {}
@@ -18,7 +16,6 @@ var is_revealing: bool = false
 @onready var special_label = $CardShowcase/Skills/SpecialLabel
 @onready var lock_btn = $CardShowcase/LockInButton
 @onready var banner_label = $RevealBanner/BannerLabel
-@onready var preview_hero = $CardShowcase/HeroPreview
 
 @onready var p1_card = $Roster/P1Card
 @onready var p2_card = $Roster/P2Card
@@ -52,8 +49,23 @@ const SKILL_DETAILS = {
 }
 
 func _ready():
+	local_player_id = NetworkManager.my_player_id
+	NetworkManager.connect("connected_to_server", Callable(self, "_on_connected_to_server"))
+	NetworkManager.connect("opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
+	
 	_update_showcase()
 	_update_roster()
+
+func _on_connected_to_server(p_id: int):
+	local_player_id = p_id
+	_update_roster()
+
+func _on_opponent_locked_in(opp_id: int, opp_class: int):
+	print("🔒 Opponent P", opp_id, " locked in secretly!")
+	Global.player_configs[opp_id]["class"] = opp_class
+	locked_players[opp_id] = opp_class
+	_update_roster()
+	_check_all_ready()
 
 func _input(event):
 	if is_revealing:
@@ -85,10 +97,6 @@ func _update_showcase():
 	
 	primary_label.text = s_info["primary"]
 	special_label.text = s_info["special"]
-	
-	if preview_hero:
-		preview_hero.class_type = c_type
-		preview_hero.queue_redraw()
 
 func _lock_in_champion():
 	is_locked_in = true
@@ -100,19 +108,14 @@ func _lock_in_champion():
 	lock_btn.disabled = true
 	lock_btn.modulate = Color(0.4, 0.9, 0.4)
 	
-	# Simulate other player locking in for local testing or sync over network
-	_simulate_opponent_lock()
+	# Broadcast secret lock-in over WebSocket!
+	NetworkManager.send_data({
+		"type": "lock_in",
+		"class": chosen_class
+	})
+	
 	_update_roster()
 	_check_all_ready()
-
-func _simulate_opponent_lock():
-	# In local / single-machine testing, player 2 picks an alternate champion
-	for p_id in Global.player_configs:
-		if p_id != local_player_id and Global.player_configs[p_id]["active"]:
-			if p_id not in locked_players:
-				var opp_class = (selected_class_idx + 1) % 4
-				Global.player_configs[p_id]["class"] = opp_class
-				locked_players[p_id] = opp_class
 
 func _update_roster():
 	_update_player_card(p1_card, 1)
@@ -130,18 +133,16 @@ func _update_player_card(card: Control, p_id: int):
 	var status_lbl = card.get_node("Status")
 	var icon_lbl = card.get_node("Icon")
 	
-	name_lbl.text = "Player " + str(p_id)
+	name_lbl.text = "Player " + str(p_id) + (" (You)" if p_id == local_player_id else "")
 	
 	if p_id in locked_players:
 		if p_id == local_player_id or is_revealing:
-			# Show champion details
 			var c_type = locked_players[p_id]
 			var c_info = Global.CLASS_INFO[c_type]
 			icon_lbl.text = c_info["icon"]
 			status_lbl.text = c_info["name"].to_upper()
 			status_lbl.modulate = c_info["color"]
 		else:
-			# Opponent's pick is SECRET!
 			icon_lbl.text = "🔒"
 			status_lbl.text = "READY (SECRET)"
 			status_lbl.modulate = Color(1.0, 0.85, 0.3)
@@ -170,11 +171,10 @@ func _start_reveal_countdown():
 	banner_label.text = "⚡ ALL PLAYERS LOCKED IN! ⚡\nRevealing Champions in 1..."
 	await get_tree().create_timer(1.0).timeout
 	
-	# THE REVEAL! Flip cards over
-	banner_label.text = "💥 CHAMPIONS REVEALED! ENTERING THE ARENA! 💥"
+	banner_label.text = "💥 CHAMPIONS REVEALED! ENTERING ARENA! 💥"
 	_update_roster()
 	
-	await get_tree().create_timer(1.8).timeout
+	await get_tree().create_timer(1.6).timeout
 	get_tree().change_scene_to_file("res://scenes/arena.tscn")
 
 func _on_lock_in_button_pressed():

@@ -20,8 +20,10 @@ var current_round: int = 1
 @onready var p2_panel = $HUD/TopBar/P2Panel
 @onready var p3_panel = $HUD/TopBar/P3Panel
 @onready var p4_panel = $HUD/TopBar/P4Panel
+@onready var touch_controls = $TouchControls
 
 func _ready():
+	NetworkManager.connect("player_hit_event", Callable(self, "_on_network_player_hit"))
 	_start_new_match()
 
 func _input(event):
@@ -56,6 +58,10 @@ func _start_round():
 	is_round_over = false
 	_clear_projectiles()
 	
+	# Set touch controller to control my assigned player ID
+	if touch_controls:
+		touch_controls.my_input_prefix = "p" + str(NetworkManager.my_player_id) + "_"
+	
 	# Reset stocks
 	for p_id in Global.player_configs:
 		if Global.player_configs[p_id]["active"]:
@@ -84,6 +90,11 @@ func _start_round():
 func _clear_projectiles():
 	for p in get_tree().get_nodes_in_group("projectiles"):
 		p.queue_free()
+
+func _on_network_player_hit(killer_id: int, victim_id: int):
+	if victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
+		if not player_instances[victim_id].is_dead:
+			player_instances[victim_id].take_hit(killer_id, Vector2.ZERO)
 
 func _on_player_died(killer_id: int, victim_id: int):
 	if victim_id in player_stocks:
@@ -164,7 +175,7 @@ func _update_panel(panel: Control, p_id: int):
 	var stock_lbl = panel.get_node("StockLabel")
 	var score_lbl = panel.get_node("ScoreLabel")
 	
-	name_lbl.text = "P" + str(p_id) + " " + c_info["icon"] + " " + c_info["name"]
+	name_lbl.text = "P" + str(p_id) + (" (You)" if p_id == NetworkManager.my_player_id else "") + " " + c_info["icon"] + " " + c_info["name"]
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)
@@ -177,16 +188,3 @@ func _update_panel(panel: Control, p_id: int):
 	stock_lbl.text = hearts
 	
 	score_lbl.text = "👑 " + str(Global.player_scores[p_id])
-
-func _draw():
-	draw_rect(Rect2(0, 0, 640, 360), Color(0.08, 0.08, 0.12), true)
-	
-	for x in range(0, 640, 32):
-		for y in range(0, 360, 20):
-			var offset = 16 if (y / 20) % 2 == 1 else 0
-			var rect = Rect2(x + offset, y, 30, 18)
-			draw_rect(rect, Color(0.12, 0.12, 0.18, 0.4), true)
-			draw_rect(rect, Color(0.05, 0.05, 0.08, 0.5), false, 1.0)
-			
-	draw_circle(Vector2(320, 100), 38.0, Color(0.18, 0.2, 0.3, 0.35))
-	draw_arc(Vector2(320, 100), 38.0, 0.0, TAU, 32, Color(0.3, 0.35, 0.5, 0.4), 2.0)
