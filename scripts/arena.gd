@@ -46,17 +46,7 @@ func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_R:
 			Global.reset_scores()
-		
-	Global.connect("net_spawn_powerup", Callable(self, "_on_net_spawn_powerup"))
-	Global.connect("net_activate_powerup", Callable(self, "_on_net_activate_powerup"))
-	
-	if Global.my_player_id == 1:
-		var pt = Timer.new()
-		pt.wait_time = 15.0
-		pt.autostart = true
-		pt.connect("timeout", Callable(self, "_host_spawn_powerup"))
-		add_child(pt)
-	_start_new_match()
+			_start_new_match()
 
 func _start_new_match():
 	current_round = 1
