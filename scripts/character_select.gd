@@ -149,8 +149,18 @@ func _ready():
 	join_btn.connect("pressed", Callable(self, "_on_join_pressed"))
 	join_overlay.add_child(join_btn)
 	
+	var spectate_btn = Button.new()
+	spectate_btn.name = "SpectateBtn"
+	spectate_btn.text = "Spectate"
+	spectate_btn.add_theme_font_size_override("font_size", 24)
+	spectate_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
+	add_child(spectate_btn)
+	
 	if Global.my_player_id > 0:
 		join_overlay.visible = false
+	else:
+		spectate_btn.visible = false
 
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
@@ -445,6 +455,20 @@ func _on_join_pressed():
 	var saved_id = Global._load_saved_player_id()
 	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id})
 
+func _on_spectate_pressed():
+	Global.send_net_data({"type": "leave_slot"})
+	Global.my_player_id = 0
+	local_player_id = 0
+	
+	var overlay = get_node_or_null("JoinOverlay")
+	if overlay:
+		overlay.visible = true
+		
+	var s_btn = get_node_or_null("SpectateBtn")
+	if s_btn:
+		s_btn.visible = false
+	_update_roster()
+
 func _process(delta):
 	var overlay = get_node_or_null("JoinOverlay")
 	if overlay and overlay.visible and Global.my_player_id > 0:
@@ -453,3 +477,7 @@ func _process(delta):
 		if local_player_id > 0 and not active_player_ids.has(local_player_id):
 			active_player_ids.append(local_player_id)
 		_update_roster()
+		
+		var s_btn = get_node_or_null("SpectateBtn")
+		if s_btn:
+			s_btn.visible = true

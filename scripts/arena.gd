@@ -56,13 +56,41 @@ func _ready():
 		pt.autostart = true
 		pt.connect("timeout", Callable(self, "_host_spawn_powerup"))
 		add_child(pt)
+	pause_overlay = ColorRect.new()
+	pause_overlay.color = Color(0, 0, 0, 0.8)
+	pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pause_overlay.z_index = 100
+	pause_overlay.visible = false
+	add_child(pause_overlay)
+	
+	var spectate_btn = Button.new()
+	spectate_btn.text = "SPECTATE (LEAVE MATCH)"
+	spectate_btn.add_theme_font_size_override("font_size", 48)
+	spectate_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
+	pause_overlay.add_child(spectate_btn)
+	
 	_start_new_match()
 
 func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_R:
 			Global.reset_scores()
-			_start_new_match()
+			pause_overlay = ColorRect.new()
+	pause_overlay.color = Color(0, 0, 0, 0.8)
+	pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pause_overlay.z_index = 100
+	pause_overlay.visible = false
+	add_child(pause_overlay)
+	
+	var spectate_btn = Button.new()
+	spectate_btn.text = "SPECTATE (LEAVE MATCH)"
+	spectate_btn.add_theme_font_size_override("font_size", 48)
+	spectate_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
+	pause_overlay.add_child(spectate_btn)
+	
+	_start_new_match()
 
 
 func _on_return_to_lobby():
@@ -311,3 +339,12 @@ func _activate_rotation():
 	
 	await get_tree().create_timer(2.5).timeout
 	is_arena_rotating = false
+
+func _on_spectate_pressed():
+	if pause_overlay:
+		pause_overlay.visible = false
+	Global.send_net_data({"type": "leave_slot"})
+	var p_node = get_node_or_null("Player" + str(Global.my_player_id))
+	if p_node:
+		p_node.queue_free()
+	Global.my_player_id = 0

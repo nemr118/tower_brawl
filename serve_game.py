@@ -154,81 +154,26 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     # ── Slot assignment ───────────────────────────────────────────────────────
     # Read optional first frame: client may send {"type":"hello","reclaim_id":N}
     # to reclaim their previous slot after a page reload or reconnect.
-    sock.settimeout(0.5)
-    reclaim_id = 0
-    try:
-        hello_msg = ws_read(sock)
-        if hello_msg:
-            hello = json.loads(hello_msg)
-            if hello.get("type") == "hello":
-                reclaim_id = int(hello.get("reclaim_id", 0))
-                if "name" in hello and hello["name"]:
-                    with lobby_lock:
-                        player_names[reclaim_id] = str(hello["name"])[:12]
-    except Exception:
-        pass
     sock.settimeout(10.0)
-
     assigned_id = None
     with lobby_lock:
-        # Try to reclaim previous slot first
-        if 1 <= reclaim_id <= 4:
-            old_sock = player_slots[reclaim_id - 1]
-            if old_sock is not None:
-                try: old_sock["sock"].close()
-                except: pass
-            player_slots[reclaim_id - 1] = {"sock": sock, "addr": str(addr)}
-            assigned_id = reclaim_id
-            print(f"[{label}] P{assigned_id} RECLAIMED slot  addr={addr}")
-        else:
-            for i in range(4):
-                if player_slots[i] is None:
-                    player_slots[i] = {"sock": sock, "addr": str(addr)}
-                    assigned_id = i + 1
-                    break
-
-    if assigned_id is None:
-        ws_send(sock, json.dumps({"type": "server_full"}))
-        try: sock.close()
-        except: pass
-        with lobby_lock:
-            active = [i+1 for i in range(4) if player_slots[i]]
-        print(f"[{label}] Server full — rejected {addr}  active={active}")
-        return
-
-    with lobby_lock:
         active = [i+1 for i in range(4) if player_slots[i]]
-        if global_match_state == 'PLAYING':
-            if assigned_id not in global_playing_players and assigned_id not in global_waiting_players:
-                global_waiting_players.append(assigned_id)
-        else:
-            if assigned_id not in global_playing_players:
-                global_playing_players.append(assigned_id)
-                
         locked = {str(k): v for k, v in player_locked.items()}
         names  = {str(k): v for k, v in player_names.items()}
 
-    print(f"[{label}] P{assigned_id} JOINED  active={active}  addr={addr}")
-
+    print(f"[{label}] Spectator CONNECTED  addr={addr}")
+    
     ws_send(sock, json.dumps({
-        "type":           "assign_id",
-        "id":             assigned_id,
+        "type":           "spectator_state",
         "active_players": active,
         "playing_players": global_playing_players,
-        "match_state": global_match_state,
+        "match_state":    global_match_state,
         "locked_players": locked,
         "player_names": names,
         "current_round": global_current_round,
         "scores": global_player_scores,
         "stocks": global_player_stocks
     }))
-
-    broadcast(json.dumps({
-        "type":           "player_joined",
-        "id":             assigned_id,
-        "active_players": active,
-        "player_names": names,
-    }), exclude=sock)
 
     import time
     last_ping_time = time.time()
@@ -248,6 +193,132 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     last_ping_time = time.time()
                     continue
                 last_ping_time = time.time()
+
+                if data.get("type") == "leave_slot":
+                    with lobby_lock:
+                        if assigned_id is not None:
+                            old_id = assigned_id
+                            player_slots[assigned_id - 1] = None
+                            if assigned_id in global_playing_players:
+                                global_playing_players.remove(assigned_id)
+                            if assigned_id in global_waiting_players:
+                                global_waiting_players.remove(assigned_id)
+                            if assigned_id in global_alive_players:
+                                global_alive_players.remove(assigned_id)
+                                
+                            assigned_id = None
+                            active = [i+1 for i in range(4) if player_slots[i]]
+                            
+                            print(f"[{label}] P{old_id} became spectator.")
+                            
+                            broadcast(json.dumps({
+                                "type": "player_left",
+                                "id": old_id,
+                                "active_players": active
+                            }))
+                            
+                            # If leaving mid-game makes it 1 player left, end round
+                            if global_match_state == 'PLAYING' and len(global_alive_players) <= 1 and not global_is_round_over and len(active) > 1:
+                                global_is_round_over = True
+                                winner = list(global_alive_players)[0] if len(global_alive_players) == 1 else 0
+                                if winner > 0:
+                                    global_player_scores[winner] += 1
+                                    
+                                broadcast(json.dumps({
+                                    "type": "round_end",
+                                    "winner": winner,
+                                    "scores": global_player_scores,
+                                    "round": global_current_round
+                                }))
+                                
+                                def next_round():
+                                    global global_current_round, global_is_round_over, global_alive_players, global_player_stocks, global_match_state, global_waiting_players, global_playing_players
+                                    import time
+                                    time.sleep(2.6)
+                                    with lobby_lock:
+                                        if len(global_waiting_players) > 0:
+                                            global_match_state = 'LOBBY'
+                                            global_waiting_players = []
+                                            global_playing_players = []
+                                            player_locked.clear()
+                                            broadcast(json.dumps({"type": "return_to_lobby"}))
+                                        else:
+                                            global_current_round += 1
+                                            global_is_round_over = False
+                                            global_alive_players = set([p for p in global_playing_players if player_slots[p-1]])
+                                            for i in range(1, 5):
+                                                global_player_stocks[i] = 3
+                                            broadcast(json.dumps({
+                                                "type": "new_round",
+                                                "round": global_current_round
+                                            }))
+                                import threading
+                                threading.Thread(target=next_round, daemon=True).start()
+                    continue
+                    
+                if data.get("type") == "request_join":
+                    with lobby_lock:
+                        if assigned_id is not None:
+                            continue
+                            
+                        # Assign slot
+                        reclaim_id = int(data.get("reclaim_id", 0))
+                        if 1 <= reclaim_id <= 4:
+                            old_sock = player_slots[reclaim_id - 1]
+                            if old_sock is not None:
+                                try: old_sock["sock"].close()
+                                except: pass
+                            player_slots[reclaim_id - 1] = {"sock": sock, "addr": str(addr)}
+                            assigned_id = reclaim_id
+                        else:
+                            for i in range(4):
+                                if player_slots[i] is None:
+                                    player_slots[i] = {"sock": sock, "addr": str(addr)}
+                                    assigned_id = i + 1
+                                    break
+                                    
+                        if assigned_id is None:
+                            ws_send(sock, json.dumps({"type": "server_full"}))
+                            continue
+                            
+                        active = [i+1 for i in range(4) if player_slots[i]]
+                        
+                        # Add to waiting if match is playing, otherwise playing
+                        if global_match_state == 'PLAYING':
+                            if assigned_id not in global_waiting_players:
+                                global_waiting_players.append(assigned_id)
+                        else:
+                            if assigned_id not in global_playing_players:
+                                global_playing_players.append(assigned_id)
+                                
+                        locked = {str(k): v for k, v in player_locked.items()}
+                        names  = {str(k): v for k, v in player_names.items()}
+                        
+                    print(f"[{label}] Spectator JOINED as P{assigned_id}")
+                    
+                    ws_send(sock, json.dumps({
+                        "type":           "assign_id",
+                        "id":             assigned_id,
+                        "active_players": active,
+                        "playing_players": global_playing_players,
+                        "match_state":    global_match_state,
+                        "locked_players": locked,
+                        "player_names": names,
+                        "current_round": global_current_round,
+                        "scores": global_player_scores,
+                        "stocks": global_player_stocks
+                    }))
+
+                    broadcast(json.dumps({
+                        "type":           "player_joined",
+                        "id":             assigned_id,
+                        "active_players": active,
+                        "player_names": names,
+                    }), exclude=sock)
+                    continue
+
+                if assigned_id is None:
+                    continue  # ignore other events if spectator
 
                 if data.get("type") == "set_name":
                     with lobby_lock:
