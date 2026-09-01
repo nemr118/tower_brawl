@@ -115,6 +115,7 @@ var active_players: Array[int] = []
 var locked_opponents: Dictionary = {}
 var player_names: Dictionary = {}
 var my_player_name: String = ""
+var current_round: int = 1
 
 signal net_names_updated()
 signal net_spawn_powerup(x, y)

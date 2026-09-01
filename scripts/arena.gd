@@ -70,6 +70,18 @@ func _ready():
 	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
 	pause_overlay.add_child(spectate_btn)
 	
+	var join_btn = Button.new()
+	join_btn.name = "JoinBtn"
+	join_btn.text = "JOIN NEXT MATCH"
+	join_btn.add_theme_font_size_override("font_size", 24)
+	join_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	join_btn.connect("pressed", Callable(self, "_on_arena_join_pressed"))
+	join_btn.z_index = 100
+	add_child(join_btn)
+	
+	if Global.my_player_id > 0:
+		join_btn.visible = false
+	
 	_start_new_match()
 
 func _input(event):
@@ -90,6 +102,18 @@ func _input(event):
 	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
 	pause_overlay.add_child(spectate_btn)
 	
+	var join_btn = Button.new()
+	join_btn.name = "JoinBtn"
+	join_btn.text = "JOIN NEXT MATCH"
+	join_btn.add_theme_font_size_override("font_size", 24)
+	join_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	join_btn.connect("pressed", Callable(self, "_on_arena_join_pressed"))
+	join_btn.z_index = 100
+	add_child(join_btn)
+	
+	if Global.my_player_id > 0:
+		join_btn.visible = false
+	
 	_start_new_match()
 
 
@@ -97,7 +121,7 @@ func _on_return_to_lobby():
 	get_tree().change_scene_to_file("res://scenes/character_select.tscn")
 
 func _start_new_match():
-	current_round = 1
+	current_round = Global.current_round
 	_start_round()
 
 
@@ -339,6 +363,14 @@ func _activate_rotation():
 	
 	await get_tree().create_timer(2.5).timeout
 	is_arena_rotating = false
+
+func _on_arena_join_pressed():
+	var saved_id = Global._load_saved_player_id()
+	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id})
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn:
+		j_btn.text = "QUEUED FOR LOBBY..."
+		j_btn.disabled = true
 
 func _on_spectate_pressed():
 	if pause_overlay:

@@ -134,20 +134,16 @@ func _ready():
 	add_child(force_start_btn)
 	force_start_btn.connect("pressed", Callable(self, "_on_force_start_pressed"))
 	
-	# Spectator Join Overlay
-	var join_overlay = ColorRect.new()
-	join_overlay.name = "JoinOverlay"
-	join_overlay.color = Color(0, 0, 0, 0.8)
-	join_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	join_overlay.z_index = 100
-	add_child(join_overlay)
-	
+	# Unobtrusive Join Button
 	var join_btn = Button.new()
+	join_btn.name = "JoinBtn"
 	join_btn.text = "JOIN MATCH"
-	join_btn.add_theme_font_size_override("font_size", 48)
-	join_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	join_btn.add_theme_font_size_override("font_size", 32)
+	join_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	join_btn.custom_minimum_size = Vector2(250, 60)
 	join_btn.connect("pressed", Callable(self, "_on_join_pressed"))
-	join_overlay.add_child(join_btn)
+	join_btn.z_index = 100
+	add_child(join_btn)
 	
 	var spectate_btn = Button.new()
 	spectate_btn.name = "SpectateBtn"
@@ -155,10 +151,11 @@ func _ready():
 	spectate_btn.add_theme_font_size_override("font_size", 24)
 	spectate_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
+	spectate_btn.z_index = 100
 	add_child(spectate_btn)
 	
 	if Global.my_player_id > 0:
-		join_overlay.visible = false
+		join_btn.visible = false
 	else:
 		spectate_btn.visible = false
 
@@ -460,9 +457,9 @@ func _on_spectate_pressed():
 	Global.my_player_id = 0
 	local_player_id = 0
 	
-	var overlay = get_node_or_null("JoinOverlay")
-	if overlay:
-		overlay.visible = true
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn:
+		j_btn.visible = true
 		
 	var s_btn = get_node_or_null("SpectateBtn")
 	if s_btn:
@@ -470,7 +467,7 @@ func _on_spectate_pressed():
 	_update_roster()
 
 func _process(delta):
-	var overlay = get_node_or_null("JoinOverlay")
+	var overlay = get_node_or_null("JoinBtn")
 	if overlay and overlay.visible and Global.my_player_id > 0:
 		overlay.visible = false
 		local_player_id = Global.my_player_id
