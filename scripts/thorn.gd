@@ -14,6 +14,9 @@ func _ready():
 	shape.radius = 6.0
 	col.shape = shape
 	add_child(col)
+	# thorn.tscn carries no signal wiring (the other projectile scenes do), so the
+	# thorn used to depend entirely on the per-frame overlap scan. Event-driven now.
+	body_entered.connect(_on_body_entered)
 
 func init(shooter: int, pos: Vector2, dir: Vector2):
 	shooter_id = shooter
@@ -33,9 +36,9 @@ func _physics_process(delta: float):
 		global_position.x = screen_w + 10.0
 	elif global_position.x > screen_w + 10.0:
 		global_position.x = -10.0
-		
-	for body in get_overlapping_bodies():
-		_handle_body_collision(body)
+
+func _on_body_entered(body: Node2D):
+	_handle_body_collision(body)
 
 func _handle_body_collision(body: Node2D):
 	if body.is_in_group("players"):

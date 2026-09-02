@@ -1,3 +1,13 @@
 __pycache__/
 patch_*.py
 fix*.py
+
+# versioned web builds are 20 MB each; only the plain export is tracked
+build/web/index_v*
+
+# Godot editor cache and runtime logs never belong in git
+.godot/
+debug.log
+server.log
+*.log
+.harness_logs/

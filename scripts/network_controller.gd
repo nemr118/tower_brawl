@@ -6,17 +6,26 @@ extends Node
 var udp_server: PacketPeerUDP
 
 func _ready():
+	# UDP does not exist on the web platform, and a failed bind leaves nothing to
+	# poll. Either way, stop _process: this autoload used to poll an unbound socket
+	# every frame in the lobby and the arena of every web client.
+	if OS.has_feature("web"):
+		set_process(false)
+		return
 	udp_server = PacketPeerUDP.new()
 	var err = udp_server.bind(9090, "0.0.0.0")
 	if err == OK:
 		print("📡 Mobile Controller Server listening on UDP port 9090")
 	else:
-		print("⚠️ Failed to bind UDP port 9090: ", err)
+		print("⚠️ Failed to bind UDP port 9090: ", err, " (controller bridge disabled)")
+		udp_server = null
+		set_process(false)
 
 func _process(_delta):
 	if not udp_server:
+		set_process(false)
 		return
-		
+
 	while udp_server.get_available_packet_count() > 0:
 		var pkt = udp_server.get_packet()
 		var msg = pkt.get_string_from_utf8()

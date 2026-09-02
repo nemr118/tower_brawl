@@ -14,6 +14,19 @@ var is_arena_rotating: bool = false
 
 const PlayerScene = preload("res://scenes/player.tscn")
 
+# HUD textures resolved once at load. _update_panel used to call load() for every
+# icon on every HUD refresh (each a resource-cache lookup); these are plain constants.
+const HEART_TEX = preload("res://assets/icons/heart.jpg")
+const CROWN_TEX = preload("res://assets/icons/crown.jpg")
+const PICKUP_TEX = preload("res://assets/icons/pickup.jpg")
+const CLASS_ICON_TEX = {
+	Global.ClassType.RANGER: preload("res://assets/icons/ranger.jpg"),
+	Global.ClassType.KNIGHT: preload("res://assets/icons/knight.jpg"),
+	Global.ClassType.MAGE: preload("res://assets/icons/pyro.jpg"),
+	Global.ClassType.ROGUE: preload("res://assets/icons/rogue.jpg"),
+	Global.ClassType.DRUID: preload("res://assets/icons/druid.jpg"),
+}
+
 var spawn_points = [
 	Vector2(110, 200),
 	Vector2(530, 200),
@@ -26,6 +39,17 @@ var player_instances = {}
 var is_round_over: bool = false
 var current_round: int = 1
 var pause_overlay: ColorRect
+
+# Global signal -> handler. Connected in _ready, disconnected in _exit_tree.
+const NET_SIGNAL_HANDLERS = {
+	"net_player_died": "_on_net_player_died",
+	"net_round_end": "_on_round_end_sync",
+	"net_new_round": "_on_new_round_sync",
+	"net_return_to_lobby": "_on_return_to_lobby",
+	"net_spawn_powerup": "_on_net_spawn_powerup",
+	"net_activate_powerup": "_on_net_activate_powerup",
+	"net_version_error": "_on_net_version_error",
+}
 
 @onready var hud = $HUD
 @onready var banner_label = $HUD/CenterBanner/BannerLabel
@@ -53,15 +77,9 @@ func _ready():
 	if Global.my_player_id == 0:
 		leave_btn.visible = false
 
-	Global.connect("net_player_died", Callable(self, "_on_net_player_died"))
-	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
-	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
-	Global.connect("net_new_round", Callable(self, "_on_new_round_sync"))
-	Global.connect("net_return_to_lobby", Callable(self, "_on_return_to_lobby"))
+	for sig_name in NET_SIGNAL_HANDLERS:
+		Global.connect(sig_name, Callable(self, NET_SIGNAL_HANDLERS[sig_name]))
 
-	Global.connect("net_spawn_powerup", Callable(self, "_on_net_spawn_powerup"))
-	Global.connect("net_activate_powerup", Callable(self, "_on_net_activate_powerup"))
-	
 	if Global.my_player_id == 1:
 		var pt = Timer.new()
 		pt.wait_time = 15.0
@@ -96,6 +114,17 @@ func _ready():
 	
 	_start_new_match()
 
+func _exit_tree():
+	# change_scene_to_file() removes this scene immediately but frees it at the end
+	# of the frame. Any packet handled in between used to reach a node with no tree
+	# and crash on get_tree() (the return_to_lobby null-tree crash). Drop the
+	# subscriptions the moment we leave the tree.
+	for sig_name in NET_SIGNAL_HANDLERS:
+		var sig := Signal(Global, sig_name)
+		var handler := Callable(self, NET_SIGNAL_HANDLERS[sig_name])
+		if sig.is_connected(handler):
+			sig.disconnect(handler)
+
 func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_R:
@@ -104,6 +133,15 @@ func _input(event):
 
 func _on_return_to_lobby():
 	get_tree().change_scene_to_file("res://scenes/character_select.tscn")
+
+func _on_net_version_error(server_version: String):
+	# The server refused our JOIN NEXT MATCH: the browser is running a cached build.
+	_show_banner("UPDATE REQUIRED: this build is " + Global.GAME_VERSION + ", the server runs "
+		+ server_version + ".\nReload the page to get the new version.", 999.0)
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn:
+		j_btn.text = "RELOAD THE PAGE TO JOIN"
+		j_btn.disabled = true
 
 func _start_new_match():
 	current_round = Global.current_round
@@ -127,14 +165,21 @@ func _start_round():
 	if touch_controls:
 		touch_controls.my_input_prefix = "p" + str(Global.my_player_id) + "_"
 	
+	# Fighters exist only for the slots the server says are in this match. A client
+	# that arrives straight from scene_transition, or joins mid-match, never ran the
+	# lobby countdown, so the default configs (all four active) cannot be trusted.
+	var roster: Array[int] = Global.playing_players.duplicate()
+	if roster.is_empty():
+		roster = Global.active_players.duplicate()
 	for p_id in Global.player_configs:
-		if Global.player_configs[p_id]["active"]:
-			player_stocks[p_id] = Global.max_stocks
-			
-	for p_id in Global.player_configs:
-		if not Global.player_configs[p_id]["active"]:
-			continue
-			
+		Global.player_configs[p_id]["active"] = p_id in roster
+	for p_id in player_instances.keys():
+		if not p_id in roster and is_instance_valid(player_instances[p_id]):
+			player_instances[p_id].queue_free()
+			player_instances.erase(p_id)
+
+	for p_id in roster:
+		player_stocks[p_id] = Global.max_stocks
 		var spawn_pos = spawn_points[p_id - 1]
 		if p_id in player_instances and is_instance_valid(player_instances[p_id]):
 			player_instances[p_id].respawn(spawn_pos)
@@ -144,25 +189,24 @@ func _start_round():
 			p.class_type = Global.player_configs[p_id]["class"]
 			add_child(p)
 			p.respawn(spawn_pos)
-			p.connect("player_died", Callable(self, "_on_player_died"))
 			player_instances[p_id] = p
-			
+
 	_update_hud()
 	_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
-	if Global.is_spectator:
+	var queued := Global.my_player_id > 0 and not Global.my_player_id in roster
+	if Global.is_spectator or queued:
 		await get_tree().create_timer(1.5).timeout
-		_show_banner("SPECTATING... WAITING FOR ROUND END", 999.0)
+		if not is_inside_tree():
+			return
+		if queued:
+			_show_banner("YOU'RE IN THE QUEUE: NEXT MATCH STARTS AFTER THIS ROUND", 999.0)
+		else:
+			_show_banner("SPECTATING... WAITING FOR ROUND END", 999.0)
 
 
 func _clear_projectiles():
 	for p in get_tree().get_nodes_in_group("projectiles"):
 		p.queue_free()
-
-func _on_network_player_hit(killer_id: int, victim_id: int):
-	if victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
-		if not player_instances[victim_id].is_dead:
-			player_instances[victim_id].take_hit(killer_id, Vector2.ZERO)
-
 
 func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int):
 	player_stocks[victim_id] = new_stock
@@ -181,7 +225,9 @@ func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int):
 	
 	if new_stock > 0:
 		await get_tree().create_timer(1.2).timeout
-		if not is_round_over and victim_id in player_instances:
+		if not is_inside_tree():
+			return
+		if not is_round_over and victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
 			var spawn_pos = spawn_points[victim_id - 1]
 			player_instances[victim_id].respawn(spawn_pos)
 
@@ -189,35 +235,40 @@ func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int):
 func _check_round_end():
 	pass
 
-func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int):
+func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int, match_over: bool = false):
 	if is_round_over:
 		return # Ignore duplicate network triggers
-		
+
 	is_round_over = true
 	current_round = round_num
-	
-	# Sync the scores from the host
+
+	# Sync the scores from the server
 	for p_id in scores:
 		Global.player_scores[int(p_id)] = int(scores[p_id])
-		
-	_update_hud()
-	_display_round_winner(winner_id)
 
-func _display_round_winner(winner_id: int):
+	_update_hud()
+	_display_round_winner(winner_id, match_over)
+
+func _display_round_winner(winner_id: int, match_over: bool = false):
+	if winner_id <= 0:
+		_show_banner("*** NO SURVIVORS: ROUND " + str(current_round) + " IS A DRAW ***", 2.2)
+		return
 	var winner_class = Global.CLASS_INFO[Global.player_configs[winner_id]["class"]]["name"]
 	var is_me = (winner_id == Global.my_player_id)
-	
-	if Global.player_scores[winner_id] >= Global.match_score_limit:
+
+	# The server decides when the match is won (5 crowns) and sends match_over;
+	# it returns everyone to the lobby a few seconds later.
+	if match_over:
 		var w_name = Global.player_names.get(winner_id, "PLAYER " + str(winner_id))
-		var txt = "*** " + ("YOU WON THE MATCH!" if is_me else w_name + " (" + winner_class + ") WINS THE MATCH!") + " ***"
+		var txt = "*** " + ("YOU WON THE MATCH!" if is_me else w_name + " (" + winner_class + ") WINS THE MATCH!") + " ***\nReturning to lobby..."
 		_show_banner(txt, 999.0)
 	else:
 		var w_name = Global.player_names.get(winner_id, "PLAYER " + str(winner_id))
 		var txt = "*** " + ("YOU WON ROUND " + str(current_round) + "!" if is_me else w_name + " (" + winner_class + ") WINS ROUND " + str(current_round) + "!") + " ***"
 		_show_banner(txt, 2.2)
-		await get_tree().create_timer(2.6).timeout
-		current_round += 1
-		_start_round()
+		# The next round starts ONLY when the server sends new_round (see
+		# _on_new_round_sync). The old local 2.6 s timer here made every client
+		# start the round twice and let the round counter drift.
 
 func _on_new_round_sync(round_num: int):
 	current_round = round_num
@@ -231,6 +282,8 @@ func _show_banner(text: String, duration: float):
 	tween.tween_property(banner_label, "modulate:a", 1.0, 0.15)
 	if duration < 900.0:
 		await get_tree().create_timer(duration).timeout
+		if not is_inside_tree():
+			return
 		if banner_label.text == text:
 			var fade = create_tween()
 			fade.tween_property(banner_label, "modulate:a", 0.0, 0.25)
@@ -267,7 +320,7 @@ func _update_panel(panel: Control, p_id: int):
 		class_icon.size = Vector2(16, 16)
 		class_icon.position = Vector2(0, 2)
 		name_lbl.add_child(class_icon)
-	class_icon.texture = load(c_info["icon_tex"])
+	class_icon.texture = CLASS_ICON_TEX.get(c_type)
 	name_lbl.text = "   " + disp_name + (" (You)" if p_id == Global.my_player_id else "")
 	name_lbl.modulate = c_info["color"]
 	
@@ -281,7 +334,7 @@ func _update_panel(panel: Control, p_id: int):
 		stock_icon.size = Vector2(16, 16)
 		stock_icon.position = Vector2(0, 2)
 		stock_lbl.add_child(stock_icon)
-	stock_icon.texture = load("res://assets/icons/heart.jpg")
+	stock_icon.texture = HEART_TEX
 	stock_lbl.text = "   x " + str(stocks)
 	
 	var score_icon = score_lbl.get_node_or_null("ScoreIcon")
@@ -293,7 +346,7 @@ func _update_panel(panel: Control, p_id: int):
 		score_icon.size = Vector2(16, 16)
 		score_icon.position = Vector2(0, 2)
 		score_lbl.add_child(score_icon)
-	score_icon.texture = load("res://assets/icons/crown.jpg")
+	score_icon.texture = CROWN_TEX
 	score_lbl.text = "   " + str(Global.player_scores[p_id])
 
 func _host_spawn_powerup():
@@ -320,7 +373,7 @@ func _spawn_powerup(px: float, py: float):
 	powerup_node.add_child(col)
 	
 	var tex = Sprite2D.new()
-	tex.texture = load("res://assets/icons/pickup.jpg")
+	tex.texture = PICKUP_TEX
 	tex.scale = Vector2(0.12, 0.12)  # Scale a 256x256 image to ~30x30
 	powerup_node.add_child(tex)
 	
@@ -350,8 +403,10 @@ func _activate_rotation():
 	tween.set_trans(Tween.TRANS_SINE)
 	tween.set_ease(Tween.EASE_IN_OUT)
 	tween.tween_property(platforms_node, "rotation", platforms_node.rotation + PI, 2.5)
-	
+
 	await get_tree().create_timer(2.5).timeout
+	if not is_inside_tree():
+		return
 	is_arena_rotating = false
 
 func _on_arena_join_pressed():

@@ -246,18 +246,9 @@ func _sync_network_state(delta: float):
 	sync_timer += delta
 	if sync_timer >= 0.033:
 		sync_timer = 0.0
-		Global.send_net_data({
-			"type": "sync_pos",
-			"x": global_position.x,
-			"y": global_position.y,
-			"aim_x": aim_direction.x,
-			"aim_y": aim_direction.y,
-			"facing": is_facing_right,
-			"dash": is_dashing,
-			"shield": is_shielding,
-			"bear": is_bear_form,
-			"egg": is_egg
-		})
+		# 9-byte binary packet (see Global.encode_sync_pos); was ~190 bytes of JSON.
+		Global.send_net_binary(Global.encode_sync_pos(
+			global_position, aim_direction, is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg))
 
 func _on_player_state_received(p_id: int, data: Dictionary):
 	if p_id == player_id:
@@ -288,6 +279,10 @@ func _on_remote_projectile(data: Dictionary):
 			var kunai = KunaiScene.instantiate()
 			get_parent().add_child(kunai)
 			kunai.init(player_id, spawn_pos, dir)
+		elif w_type == "thorn":
+			var thorn = ThornScene.instantiate()
+			get_parent().add_child(thorn)
+			thorn.init(player_id, spawn_pos, dir)
 
 func _start_dash(input_x: float, input_y: float):
 	is_dashing = true
@@ -318,14 +313,7 @@ func _perform_attack(aim_dir: Vector2):
 				get_parent().add_child(arrow)
 				arrow.init(player_id, spawn_pos, aim_dir)
 				_squash_and_stretch(0.85, 1.15)
-				Global.send_net_data({
-					"type": "spawn_projectile",
-					"weapon": "arrow",
-					"pos_x": spawn_pos.x,
-					"pos_y": spawn_pos.y,
-					"dir_x": aim_dir.x,
-					"dir_y": aim_dir.y
-				})
+				Global.send_net_binary(Global.encode_projectile("arrow", spawn_pos, aim_dir))
 		Global.ClassType.KNIGHT:
 			attack_cooldown = 0.38
 			_execute_sword_slash(aim_dir)
@@ -338,14 +326,7 @@ func _perform_attack(aim_dir: Vector2):
 				get_parent().add_child(bolt)
 				bolt.init(player_id, spawn_pos, aim_dir)
 				_squash_and_stretch(0.8, 1.2)
-				Global.send_net_data({
-					"type": "spawn_projectile",
-					"weapon": "firebolt",
-					"pos_x": spawn_pos.x,
-					"pos_y": spawn_pos.y,
-					"dir_x": aim_dir.x,
-					"dir_y": aim_dir.y
-				})
+				Global.send_net_binary(Global.encode_projectile("firebolt", spawn_pos, aim_dir))
 		Global.ClassType.DRUID:
 			if is_bear_form:
 				attack_cooldown = 0.5
@@ -358,6 +339,8 @@ func _perform_attack(aim_dir: Vector2):
 				get_parent().add_child(thorn)
 				thorn.init(player_id, spawn_pos, aim_dir)
 				_squash_and_stretch(0.9, 1.1)
+				# Thorns were never networked before: other clients saw no druid projectiles.
+				Global.send_net_binary(Global.encode_projectile("thorn", spawn_pos, aim_dir))
 		Global.ClassType.ROGUE:
 			if rogue_kunai > 0:
 				rogue_kunai -= 1
@@ -366,14 +349,7 @@ func _perform_attack(aim_dir: Vector2):
 				var kunai = KunaiScene.instantiate()
 				get_parent().add_child(kunai)
 				kunai.init(player_id, spawn_pos, aim_dir)
-				Global.send_net_data({
-					"type": "spawn_projectile",
-					"weapon": "kunai",
-					"pos_x": spawn_pos.x,
-					"pos_y": spawn_pos.y,
-					"dir_x": aim_dir.x,
-					"dir_y": aim_dir.y
-				})
+				Global.send_net_binary(Global.encode_projectile("kunai", spawn_pos, aim_dir))
 
 func _perform_special(aim_dir: Vector2):
 	match class_type:
@@ -386,14 +362,7 @@ func _perform_special(aim_dir: Vector2):
 				arrow.init(player_id, global_position + aim_dir * 18.0, aim_dir)
 				velocity = -aim_dir * 310.0 + Vector2.UP * 160.0
 				_squash_and_stretch(0.7, 1.3)
-				Global.send_net_data({
-					"type": "spawn_projectile",
-					"weapon": "arrow",
-					"pos_x": global_position.x + aim_dir.x * 18.0,
-					"pos_y": global_position.y + aim_dir.y * 18.0,
-					"dir_x": aim_dir.x,
-					"dir_y": aim_dir.y
-				})
+				Global.send_net_binary(Global.encode_projectile("arrow", global_position + aim_dir * 18.0, aim_dir))
 		Global.ClassType.KNIGHT:
 			special_cooldown = 0.75
 			is_shielding = true
@@ -492,6 +461,21 @@ func take_hit(killer_id: int, _knockback_dir: Vector2, weapon_name: String = "Me
 				"victim": player_id,
 				"weapon": weapon_name
 		})
+
+func force_die() -> void:
+	# The server (via arena.gd) says this player is dead. Remote clients cannot
+	# detect melee kills locally, so this is the only death path for puppets.
+	# Idempotent (the victim's own client already ran take_hit) and sends nothing.
+	if is_dead:
+		return
+	is_dead = true
+	visible = false
+	velocity = Vector2.ZERO
+	is_dashing = false
+	is_shielding = false
+	is_egg = false
+	collision_shape.set_deferred("disabled", true)
+	melee_area.monitoring = false
 
 func respawn(spawn_pos: Vector2):
 	global_position = spawn_pos

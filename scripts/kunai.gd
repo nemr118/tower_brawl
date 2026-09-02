@@ -27,9 +27,7 @@ func _physics_process(delta: float):
 		global_position.x = screen_w + 10.0
 	elif global_position.x > screen_w + 10.0:
 		global_position.x = -10.0
-		
-	for body in get_overlapping_bodies():
-		_handle_body_collision(body)
+	# Collisions arrive through body_entered (wired in kunai.tscn).
 
 func _handle_body_collision(body: Node2D):
 	if body.is_in_group("players"):

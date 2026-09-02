@@ -36,9 +36,8 @@ func _physics_process(delta: float):
 		global_position.x = screen_w + 10.0
 	elif global_position.x > screen_w + 10.0:
 		global_position.x = -10.0
-		
-	for body in get_overlapping_bodies():
-		_handle_body_collision(body)
+	# Collisions arrive through body_entered (wired in arrow.tscn); the per-frame
+	# get_overlapping_bodies() scan that used to run here handled every hit twice.
 
 func _handle_body_collision(body: Node2D):
 	if is_stuck:

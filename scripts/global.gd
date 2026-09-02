@@ -10,10 +10,66 @@
 extends Node
 
 var is_mobile: bool = false
-const GAME_VERSION: String = "v0.1.0"
+# Single source of truth for the game version. bump_build.sh rewrites this line,
+# mirrors it into serve_game.py, and names the exported .pck after it
+# (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
+const GAME_VERSION: String = "v0.0.5"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
+
+# --- NET STATS (Phase 0 instrumentation) --------------------------------------
+# Counts WebSocket payload bytes and packets in both directions, prints a
+# summary line every NET_STATS_INTERVAL seconds and emits net_stats_updated so a
+# HUD label can show it later. Payload only: WebSocket frame headers (2-6 bytes
+# per packet) and TCP/TLS overhead are not included.
+signal net_stats_updated(stats: Dictionary)
+var net_stats_enabled: bool = true
+const NET_STATS_INTERVAL: float = 5.0
+var _ns_bytes_in: int = 0
+var _ns_bytes_out: int = 0
+var _ns_pkts_in: int = 0
+var _ns_pkts_out: int = 0
+var _ns_types_in: Dictionary = {}    # type -> [packets, bytes] for the current interval
+var _ns_types_out: Dictionary = {}
+var _ns_total_in: int = 0            # bytes since connect
+var _ns_total_out: int = 0
+var _ns_connected_at: int = 0        # msec tick
+var _ns_last_rtt_ms: int = -1        # from the last pong (server echoes our ping timestamp)
+
+# --- HEADLESS TEST HOOKS (non-web builds only) --------------------------------
+# godot --headless --path . -- --autojoin [--name=X] [--class=N] [--server=ws://host:port] [--no-netstats] [--no-net]
+# --autojoin makes this instance join the lobby and lock in with no UI, so a
+# headless Godot process can act as a real client for bandwidth measurements.
+# --no-net skips connecting entirely (used by tools/check_scripts.gd).
+var _autojoin: bool = false
+var _autojoin_name: String = "Headless"
+var _autojoin_class: int = 0
+var _server_override: String = ""
+var _no_net: bool = false
+
+# --- BINARY MOVEMENT PACKETS (Phase 2) ----------------------------------------
+# Movement is the only high-rate traffic, so it travels as a 9-byte binary frame
+# instead of ~190 bytes of JSON. Layout (little-endian):
+#   [0] type  (1 = sync_pos, 2 = spawn_projectile)
+#   [1] sender slot (0 from the client; the server stamps the real slot)
+#   sync_pos:          [2..3] x*10 s16  [4..5] y*10 s16  [6..7] aim angle 0.1 deg u16  [8] flags
+#   spawn_projectile:  [2] weapon id    [3..4] x*10 s16  [5..6] y*10 s16  [7..8] dir angle 0.1 deg u16
+# Everything else (lobby, deaths, rounds) stays JSON: rare, and readable in the logs.
+# serve_game.py (BIN_TYPES) and tools/chaos_bots.py mirror this layout.
+const BIN_SYNC_POS := 1
+const BIN_SPAWN_PROJECTILE := 2
+const BIN_PACKET_SIZE := 9
+const BIN_WEAPONS: PackedStringArray = ["arrow", "firebolt", "kunai", "thorn"]
+const FLAG_FACING := 1
+const FLAG_DASH := 2
+const FLAG_SHIELD := 4
+const FLAG_BEAR := 8
+const FLAG_EGG := 16
+
+# Timers that replaced per-frame checks in _process (Phase 1).
+var _ping_timer: Timer          # 1 Hz keepalive while connected
+var _reconnect_timer: Timer     # one-shot 2 s, armed only from the CLOSED branch
 
 ## Global Game Manager & WebSocket Network Engine
 ## Central singleton for 4-Player Battle Royale, state sync, and class definitions.
@@ -24,11 +80,11 @@ signal net_player_left(player_id, active_players)
 signal net_opponent_locked_in(player_id, class_type)
 signal net_player_state_received(player_id, data)
 signal net_projectile_spawned(data)
-signal net_player_hit(killer_id, victim_id)
 signal net_return_to_lobby
 signal net_player_died(killer_id, victim_id, stock)
-signal net_round_end(winner_id, scores, round_num)
+signal net_round_end(winner_id, scores, round_num, match_over)
 signal net_new_round(round_num)
+signal net_version_error(server_version)
 
 enum ClassType {
 	RANGER,
@@ -110,11 +166,12 @@ var match_score_limit: int = 5
 
 # --- REAL-TIME WEBSOCKET RELAY ---
 var ws: WebSocketPeer = WebSocketPeer.new()
-var is_connected: bool = false
+var ws_connected: bool = false    # was `is_connected`, which shadowed Object.is_connected()
 var is_connecting: bool = false   # guard: never open two sockets at once
 var my_player_id: int = 0
 var server_url: String = ""
-var active_players: Array[int] = []
+var active_players: Array[int] = []    # every occupied slot (server's live roster)
+var playing_players: Array[int] = []   # slots fighting in the CURRENT match; late joiners wait
 var locked_opponents: Dictionary = {}
 var player_names: Dictionary = {}
 var my_player_name: String = ""
@@ -133,10 +190,39 @@ func _ready():
 		if ua:
 			is_mobile = true
 
+	if not OS.has_feature("web"):
+		_parse_test_args()
+
+	if net_stats_enabled:
+		var stats_timer := Timer.new()
+		stats_timer.name = "NetStatsTimer"
+		stats_timer.wait_time = NET_STATS_INTERVAL
+		stats_timer.autostart = true
+		stats_timer.timeout.connect(_report_net_stats)
+		add_child(stats_timer)
+
+	_ping_timer = Timer.new()
+	_ping_timer.name = "PingTimer"
+	_ping_timer.wait_time = 1.0
+	_ping_timer.autostart = false
+	_ping_timer.timeout.connect(_send_ping)
+	add_child(_ping_timer)
+
+	_reconnect_timer = Timer.new()
+	_reconnect_timer.name = "ReconnectTimer"
+	_reconnect_timer.wait_time = 2.0
+	_reconnect_timer.one_shot = true
+	_reconnect_timer.autostart = false
+	_reconnect_timer.timeout.connect(_determine_url_and_connect)
+	add_child(_reconnect_timer)
+
+	if _no_net:
+		print("🔌 [Global] --no-net: skipping server connection")
+		return
 	_determine_url_and_connect()
 
 func _determine_url_and_connect():
-	if is_connecting or is_connected:
+	if is_connecting or ws_connected:
 		return
 	is_connecting = true
 	
@@ -160,8 +246,8 @@ func _determine_url_and_connect():
 		else:
 			server_url = "wss://towerbrawl-server.loca.lt"
 	else:
-		server_url = "ws://127.0.0.1:8000" 
-		
+		server_url = _server_override if _server_override != "" else "ws://127.0.0.1:8000"
+
 	print("🔌 [Global] Connecting to: ", server_url)
 	ws = WebSocketPeer.new()   # fresh socket, never reuse a closed one
 	var err = ws.connect_to_url(server_url)
@@ -195,45 +281,188 @@ func _load_saved_player_id() -> int:
 	return 0  # 0 = no saved ID
 
 func _process(_delta):
+	if _no_net:
+		return
+	# WebSocketPeer has no signals: poll() is what drives the socket, so this is
+	# the one per-frame call that has to stay. Everything else is timer-driven.
 	ws.poll()
 	var state = ws.get_ready_state()
-	
+
 	if state == WebSocketPeer.STATE_OPEN:
-		if Engine.get_process_frames() % 60 == 0:
-			send_net_data({"type": "ping"})
-		if not is_connected:
-			is_connected = true
+		if not ws_connected:
+			ws_connected = true
 			is_connecting = false
+			_ns_connected_at = Time.get_ticks_msec()
+			_ping_timer.start()
 			print("✅ [Global] Connected!")
-			# Send hello immediately — server uses reclaim_id to restore our slot
 			# Handshake done. Server will send spectator_state.
-			
+
 		while ws.get_available_packet_count() > 0:
 			var pkt = ws.get_packet()
-			var msg = pkt.get_string_from_utf8()
-			_handle_net_packet(msg)
-			
+			_ns_pkts_in += 1
+			_ns_bytes_in += pkt.size()
+			_ns_total_in += pkt.size()
+			if ws.was_string_packet():
+				_handle_net_packet(pkt.get_string_from_utf8(), pkt.size())
+			else:
+				_handle_net_binary(pkt)
+
 	elif state == WebSocketPeer.STATE_CLOSED:
-		if is_connected or is_connecting:
-			is_connected = false
+		# Reconnect is scheduled ONCE from this branch on a one-shot timer. The old
+		# code awaited inside _process (re-entered every frame while suspended) and
+		# then called the connect routine unconditionally at the end of every frame.
+		if ws_connected or is_connecting:
+			ws_connected = false
 			is_connecting = false
+			_ping_timer.stop()
 			print("❌ [Global] Disconnected. Reconnecting in 2s...")
-			await get_tree().create_timer(2.0).timeout
-	_determine_url_and_connect()
+			_reconnect_timer.start()
+		elif _reconnect_timer.is_stopped():
+			_reconnect_timer.start()
+
+func _send_ping() -> void:
+	# 1 Hz by construction. The old frame counter (% 60) gave 2.4 Hz on a 144 Hz
+	# display and 0.5 Hz on a phone running at 30 fps.
+	send_net_data({"type": "ping", "t": Time.get_ticks_msec()})
 
 func send_net_data(dict: Dictionary):
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
 		dict["sender"] = my_player_id
 		var json_str = JSON.stringify(dict)
 		ws.send_text(json_str)
+		if net_stats_enabled:
+			var n := json_str.to_utf8_buffer().size()
+			_ns_pkts_out += 1
+			_ns_bytes_out += n
+			_ns_total_out += n
+			_ns_count(_ns_types_out, str(dict.get("type", "?")), n)
 
-func _handle_net_packet(msg_str: String):
+func send_net_binary(buf: PackedByteArray) -> void:
+	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		ws.send(buf, WebSocketPeer.WRITE_MODE_BINARY)
+		if net_stats_enabled:
+			_ns_pkts_out += 1
+			_ns_bytes_out += buf.size()
+			_ns_total_out += buf.size()
+			_ns_count(_ns_types_out, _bin_type_name(buf), buf.size())
+
+func _bin_type_name(buf: PackedByteArray) -> String:
+	if buf.size() < 1:
+		return "<bad-binary>"
+	match buf.decode_u8(0):
+		BIN_SYNC_POS: return "sync_pos"
+		BIN_SPAWN_PROJECTILE: return "spawn_projectile"
+		_: return "<bad-binary>"
+
+func _dir_to_u16(v: Vector2) -> int:
+	return int(round(fposmod(rad_to_deg(v.angle()), 360.0) * 10.0)) % 3600
+
+func _u16_to_dir(a: int) -> Vector2:
+	return Vector2.from_angle(deg_to_rad(a / 10.0))
+
+func _q10(v: float) -> int:
+	return clampi(roundi(v * 10.0), -32768, 32767)
+
+func encode_sync_pos(pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(BIN_PACKET_SIZE)
+	b.encode_u8(0, BIN_SYNC_POS)
+	b.encode_u8(1, 0)
+	b.encode_s16(2, _q10(pos.x))
+	b.encode_s16(4, _q10(pos.y))
+	b.encode_u16(6, _dir_to_u16(aim))
+	var flags := 0
+	if facing: flags |= FLAG_FACING
+	if dash: flags |= FLAG_DASH
+	if shield: flags |= FLAG_SHIELD
+	if bear: flags |= FLAG_BEAR
+	if egg: flags |= FLAG_EGG
+	b.encode_u8(8, flags)
+	return b
+
+func encode_projectile(weapon: String, pos: Vector2, dir: Vector2) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(BIN_PACKET_SIZE)
+	b.encode_u8(0, BIN_SPAWN_PROJECTILE)
+	b.encode_u8(1, 0)
+	b.encode_u8(2, maxi(BIN_WEAPONS.find(weapon), 0))
+	b.encode_s16(3, _q10(pos.x))
+	b.encode_s16(5, _q10(pos.y))
+	b.encode_u16(7, _dir_to_u16(dir))
+	return b
+
+func _handle_net_binary(pkt: PackedByteArray) -> void:
+	if pkt.size() != BIN_PACKET_SIZE:
+		if net_stats_enabled:
+			_ns_count(_ns_types_in, "<bad-binary>", pkt.size())
+		return
+	var ptype := pkt.decode_u8(0)
+	var sender := pkt.decode_u8(1)
+	if ptype == BIN_SYNC_POS:
+		if net_stats_enabled:
+			_ns_count(_ns_types_in, "sync_pos", pkt.size())
+		if sender == my_player_id:
+			return
+		var flags := pkt.decode_u8(8)
+		var aim := _u16_to_dir(pkt.decode_u16(6))
+		emit_signal("net_player_state_received", sender, {
+			"sender": sender,
+			"x": pkt.decode_s16(2) / 10.0,
+			"y": pkt.decode_s16(4) / 10.0,
+			"aim_x": aim.x,
+			"aim_y": aim.y,
+			"facing": (flags & FLAG_FACING) != 0,
+			"dash": (flags & FLAG_DASH) != 0,
+			"shield": (flags & FLAG_SHIELD) != 0,
+			"bear": (flags & FLAG_BEAR) != 0,
+			"egg": (flags & FLAG_EGG) != 0,
+		})
+	elif ptype == BIN_SPAWN_PROJECTILE:
+		if net_stats_enabled:
+			_ns_count(_ns_types_in, "spawn_projectile", pkt.size())
+		if sender == my_player_id:
+			return
+		var wid := pkt.decode_u8(2)
+		var dir := _u16_to_dir(pkt.decode_u16(7))
+		emit_signal("net_projectile_spawned", {
+			"sender": sender,
+			"weapon": BIN_WEAPONS[wid] if wid < BIN_WEAPONS.size() else "arrow",
+			"pos_x": pkt.decode_s16(3) / 10.0,
+			"pos_y": pkt.decode_s16(5) / 10.0,
+			"dir_x": dir.x,
+			"dir_y": dir.y,
+		})
+	elif net_stats_enabled:
+		_ns_count(_ns_types_in, "<bad-binary>", pkt.size())
+
+func _handle_net_packet(msg_str: String, byte_size: int = 0):
 	var data = JSON.parse_string(msg_str)
 	if not data or typeof(data) != TYPE_DICTIONARY:
+		if net_stats_enabled:
+			_ns_count(_ns_types_in, "<bad-json>", byte_size)
 		return
-		
+
 	var type = data.get("type", "")
-	
+	if net_stats_enabled:
+		_ns_count(_ns_types_in, str(type), byte_size)
+
+	if type == "pong":
+		var t0 = data.get("t", null)
+		if t0 != null:
+			_ns_last_rtt_ms = Time.get_ticks_msec() - int(t0)
+
+	if type == "version_error":
+		# Server refused our request_join: this build is older/newer than the server.
+		# Almost always the browser served a cached .pck (see CLAUDE.md rule 2).
+		print("⛔ [Global] VERSION MISMATCH: this build is ", GAME_VERSION,
+			" but the server expects ", data.get("server_version", "?"),
+			". Reload the versioned URL from bump_build.sh.")
+		emit_signal("net_version_error", str(data.get("server_version", "?")))
+
+	if type == "spectator_state" and _autojoin and my_player_id == 0:
+		print("🤖 [Global] --autojoin: requesting slot")
+		send_net_data({"type": "request_join", "reclaim_id": 0, "version": GAME_VERSION})
+
 	if type == "spawn_powerup":
 		emit_signal("net_spawn_powerup", data.get("x", 0.0), data.get("y", 0.0))
 	elif type == "activate_powerup":
@@ -242,6 +471,8 @@ func _handle_net_packet(msg_str: String):
 		emit_signal("net_force_start")
 	
 	if type == "scene_transition":
+		# Everyone occupying a slot at this moment is in the match (mirrors _setup_match on the server).
+		playing_players = active_players.duplicate()
 		get_tree().change_scene_to_file("res://scenes/arena.tscn")
 	if type == "spectator_state":
 		is_spectator = true
@@ -257,6 +488,20 @@ func _handle_net_packet(msg_str: String):
 			var p_names = data.get("player_names", {})
 			for p_str in p_names:
 				player_names[int(p_str)] = str(p_names[p_str])
+		if data.has("playing_players"):
+			playing_players.clear()
+			for x in data.get("playing_players", []):
+				playing_players.append(int(x))
+		if data.has("locked_players"):
+			# Classes of everyone already locked in, so a client that goes straight
+			# to the arena (spectator or late joiner) draws the right champions.
+			var locked_now = data.get("locked_players", {})
+			for p_str in locked_now:
+				var lp := int(p_str)
+				var lc := int(locked_now[p_str])
+				locked_opponents[lp] = lc
+				if player_configs.has(lp):
+					player_configs[lp]["class"] = lc
 		emit_signal("net_names_updated")
 		
 		if data.get("match_state", "") == "PLAYING":
@@ -306,7 +551,15 @@ func _handle_net_packet(msg_str: String):
 			locked_opponents[p_id] = c_type
 			if p_id != my_player_id:
 				emit_signal("net_opponent_locked_in", p_id, c_type)
-				
+
+		if _autojoin:
+			print("🤖 [Global] --autojoin: P", my_player_id, " naming + locking in class ", _autojoin_class)
+			_save_player_name(_autojoin_name)
+			send_net_data({"type": "set_name", "name": _autojoin_name})
+			player_configs[my_player_id]["class"] = _autojoin_class
+			locked_opponents[my_player_id] = _autojoin_class
+			send_net_data({"type": "lock_in", "class": _autojoin_class})
+
 	elif type == "player_joined":
 		var p_id = int(data.get("id", 1))
 		
@@ -343,6 +596,7 @@ func _handle_net_packet(msg_str: String):
 		active_players.clear()
 		for x in data.get("active_players", []):
 			active_players.append(int(x))
+		playing_players.erase(p_id)
 		if locked_opponents.has(p_id):
 			locked_opponents.erase(p_id)
 		emit_signal("net_player_left", p_id, active_players)
@@ -351,26 +605,14 @@ func _handle_net_packet(msg_str: String):
 		var p_id = int(data.get("sender", 1))
 		var c_type = int(data.get("class", 0))
 		locked_opponents[p_id] = c_type
+		if player_configs.has(p_id):
+			player_configs[p_id]["class"] = c_type
 		emit_signal("net_opponent_locked_in", p_id, c_type)
-		
-	elif type == "sync_pos":
-		var p_id = int(data.get("sender", 1))
-		if p_id != my_player_id:
-			emit_signal("net_player_state_received", p_id, data)
-			
-	elif type == "spawn_projectile":
-		var p_id = int(data.get("sender", 1))
-		if p_id != my_player_id:
-			emit_signal("net_projectile_spawned", data)
-			
-	elif type == "player_hit":
-		var killer = int(data.get("killer", 1))
-		var victim = int(data.get("victim", 1))
-		emit_signal("net_player_hit", killer, victim)
 		
 	elif type == "return_to_lobby":
 		is_spectator = false
 		locked_opponents.clear()
+		playing_players.clear()
 		reset_scores()
 		emit_signal("net_return_to_lobby")
 		
@@ -384,7 +626,8 @@ func _handle_net_packet(msg_str: String):
 		var winner = int(data.get("winner", 1))
 		var scores = data.get("scores", {})
 		var r_num = int(data.get("round", 1))
-		emit_signal("net_round_end", winner, scores, r_num)
+		var match_over = bool(data.get("match_over", false))
+		emit_signal("net_round_end", winner, scores, r_num, match_over)
 		
 	elif type == "new_round":
 		var r_num = int(data.get("round", 1))
@@ -414,3 +657,70 @@ func _load_saved_player_name() -> String:
 		if val != null and str(val) != "null" and str(val) != "":
 			return str(val)
 	return ""
+
+
+# ==============================================================================
+# NET STATS + HEADLESS TEST HOOKS
+# ==============================================================================
+func _parse_test_args() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a == "--autojoin":
+			_autojoin = true
+		elif a.begins_with("--name="):
+			_autojoin_name = a.substr(7)
+		elif a.begins_with("--class="):
+			_autojoin_class = clampi(int(a.substr(8)), 0, ClassType.size() - 1)
+		elif a.begins_with("--server="):
+			_server_override = a.substr(9)
+		elif a == "--no-netstats":
+			net_stats_enabled = false
+		elif a == "--no-net":
+			_no_net = true
+
+func _ns_count(table: Dictionary, type: String, bytes: int) -> void:
+	if table.has(type):
+		table[type][0] += 1
+		table[type][1] += bytes
+	else:
+		table[type] = [1, bytes]
+
+func _ns_format_types(table: Dictionary) -> String:
+	var keys := table.keys()
+	keys.sort_custom(func(a, b): return table[a][0] > table[b][0])
+	var parts: PackedStringArray = []
+	for k in keys:
+		parts.append("%s=%d(%dB)" % [k, table[k][0], table[k][1]])
+	return ", ".join(parts) if parts.size() > 0 else "-"
+
+func _report_net_stats() -> void:
+	if not ws_connected:
+		return
+	var secs := NET_STATS_INTERVAL
+	var stats := {
+		"interval": secs,
+		"in_pps": _ns_pkts_in / secs,
+		"in_bps": _ns_bytes_in / secs,
+		"in_avg": float(_ns_bytes_in) / max(1, _ns_pkts_in),
+		"out_pps": _ns_pkts_out / secs,
+		"out_bps": _ns_bytes_out / secs,
+		"out_avg": float(_ns_bytes_out) / max(1, _ns_pkts_out),
+		"in_types": _ns_types_in.duplicate(true),
+		"out_types": _ns_types_out.duplicate(true),
+		"total_in": _ns_total_in,
+		"total_out": _ns_total_out,
+		"uptime": (Time.get_ticks_msec() - _ns_connected_at) / 1000.0,
+		"rtt_ms": _ns_last_rtt_ms,
+	}
+	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms" % [
+		secs, my_player_id, get_tree().current_scene.name if get_tree().current_scene else "?",
+		stats["in_pps"], stats["in_bps"] / 1024.0, stats["in_avg"],
+		stats["out_pps"], stats["out_bps"] / 1024.0, stats["out_avg"],
+		_ns_format_types(_ns_types_in), _ns_format_types(_ns_types_out),
+		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms])
+	emit_signal("net_stats_updated", stats)
+	_ns_bytes_in = 0
+	_ns_bytes_out = 0
+	_ns_pkts_in = 0
+	_ns_pkts_out = 0
+	_ns_types_in.clear()
+	_ns_types_out.clear()

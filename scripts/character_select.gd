@@ -64,6 +64,26 @@ const SKILL_DETAILS = {
 	}
 }
 
+# Global signal -> handler. Connected in _ready, disconnected in _exit_tree so a
+# lobby that has been replaced by the arena (removed, not yet freed) never handles
+# a packet on a node with no tree. Same pattern as arena.gd.
+const NET_SIGNAL_HANDLERS = {
+	"net_connected": "_on_connected_to_server",
+	"net_player_joined": "_on_player_joined",
+	"net_player_left": "_on_player_left",
+	"net_opponent_locked_in": "_on_opponent_locked_in",
+	"net_force_start": "_on_net_force_start",
+	"net_names_updated": "_update_roster",
+	"net_version_error": "_on_net_version_error",
+}
+
+func _exit_tree():
+	for sig_name in NET_SIGNAL_HANDLERS:
+		var sig := Signal(Global, sig_name)
+		var handler := Callable(self, NET_SIGNAL_HANDLERS[sig_name])
+		if sig.is_connected(handler):
+			sig.disconnect(handler)
+
 func _ready():
 
 	# Primary Icon
@@ -108,12 +128,8 @@ func _ready():
 
 	local_player_id = Global.my_player_id
 	
-	Global.connect("net_connected", Callable(self, "_on_connected_to_server"))
-	Global.connect("net_player_joined", Callable(self, "_on_player_joined"))
-	Global.connect("net_player_left", Callable(self, "_on_player_left"))
-	Global.connect("net_opponent_locked_in", Callable(self, "_on_opponent_locked_in"))
-	Global.connect("net_force_start", Callable(self, "_on_net_force_start"))
-	Global.connect("net_names_updated", Callable(self, "_update_roster"))
+	for sig_name in NET_SIGNAL_HANDLERS:
+		Global.connect(sig_name, Callable(self, NET_SIGNAL_HANDLERS[sig_name]))
 	_setup_name_input_ui()
 	
 	_sync_global_configs()
@@ -180,6 +196,33 @@ func _on_player_left(p_id: int, active_list):
 func _sync_global_configs():
 	for p_id in range(1, 5):
 		Global.player_configs[p_id]["active"] = (p_id in Global.active_players)
+
+var version_error_label: Label = null
+
+func _on_net_version_error(server_version: String):
+	# The server refused request_join: this browser is running a cached .pck.
+	# Say so on screen; the console line alone is invisible on a phone.
+	if version_error_label == null:
+		version_error_label = Label.new()
+		version_error_label.name = "VersionErrorLabel"
+		version_error_label.add_theme_font_size_override("font_size", 16)
+		version_error_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+		version_error_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		version_error_label.add_theme_constant_override("outline_size", 4)
+		version_error_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+		version_error_label.position = Vector2(20, 66)
+		version_error_label.size = Vector2(600, 60)
+		version_error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		version_error_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+		version_error_label.z_index = 200
+		add_child(version_error_label)
+	version_error_label.text = ("UPDATE REQUIRED: this build is " + Global.GAME_VERSION
+		+ " but the server runs " + server_version + ".\nReload the page to get the new version.")
+	version_error_label.visible = true
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn:
+		j_btn.text = "RELOAD TO JOIN"
+		j_btn.disabled = true
 
 func _on_opponent_locked_in(opp_id: int, opp_class: int):
 	print("🔒 Opponent P", opp_id, " locked in secretly with class: ", opp_class)

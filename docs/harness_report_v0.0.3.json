@@ -1,0 +1,233 @@
+{
+  "version": "v0.0.3",
+  "seed": 42,
+  "complete": true,
+  "written_at": "2026-09-02 02:42:12",
+  "results": [
+    {
+      "scenario": "smoke",
+      "passed": true,
+      "elapsed_s": 24.7,
+      "findings": {},
+      "metrics": {
+        "bots": 4,
+        "elapsed_s": 24.7,
+        "in_pkts": 5349,
+        "in_bytes": 983930,
+        "out_pkts": 1834,
+        "out_bytes": 329768,
+        "in_pps_per_bot": 54.1,
+        "in_kbps_per_bot": 9.72,
+        "out_pps_per_bot": 18.6,
+        "out_kbps_per_bot": 3.26,
+        "sync_pos_avg_bytes": 189,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.07,
+          "avg": 0.38,
+          "max": 0.85
+        }
+      }
+    },
+    {
+      "scenario": "rounds",
+      "passed": true,
+      "elapsed_s": 33.3,
+      "findings": {},
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 33.3,
+        "in_pkts": 3156,
+        "in_bytes": 566226,
+        "out_pkts": 1602,
+        "out_bytes": 283714,
+        "in_pps_per_bot": 31.6,
+        "in_kbps_per_bot": 5.53,
+        "out_pps_per_bot": 16.0,
+        "out_kbps_per_bot": 2.77,
+        "sync_pos_avg_bytes": 188,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.11,
+          "avg": 0.37,
+          "max": 0.79
+        }
+      }
+    },
+    {
+      "scenario": "disconnect_mid_round",
+      "passed": true,
+      "elapsed_s": 15.4,
+      "findings": {},
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 15.4,
+        "in_pkts": 1001,
+        "in_bytes": 179182,
+        "out_pkts": 690,
+        "out_bytes": 122936,
+        "in_pps_per_bot": 21.7,
+        "in_kbps_per_bot": 3.79,
+        "out_pps_per_bot": 15.0,
+        "out_kbps_per_bot": 2.6,
+        "sync_pos_avg_bytes": 188,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.11,
+          "avg": 0.32,
+          "max": 0.75
+        }
+      }
+    },
+    {
+      "scenario": "spectator_mid_match",
+      "passed": true,
+      "elapsed_s": 13.0,
+      "findings": {},
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 13.0,
+        "in_pkts": 652,
+        "in_bytes": 113308,
+        "out_pkts": 396,
+        "out_bytes": 68031,
+        "in_pps_per_bot": 16.7,
+        "in_kbps_per_bot": 2.84,
+        "out_pps_per_bot": 10.2,
+        "out_kbps_per_bot": 1.7,
+        "sync_pos_avg_bytes": 188,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.08,
+          "avg": 0.3,
+          "max": 0.84
+        }
+      }
+    },
+    {
+      "scenario": "reclaim",
+      "passed": true,
+      "elapsed_s": 4.1,
+      "findings": {},
+      "metrics": {
+        "bots": 4,
+        "elapsed_s": 4.1,
+        "in_pkts": 16,
+        "in_bytes": 2379,
+        "out_pkts": 11,
+        "out_bytes": 601,
+        "in_pps_per_bot": 1.0,
+        "in_kbps_per_bot": 0.14,
+        "out_pps_per_bot": 0.7,
+        "out_kbps_per_bot": 0.04,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.11,
+          "avg": 0.23,
+          "max": 0.37
+        }
+      }
+    },
+    {
+      "scenario": "server_full",
+      "passed": true,
+      "elapsed_s": 3.1,
+      "findings": {},
+      "metrics": {
+        "bots": 5,
+        "elapsed_s": 3.1,
+        "in_pkts": 46,
+        "in_bytes": 5262,
+        "out_pkts": 15,
+        "out_bytes": 798,
+        "in_pps_per_bot": 2.9,
+        "in_kbps_per_bot": 0.33,
+        "out_pps_per_bot": 1.0,
+        "out_kbps_per_bot": 0.05,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.16,
+          "avg": 0.26,
+          "max": 0.36
+        }
+      }
+    },
+    {
+      "scenario": "version_mismatch",
+      "passed": true,
+      "elapsed_s": 2.5,
+      "findings": {},
+      "metrics": {
+        "bots": 1,
+        "elapsed_s": 2.5,
+        "in_pkts": 4,
+        "in_bytes": 589,
+        "out_pkts": 3,
+        "out_bytes": 183,
+        "in_pps_per_bot": 1.6,
+        "in_kbps_per_bot": 0.23,
+        "out_pps_per_bot": 1.2,
+        "out_kbps_per_bot": 0.07,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.31,
+          "avg": 0.31,
+          "max": 0.31
+        }
+      }
+    },
+    {
+      "scenario": "double_force_start",
+      "passed": true,
+      "elapsed_s": 5.5,
+      "findings": {},
+      "metrics": {
+        "bots": 4,
+        "elapsed_s": 5.5,
+        "in_pkts": 54,
+        "in_bytes": 5067,
+        "out_pkts": 27,
+        "out_bytes": 1284,
+        "in_pps_per_bot": 2.4,
+        "in_kbps_per_bot": 0.22,
+        "out_pps_per_bot": 1.2,
+        "out_kbps_per_bot": 0.06,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.17,
+          "avg": 0.4,
+          "max": 0.75
+        }
+      }
+    },
+    {
+      "scenario": "match_end",
+      "passed": true,
+      "elapsed_s": 37.2,
+      "findings": {},
+      "metrics": {
+        "bots": 2,
+        "elapsed_s": 37.2,
+        "in_pkts": 1356,
+        "in_bytes": 239018,
+        "out_pkts": 1316,
+        "out_bytes": 236294,
+        "in_pps_per_bot": 18.2,
+        "in_kbps_per_bot": 3.13,
+        "out_pps_per_bot": 17.7,
+        "out_kbps_per_bot": 3.1,
+        "sync_pos_avg_bytes": 190,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.08,
+          "avg": 0.42,
+          "max": 0.92
+        }
+      }
+    }
+  ]
+}
