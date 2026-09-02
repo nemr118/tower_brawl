@@ -14,12 +14,46 @@ import socketserver
 import socket
 import ssl
 import threading
+import logging
+import sys
+GAME_VERSION = "v0.1.0"
+import os
+
+# Set up dedicated game server logging
+logger = logging.getLogger("TowerBrawl")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
+
+# Console output (journalctl)
+ch = logging.StreamHandler(sys.stdout)
+ch.setFormatter(formatter)
+ch.setLevel(logging.DEBUG)
+logger.addHandler(ch)
+
+# File output (server.log) - INFO level for the user
+fh = logging.FileHandler(os.path.join(os.path.dirname(__file__), "server.log"))
+fh.setLevel(logging.INFO)
+fh.setFormatter(formatter)
+logger.addHandler(fh)
+
+# Diagnostic File output (debug.log) - DEBUG level for AI
+dfh = logging.FileHandler(os.path.join(os.path.dirname(__file__), "debug.log"))
+dfh.setLevel(logging.DEBUG)
+dfh.setFormatter(logging.Formatter('%(asctime)s | %(threadName)s | %(levelname)s | %(message)s'))
+logger.addHandler(dfh)
+
+# Override print to use logger for the simple stuff
+def print(*args, **kwargs):
+    msg = " ".join(str(a) for a in args)
+    logger.info(msg)
+
 import hashlib
 import base64
 import struct
 import json
 import os
 import sys
+GAME_VERSION = "v0.1.0"
 
 HTTP_PORT  = 8000
 HTTPS_PORT = 8443
@@ -36,7 +70,7 @@ KEY_FILE  = os.path.join(BASE_DIR, "key.pem")
 player_slots  = [None, None, None, None]
 player_locked = {}
 player_names  = {}          # {player_id(int): class_int}
-lobby_lock    = threading.Lock()
+lobby_lock    = threading.RLock()
 
 global_match_state = 'LOBBY'
 global_playing_players = []
@@ -46,6 +80,7 @@ global_player_scores = {1: 0, 2: 0, 3: 0, 4: 0}
 global_player_stocks = {1: 3, 2: 3, 3: 3, 4: 3}
 global_alive_players = set()
 global_is_round_over = False
+spectator_sockets = []
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -127,15 +162,25 @@ def ws_send(sock, text):
         return False
 
 def broadcast(msg, exclude=None):
+    logger.debug(f"BROADCAST: {msg}")
     """Send msg to all connected slots. On send failure, mark slot as dead."""
     with lobby_lock:
         targets = [(i, entry) for i, entry in enumerate(player_slots)
                    if entry and entry["sock"] is not exclude]
+        spec_targets = [entry for entry in spectator_sockets
+                        if entry and entry["sock"] is not exclude]
+    
     dead_slots = []
     for i, entry in targets:
         if not ws_send(entry["sock"], msg):
             dead_slots.append(i)
-    if dead_slots:
+            
+    dead_specs = []
+    for entry in spec_targets:
+        if not ws_send(entry["sock"], msg):
+            dead_specs.append(entry)
+            
+    if dead_slots or dead_specs:
         with lobby_lock:
             for i in dead_slots:
                 if player_slots[i]:
@@ -143,9 +188,12 @@ def broadcast(msg, exclude=None):
                     print(f"[SERVER] Dead socket detected in slot {pid}, freeing")
                     player_slots[i] = None
                     player_locked.pop(pid, None)
+            for s in dead_specs:
+                if s in spectator_sockets:
+                    spectator_sockets.remove(s)
 
 def ws_client_thread(sock, addr, label, skip_handshake=False):
-    global global_match_state, global_playing_players, global_waiting_players, global_current_round, global_player_scores, global_player_stocks, global_alive_players, global_is_round_over
+    global global_match_state, spectator_sockets, global_playing_players, global_waiting_players, global_current_round, global_player_scores, global_player_stocks, global_alive_players, global_is_round_over
     if not skip_handshake and not ws_handshake(sock):
         try: sock.close()
         except: pass
@@ -157,6 +205,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     sock.settimeout(10.0)
     assigned_id = None
     with lobby_lock:
+        spectator_sockets.append({"sock": sock, "addr": str(addr)})
         active = [i+1 for i in range(4) if player_slots[i]]
         locked = {str(k): v for k, v in player_locked.items()}
         names  = {str(k): v for k, v in player_names.items()}
@@ -180,6 +229,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     try:
         while True:
             msg = ws_read(sock)
+            if msg is not None and "ping" not in msg and "sync_pos" not in msg:
+                print(f"DEBUG_PRINT: from P{assigned_id}: {msg}")
             if msg is None:
                 break
             if not msg:
@@ -248,6 +299,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                                             global_alive_players = set([p for p in global_playing_players if player_slots[p-1]])
                                             for i in range(1, 5):
                                                 global_player_stocks[i] = 3
+                                            logger.info(f"[{label}] NEW ROUND STARTING: Round {global_current_round}")
                                             broadcast(json.dumps({
                                                 "type": "new_round",
                                                 "round": global_current_round
@@ -257,6 +309,14 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
                     
                 if data.get("type") == "request_join":
+                    client_version = data.get("version", "")
+                    print(f"DEBUG_JOIN: {client_version}")
+                    logger.info(f"[{label}] request_join received! version='{client_version}', expected='{GAME_VERSION}'")
+                    if client_version != GAME_VERSION:
+                        logger.warning(f"[{label}] REJECTED join due to version mismatch!")
+                        ws_send(sock, json.dumps({"type": "version_error", "server_version": GAME_VERSION}))
+                        continue
+                        
                     with lobby_lock:
                         if assigned_id is not None:
                             continue
@@ -278,8 +338,10 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                                     break
                                     
                         if assigned_id is None:
+                            print("DEBUG_JOIN: Server full")
                             ws_send(sock, json.dumps({"type": "server_full"}))
                             continue
+                        print(f"DEBUG_JOIN: Assigned ID: {assigned_id}")
                             
                         active = [i+1 for i in range(4) if player_slots[i]]
                         
@@ -294,7 +356,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         locked = {str(k): v for k, v in player_locked.items()}
                         names  = {str(k): v for k, v in player_names.items()}
                         
-                    print(f"[{label}] Spectator JOINED as P{assigned_id}")
+                    logger.info(f"[{label}] Player Status Update: Spectator became ACTIVE PLAYER (P{assigned_id})")
                     
                     ws_send(sock, json.dumps({
                         "type":           "assign_id",
@@ -329,7 +391,30 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     }))
                     continue
                 
-                if data.get("type") == "force_start":
+                if data.get("type") in ["force_start", "match_started"]:
+                    if global_match_state != 'PLAYING':
+                        logger.info(f"[{label}] SCENE TRANSITION: Lobby -> Arena (Match Starting)")
+                        logger.info(f"[{label}] All players locked in! Match countdown started...")
+                        with lobby_lock:
+                            global_current_round = 1
+                            for i in range(1, 5):
+                                global_player_scores[i] = 0
+                                global_player_stocks[i] = 3
+                            global_match_state = 'PLAYING'
+                            active_now = [i+1 for i in range(4) if player_slots[i]]
+                            global_alive_players = set(active_now)
+                            global_playing_players = list(active_now)
+                            global_waiting_players = []
+                            global_is_round_over = False
+                            
+                    if data.get("type") == "match_started":
+                        broadcast(json.dumps({"type": "scene_transition"}))
+                        continue
+
+                if data.get("type") == "force_start_broadcast_only_to_avoid_duplicate_logic_wait": pass
+                elif data.get("type") == "force_start":
+                    logger.info(f"[{label}] SCENE TRANSITION: Lobby -> Arena (Match Starting)")
+                    logger.info(f"[{label}] All players locked in! Match countdown started...")
                     with lobby_lock:
                         global_current_round = 1
                         for i in range(1, 5):
@@ -348,8 +433,16 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
                     
                 if data.get("type") == "player_died":
+
                     victim = int(data.get("victim", 0))
                     killer = int(data.get("killer", 0))
+                    weapon = data.get("weapon", "Unknown")
+                    victim_name = player_names.get(victim, f"Bot")
+                    killer_name = player_names.get(killer, f"Bot")
+                    if killer == victim:
+                        logger.info(f"[{label}] P{victim} ({victim_name}) COMMITTED SUICIDE with '{weapon}'")
+                    else:
+                        logger.info(f"[{label}] P{victim} ({victim_name}) was KILLED by P{killer} ({killer_name}) with '{weapon}'")
                     
                     with lobby_lock:
                         if victim in global_alive_players:
@@ -405,6 +498,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
 
                 if data.get("type") == "lock_in":
+                    logger.info(f"[{label}] P{assigned_id} LOCKED IN as class {data.get('class')}")
                     with lobby_lock:
                         player_locked[assigned_id] = int(data.get("class", 0))
                     data["sender"] = assigned_id
@@ -417,19 +511,71 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
 
     # Cleanup — only free if this socket still owns the slot
     with lobby_lock:
-        if player_slots[assigned_id - 1] and player_slots[assigned_id - 1]["sock"] is sock:
-            player_slots[assigned_id - 1] = None
-            player_locked.pop(assigned_id, None)
-            player_names.pop(assigned_id, None)
-        active = [i+1 for i in range(4) if player_slots[i]]
+        spectator_sockets = [s for s in spectator_sockets if s["sock"] is not sock]
+        
+    if assigned_id is not None:
+        with lobby_lock:
+            if player_slots[assigned_id - 1] and player_slots[assigned_id - 1]["sock"] is sock:
+                player_slots[assigned_id - 1] = None
+                player_locked.pop(assigned_id, None)
+                player_names.pop(assigned_id, None)
+                
+                # If match is playing, leaving abruptly should trigger round_end if <= 1 alive
+                if assigned_id in global_alive_players:
+                    global_alive_players.remove(assigned_id)
+                if assigned_id in global_playing_players:
+                    global_playing_players.remove(assigned_id)
+                    
+            active = [i+1 for i in range(4) if player_slots[i]]
 
-    print(f"[{label}] P{assigned_id} LEFT    remaining={active}")
+        print(f"[{label}] P{assigned_id} LEFT    remaining={active}")
 
-    broadcast(json.dumps({
-        "type":           "player_left",
-        "id":             assigned_id,
-        "active_players": active,
-    }))
+        broadcast(json.dumps({
+            "type":           "player_left",
+            "id":             assigned_id,
+            "active_players": active,
+        }))
+        
+        # Abrupt disconnect round end check
+        with lobby_lock:
+            if global_match_state == 'PLAYING' and len(global_alive_players) <= 1 and not global_is_round_over and len(active) > 1:
+                global_is_round_over = True
+                winner = list(global_alive_players)[0] if len(global_alive_players) == 1 else 0
+                if winner > 0:
+                    global_player_scores[winner] += 1
+                logger.info(f"[{label}] ROUND OVER! Winner: P{winner}")
+                broadcast(json.dumps({
+                    "type": "round_end",
+                    "winner": winner,
+                    "scores": global_player_scores,
+                    "round": global_current_round
+                }))
+                
+                def next_round_disconnect():
+                    global global_current_round, global_is_round_over, global_alive_players, global_player_stocks, global_match_state, global_waiting_players, global_playing_players
+                    import time
+                    time.sleep(2.6)
+                    with lobby_lock:
+                        if len(global_waiting_players) > 0:
+                            global_match_state = 'LOBBY'
+                            global_waiting_players = []
+                            global_playing_players = []
+                            player_locked.clear()
+                            broadcast(json.dumps({"type": "return_to_lobby"}))
+                        else:
+                            global_current_round += 1
+                            global_is_round_over = False
+                            global_alive_players = set([p for p in global_playing_players if player_slots[p-1]])
+                            for i in range(1, 5):
+                                global_player_stocks[i] = 3
+                            broadcast(json.dumps({
+                                "type": "new_round",
+                                "round": global_current_round
+                            }))
+                import threading
+                threading.Thread(target=next_round_disconnect, daemon=True).start()
+    else:
+        print(f"[{label}] Spectator LEFT")
 
     try: sock.close()
     except: pass
@@ -463,6 +609,10 @@ def start_wss():
 class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BUILD_DIR, **kwargs)
+
+    def translate_path(self, path):
+        path = path.split('?', 1)[0]
+        return super().translate_path(path)
 
     def handle_one_request(self):
         try:

@@ -25,6 +25,7 @@ var player_stocks = {}
 var player_instances = {}
 var is_round_over: bool = false
 var current_round: int = 1
+var pause_overlay: ColorRect
 
 @onready var hud = $HUD
 @onready var banner_label = $HUD/CenterBanner/BannerLabel
@@ -41,6 +42,17 @@ var current_round: int = 1
 # level first loads. It's like setting up a board game before you start playing.
 # ------------------------------------------------------------------------------
 func _ready():
+	var leave_btn = Button.new()
+	leave_btn.text = "LEAVE MATCH"
+	leave_btn.add_theme_font_size_override("font_size", 16)
+	leave_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	leave_btn.position = Vector2(get_viewport_rect().size.x - 120, 10)
+	leave_btn.connect("pressed", Callable(self, "_on_leave_match_pressed"))
+	leave_btn.z_index = 100
+	$HUD.add_child(leave_btn)
+	if Global.my_player_id == 0:
+		leave_btn.visible = false
+
 	Global.connect("net_player_died", Callable(self, "_on_net_player_died"))
 	Global.connect("net_player_hit", Callable(self, "_on_network_player_hit"))
 	Global.connect("net_round_end", Callable(self, "_on_round_end_sync"))
@@ -88,33 +100,6 @@ func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_R:
 			Global.reset_scores()
-			pause_overlay = ColorRect.new()
-	pause_overlay.color = Color(0, 0, 0, 0.8)
-	pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	pause_overlay.z_index = 100
-	pause_overlay.visible = false
-	add_child(pause_overlay)
-	
-	var spectate_btn = Button.new()
-	spectate_btn.text = "SPECTATE (LEAVE MATCH)"
-	spectate_btn.add_theme_font_size_override("font_size", 48)
-	spectate_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
-	pause_overlay.add_child(spectate_btn)
-	
-	var join_btn = Button.new()
-	join_btn.name = "JoinBtn"
-	join_btn.text = "JOIN NEXT MATCH"
-	join_btn.add_theme_font_size_override("font_size", 24)
-	join_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	join_btn.connect("pressed", Callable(self, "_on_arena_join_pressed"))
-	join_btn.z_index = 100
-	add_child(join_btn)
-	
-	if Global.my_player_id > 0:
-		join_btn.visible = false
-	
-	_start_new_match()
 
 
 func _on_return_to_lobby():
@@ -130,6 +115,11 @@ func _start_new_match():
 # We use this function to clear out old projectiles, put players on their
 # starting platforms, and reset everyone's health.
 # ------------------------------------------------------------------------------
+func _on_leave_match_pressed():
+	Global.send_net_data({"type": "leave_slot"})
+	Global.my_player_id = 0
+	get_tree().change_scene_to_file("res://scenes/character_select.tscn")
+
 func _start_round():
 	is_round_over = false
 	_clear_projectiles()

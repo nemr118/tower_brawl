@@ -10,7 +10,10 @@
 extends Node
 
 var is_mobile: bool = false
-var is_spectator: bool = false
+const GAME_VERSION: String = "v0.1.0"
+var version_canvas: CanvasLayer
+var version_label: Label
+var is_spectator: bool = true
 
 ## Global Game Manager & WebSocket Network Engine
 ## Central singleton for 4-Player Battle Royale, state sync, and class definitions.
@@ -124,7 +127,7 @@ signal net_force_start()
 
 func _ready():
 
-	is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.is_touchscreen_available()
+	is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios")
 	if OS.has_feature("web"):
 		var ua = JavaScriptBridge.eval("/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);", true)
 		if ua:
@@ -169,7 +172,7 @@ func _determine_url_and_connect():
 func _save_player_id():
 	# Persist our slot number so we can reclaim it after a page reload / reconnect
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval("localStorage.setItem('towerbrawl_pid', '" + str(my_player_id) + "')", true)
+		JavaScriptBridge.eval("(function(){ try { localStorage.setItem('towerbrawl_pid', '" + str(my_player_id) + "'); } catch(e) {} })()", true)
 	else:
 		var f = FileAccess.open("user://towerbrawl_pid.sav", FileAccess.WRITE)
 		if f:
@@ -178,7 +181,7 @@ func _save_player_id():
 
 func _load_saved_player_id() -> int:
 	if OS.has_feature("web"):
-		var val = JavaScriptBridge.eval("localStorage.getItem('towerbrawl_pid')", true)
+		var val = JavaScriptBridge.eval("(function(){ try { return localStorage.getItem('towerbrawl_pid'); } catch(e) { return null; } })()", true)
 		if val != null and str(val) != "null" and str(val) != "":
 			return int(str(val))
 	else:
@@ -216,7 +219,7 @@ func _process(_delta):
 			is_connecting = false
 			print("❌ [Global] Disconnected. Reconnecting in 2s...")
 			await get_tree().create_timer(2.0).timeout
-			_determine_url_and_connect()
+	_determine_url_and_connect()
 
 func send_net_data(dict: Dictionary):
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
@@ -238,6 +241,11 @@ func _handle_net_packet(msg_str: String):
 	if type == "force_start":
 		emit_signal("net_force_start")
 	
+	if type == "scene_transition":
+		get_tree().change_scene_to_file("res://scenes/arena.tscn")
+	if type == "spectator_state":
+		is_spectator = true
+		
 	if type in ["assign_id", "player_joined", "player_left", "name_update", "spectator_state"]:
 		if data.has("active_players"):
 			active_players.clear()
@@ -251,7 +259,10 @@ func _handle_net_packet(msg_str: String):
 				player_names[int(p_str)] = str(p_names[p_str])
 		emit_signal("net_names_updated")
 		
+		if data.get("match_state", "") == "PLAYING":
+			get_tree().change_scene_to_file("res://scenes/arena.tscn")
 	if type == "assign_id":
+		is_spectator = false
 		my_player_id = int(data.get("id", 1))
 		print("🎮 [Global] Assigned Player ID: ", my_player_id)
 		_save_player_id()   # persist so reconnects restore this slot
@@ -395,11 +406,11 @@ func reset_scores():
 func _save_player_name(n: String):
 	my_player_name = n
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval("localStorage.setItem('towerbrawl_name', '" + n.replace("'", "\'") + "')", true)
+		JavaScriptBridge.eval("(function(){ try { localStorage.setItem('towerbrawl_name', '" + n.replace("'", "\'") + "'); } catch(e) {} })()", true)
 
 func _load_saved_player_name() -> String:
 	if OS.has_feature("web"):
-		var val = JavaScriptBridge.eval("localStorage.getItem('towerbrawl_name')", true)
+		var val = JavaScriptBridge.eval("(function(){ try { return localStorage.getItem('towerbrawl_name'); } catch(e) { return null; } })()", true)
 		if val != null and str(val) != "null" and str(val) != "":
 			return str(val)
 	return ""

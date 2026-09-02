@@ -13,8 +13,8 @@ extends Control
 var local_player_id: int = 1
 var selected_class_idx: int = 0
 var is_locked_in: bool = false
-var locked_players = {}
-var active_player_ids: Array[int] = []
+
+
 var is_revealing: bool = false
 var is_name_set: bool = false
 var name_input_ui: Control
@@ -107,8 +107,6 @@ func _ready():
 		old_icon.visible = false
 
 	local_player_id = Global.my_player_id
-	active_player_ids = Global.active_players.duplicate()
-	locked_players = Global.locked_opponents.duplicate()
 	
 	Global.connect("net_connected", Callable(self, "_on_connected_to_server"))
 	Global.connect("net_player_joined", Callable(self, "_on_player_joined"))
@@ -154,9 +152,11 @@ func _ready():
 	spectate_btn.z_index = 100
 	add_child(spectate_btn)
 	
-	if Global.my_player_id > 0:
+	if Global.my_player_id > 0 and Global.my_player_id in Global.active_players:
 		join_btn.visible = false
+		spectate_btn.visible = true
 	else:
+		join_btn.visible = true
 		spectate_btn.visible = false
 
 func _on_connected_to_server(p_id: int):
@@ -167,39 +167,24 @@ func _on_connected_to_server(p_id: int):
 
 func _on_player_joined(p_id: int, active_list):
 	print("👋 Player ", p_id, " joined the match room! Active: ", active_list)
-	active_player_ids.clear()
-	for x in active_list:
-		active_player_ids.append(int(x))
-	if local_player_id > 0 and not active_player_ids.has(local_player_id):
-		active_player_ids.append(local_player_id)
-		
 	_sync_global_configs()
 	_update_roster()
 	_check_all_ready()
 
 func _on_player_left(p_id: int, active_list):
 	print("🚪 Player ", p_id, " left the room. Active: ", active_list)
-	active_player_ids.clear()
-	for x in active_list:
-		active_player_ids.append(int(x))
-	if local_player_id > 0 and not active_player_ids.has(local_player_id):
-		active_player_ids.append(local_player_id)
-		
-	if p_id in locked_players:
-		locked_players.erase(p_id)
-		
 	_sync_global_configs()
 	_update_roster()
 	_check_all_ready()
 
 func _sync_global_configs():
 	for p_id in range(1, 5):
-		Global.player_configs[p_id]["active"] = (p_id in active_player_ids or p_id == local_player_id)
+		Global.player_configs[p_id]["active"] = (p_id in Global.active_players)
 
 func _on_opponent_locked_in(opp_id: int, opp_class: int):
 	print("🔒 Opponent P", opp_id, " locked in secretly with class: ", opp_class)
 	Global.player_configs[opp_id]["class"] = opp_class
-	locked_players[opp_id] = opp_class
+	Global.locked_opponents[opp_id] = opp_class
 	_update_roster()
 	_check_all_ready()
 
@@ -245,10 +230,12 @@ func _update_showcase():
 		s_icon.texture = load(c_info["special_icon"])
 
 func _lock_in_champion():
+	if local_player_id <= 0:
+		return
 	is_locked_in = true
 	var chosen_class = CHAMPION_KEYS[selected_class_idx]
 	Global.player_configs[local_player_id]["class"] = chosen_class
-	locked_players[local_player_id] = chosen_class
+	Global.locked_opponents[local_player_id] = chosen_class
 	
 	lock_btn.text = "CHAMPION LOCKED IN!"
 	lock_btn.disabled = true
@@ -263,13 +250,25 @@ func _lock_in_champion():
 	_check_all_ready()
 
 func _update_roster():
+	var j_btn = get_node_or_null("JoinBtn")
+	var s_btn = get_node_or_null("SpectateBtn")
+	if not Global.is_spectator and Global.my_player_id > 0 and Global.my_player_id in Global.active_players:
+		if j_btn: j_btn.visible = false
+		if s_btn: s_btn.visible = true
+	else:
+		if j_btn: j_btn.visible = true
+		if s_btn: s_btn.visible = false
+		
+	if lock_btn:
+		lock_btn.visible = (not Global.is_spectator and Global.my_player_id > 0 and Global.my_player_id in Global.active_players)
+		
 	_update_player_card(p1_card, 1)
 	_update_player_card(p2_card, 2)
 	_update_player_card(p3_card, 3)
 	_update_player_card(p4_card, 4)
 
 func _update_player_card(card: Control, p_id: int):
-	var is_active = (p_id in active_player_ids or p_id == local_player_id)
+	var is_active = (p_id in Global.active_players)
 	
 	var display_name = Global.player_names.get(p_id, "Player " + str(p_id))
 	if p_id == local_player_id and Global.my_player_name != "":
@@ -290,11 +289,11 @@ func _update_player_card(card: Control, p_id: int):
 		
 	card.color = Color(0.15, 0.15, 0.22, 0.9)
 	name_lbl.modulate = Color(1.0, 1.0, 1.0)
-	name_lbl.text = display_name + (" (You)" if p_id == local_player_id else "")
+	name_lbl.text = display_name + (" (You)" if (p_id == local_player_id and not Global.is_spectator) else "")
 	
-	if p_id in locked_players:
-		if p_id == local_player_id or is_revealing:
-			var c_type = locked_players[p_id]
+	if p_id in Global.locked_opponents:
+		if (p_id == local_player_id and not Global.is_spectator) or is_revealing:
+			var c_type = Global.locked_opponents[p_id]
 			var c_info = Global.CLASS_INFO[c_type]
 			if card.has_node("IconTex"): card.get_node("IconTex").texture = load(c_info["icon_tex"])
 			status_lbl.text = c_info["name"].to_upper()
@@ -304,7 +303,7 @@ func _update_player_card(card: Control, p_id: int):
 			status_lbl.text = "READY (SECRET)"
 			status_lbl.modulate = Color(1.0, 0.85, 0.3)
 	else:
-		if p_id == local_player_id:
+		if p_id == local_player_id and not Global.is_spectator:
 			var cur_c_type = CHAMPION_KEYS[selected_class_idx]
 			var cur_c_info = Global.CLASS_INFO[cur_c_type]
 			if card.has_node("IconTex"): card.get_node("IconTex").texture = load(cur_c_info["icon_tex"])
@@ -319,9 +318,9 @@ func _check_all_ready():
 	var active_count = 0
 	var locked_count = 0
 	
-	for p_id in active_player_ids:
+	for p_id in Global.active_players:
 		active_count += 1
-		if p_id in locked_players:
+		if p_id in Global.locked_opponents:
 			locked_count += 1
 			
 	print("📊 Lobby Status: ", locked_count, "/", active_count, " locked in.")
@@ -334,11 +333,11 @@ func _check_all_ready():
 
 func _on_force_start_pressed():
 	Global.send_net_data({"type": "force_start"})
-	_trigger_start(locked_players.size())
+	_trigger_start(Global.locked_opponents.size())
 
 func _on_net_force_start():
 	if not is_revealing:
-		_trigger_start(locked_players.size())
+		_trigger_start(Global.locked_opponents.size())
 
 func _trigger_start(player_count: int):
 	is_revealing = true
@@ -347,14 +346,14 @@ func _trigger_start(player_count: int):
 		
 	# Kick inactive players who didn't lock in
 	var final_active: Array[int] = []
-	for p_id in active_player_ids:
-		if p_id in locked_players:
+	for p_id in Global.active_players:
+		if p_id in Global.locked_opponents:
 			final_active.append(p_id)
 			Global.player_configs[p_id]["active"] = true
 		else:
 			Global.player_configs[p_id]["active"] = false
 			
-	active_player_ids = final_active
+	Global.active_players = final_active
 	_update_roster()
 	_start_reveal_countdown(player_count)
 
@@ -372,6 +371,8 @@ func _start_reveal_countdown(player_count: int):
 	_update_roster()
 	
 	await get_tree().create_timer(1.6).timeout
+	
+	Global.send_net_data({"type": "match_started"})
 	get_tree().change_scene_to_file("res://scenes/arena.tscn")
 
 func _on_lock_in_button_pressed():
@@ -450,7 +451,7 @@ func _confirm_name(n: String):
 
 func _on_join_pressed():
 	var saved_id = Global._load_saved_player_id()
-	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id})
+	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id, "version": Global.GAME_VERSION})
 
 func _on_spectate_pressed():
 	Global.send_net_data({"type": "leave_slot"})
@@ -466,15 +467,3 @@ func _on_spectate_pressed():
 		s_btn.visible = false
 	_update_roster()
 
-func _process(delta):
-	var overlay = get_node_or_null("JoinBtn")
-	if overlay and overlay.visible and Global.my_player_id > 0:
-		overlay.visible = false
-		local_player_id = Global.my_player_id
-		if local_player_id > 0 and not active_player_ids.has(local_player_id):
-			active_player_ids.append(local_player_id)
-		_update_roster()
-		
-		var s_btn = get_node_or_null("SpectateBtn")
-		if s_btn:
-			s_btn.visible = true

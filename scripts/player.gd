@@ -183,7 +183,7 @@ func _physics_process(delta: float):
 	var input_y = Input.get_axis(prefix + "up", prefix + "down")
 	
 	var raw_aim = Vector2.ZERO
-	if is_local_player and not OS.has_feature("web"):
+	if is_local_player and not Global.is_mobile:
 		raw_aim = get_global_mouse_position() - global_position
 		if raw_aim.length_squared() > 0.08:
 			aim_direction = raw_aim.normalized()
@@ -437,7 +437,7 @@ func _on_melee_area_body_entered(body: Node2D):
 	if body.is_in_group("players") and body != self:
 		if not body.is_dashing and not body.is_shielding:
 			var dir = (body.global_position - global_position).normalized()
-			body.take_hit(player_id, dir)
+			body.take_hit(player_id, dir, "Melee")
 	elif body.is_in_group("projectiles"):
 		if body.has_method("stick_into_wall") and not body.is_stuck:
 			body.queue_free()
@@ -451,7 +451,7 @@ func _check_head_stomp():
 				if col.get_normal().y < -0.6:
 					velocity.y = -390.0
 					_squash_and_stretch(0.6, 1.4)
-					collider.take_hit(player_id, Vector2.DOWN)
+					collider.take_hit(player_id, Vector2.DOWN, "Goomba Stomp")
 					return
 
 func _check_screen_wrap():
@@ -466,7 +466,7 @@ func _check_screen_wrap():
 		global_position.y = -10.0
 		velocity.y = 80.0
 
-func take_hit(killer_id: int, _knockback_dir: Vector2):
+func take_hit(killer_id: int, _knockback_dir: Vector2, weapon_name: String = "Melee"):
 	if is_dead or spawn_invuln_timer > 0.0 or is_dashing:
 		return
 		
@@ -484,11 +484,13 @@ func take_hit(killer_id: int, _knockback_dir: Vector2):
 	collision_shape.set_deferred("disabled", true)
 	
 	
-	if is_local_player:
+	var is_dummy_bot = ("TargetBot" in Global.player_names.get(player_id, ""))
+	if is_local_player or is_dummy_bot:
 		Global.send_net_data({
 			"type": "player_died",
-			"killer": killer_id,
-			"victim": player_id
+				"killer": killer_id,
+				"victim": player_id,
+				"weapon": weapon_name
 		})
 
 func respawn(spawn_pos: Vector2):

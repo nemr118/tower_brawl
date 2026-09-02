@@ -71,7 +71,7 @@ func _handle_body_collision(body: Node2D):
 			return
 			
 		# Lethal hit!
-		body.take_hit(shooter_id, velocity.normalized())
+		body.take_hit(shooter_id, velocity.normalized(), "Arrow")
 		queue_free()
 	elif body is StaticBody2D or body is TileMap:
 		# Stick into wall

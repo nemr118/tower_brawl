@@ -21,7 +21,7 @@ var active_right_touches = {}
 func _ready():
 	Global.connect("net_connected", Callable(self, "_on_net_connected"))
 	# Automatically detect if running on mobile or touch device
-	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios") or DisplayServer.is_touchscreen_available()
+	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios")
 	visible = is_mobile
 
 	btn_jump.mouse_filter = Control.MOUSE_FILTER_IGNORE
