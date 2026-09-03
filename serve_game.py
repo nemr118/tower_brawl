@@ -60,7 +60,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.11"
+GAME_VERSION = "v0.0.15"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -142,11 +142,11 @@ def stats_loop():
                               "out_bytes": 0, "out_fail": 0, "out_drop": 0, "in_types": {}})
         with lobby_lock:
             players = sum(1 for p in player_slots if p)
-            sockets = len(spectator_sockets)
+            spectators = len(spectator_sockets)   # sockets without a slot (a slot holder is not in here)
             state = global_match_state
         top = ", ".join(f"{k}={v}" for k, v in sorted(s["in_types"].items(), key=lambda kv: -kv[1])[:6])
         logger.info(
-            f"[STATS {STATS_INTERVAL:.0f}s] {state} players={players} sockets={sockets}"
+            f"[STATS {STATS_INTERVAL:.0f}s] {state} players={players} spectators={spectators} sockets={players + spectators}"
             f" | IN {s['in_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['in_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
             f" (avg {s['in_bytes'] / max(s['in_pkts'], 1):.0f} B)"
             f" | OUT {s['out_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['out_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"

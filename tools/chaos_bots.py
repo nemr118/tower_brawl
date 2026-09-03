@@ -108,6 +108,15 @@ BIN_SYNC_POS, BIN_SPAWN_PROJECTILE = 1, 2
 BIN_SYNC_SIZE, BIN_PROJ_SIZE = 11, 9      # sync_pos carries a u16 tick since Phase 3a
 NET_TICK_HZ = 20.0
 NET_IDLE_RESEND = 0.5
+
+# Puppet quality gate (Phase 3b, step 4). Calibrated on the v0.0.13/v0.0.14
+# fleets: mean jitter ~20-30 px/s at 0-120+/-40 ms, ~75-80 at 120+/-150 ms,
+# against ~290 on the old lerp; snaps are respawn teleports (one per death the
+# client saw) plus the odd blink or clock resync.
+PUPPET_JITTER_STD = 45.0     # px/s mean, --jitter-ms <= PUPPET_HEAVY_JITTER_MS
+PUPPET_JITTER_HEAVY = 100.0  # px/s mean, heavier jitter
+PUPPET_HEAVY_JITTER_MS = 60
+PUPPET_SNAP_SLACK = 5        # snaps allowed beyond the deaths the client saw
 BIN_WEAPONS = ["arrow", "firebolt", "kunai", "thorn"]
 FLAG_FACING, FLAG_DASH, FLAG_SHIELD, FLAG_BEAR, FLAG_EGG = 1, 2, 4, 8, 16
 
@@ -689,12 +698,13 @@ class Bot:
                         self.invuln_until = now + SPAWN_INVULN
                 if not self.dead and self.slot in self.model.alive:
                     self._step_motion(period)
+                    # the tick is a slot clock (v0.0.13): it advances every slot, sent or not
+                    self.tick = (self.tick + 1) & 0xFFFF
                     pkt = self._sync_bytes()
                     body = pkt[4:]                      # idle suppression, same rule as player.gd
                     if body != self._last_sync_body or now - self._last_sync_sent >= NET_IDLE_RESEND:
                         self._last_sync_body = body
                         self._last_sync_sent = now
-                        self.tick = (self.tick + 1) & 0xFFFF
                         self.send_binary(pkt)
                     if self.rng.random() < 0.02:
                         self.send_binary(self._projectile_bytes())
@@ -1197,6 +1207,8 @@ class GodotClient:
         if self.ctx.args.latency_ms > 0:
             # the Godot send path gets the same artificial latency as the protocol bots
             argv.append(f"--latency-ms={int(self.ctx.args.latency_ms)}")
+        if self.ctx.args.jitter_ms > 0:
+            argv.append(f"--jitter-ms={int(self.ctx.args.jitter_ms)}")
         self.proc = subprocess.Popen(argv, stdout=self.logf, stderr=subprocess.STDOUT)
         return self
 
@@ -1242,6 +1254,23 @@ class GodotClient:
               "deaths_seen": sum(int(m) for m in re.findall(r"in: [^|\n]*?player_died=(\d+)", t)),
               "deaths_reported": sum(int(m) for m in re.findall(r"out: [^|\n]*?player_died=(\d+)", t)),
               "bot": None}
+        # puppet-jitter telemetry: one entry per NetStats line, aggregated over the run
+        pj = [tuple(m) for m in
+              re.findall(r"puppets=(\d+) jitter=([\d.]+)/([\d.]+)px/s snaps=(\d+) wraps=(\d+) stall=([\d.]+)% extrap=([\d.]+)% pn=(\d+)", t)]
+        pj = [(int(a), float(b), float(c), int(d), int(e), float(f), float(g), int(h)) for a, b, c, d, e, f, g, h in pj]
+        pj = [x for x in pj if x[7] > 0]
+        if pj:
+            n = sum(x[7] for x in pj)
+            st["puppets"] = {"lines": len(pj), "frames": n,
+                             "jitter_mean": sum(x[1] * x[7] for x in pj) / n,
+                             "jitter_p95_max": max(x[2] for x in pj),
+                             "jitter_p95_med": sorted(x[2] for x in pj)[len(pj) // 2],
+                             "snaps": sum(x[3] for x in pj),
+                             "wraps": sum(x[4] for x in pj),
+                             "stall_pct": sum(x[5] * x[7] for x in pj) / n,
+                             "extrap_pct": sum(x[6] * x[7] for x in pj) / n}
+        else:
+            st["puppets"] = None
         bot_lines = self.BOT_LINE.findall(t)
         if bot_lines:
             b = bot_lines[-1]
@@ -1252,20 +1281,56 @@ class GodotClient:
         return st
 
 
+def puppet_gate(ctx, client, heavy, scen):
+    """Phase 3b quality gate on one Godot client's view of its puppets."""
+    st = client.stats()
+    pj = st["puppets"]
+    if pj is None:
+        ctx.fail(f"{scen}.puppet-telemetry-missing", f"{client.name}: no puppets= field in its NetStats lines")
+        return
+    limit = PUPPET_JITTER_HEAVY if heavy else PUPPET_JITTER_STD
+    if pj["jitter_mean"] > limit:
+        ctx.fail(f"{scen}.puppet-jitter", f"{client.name}: mean jitter {pj['jitter_mean']:.1f} px/s > {limit:.0f} "
+                 f"(p95 median {pj['jitter_p95_med']:.0f}, extrap {pj['extrap_pct']:.1f}%, {'heavy' if heavy else 'standard'} gate)")
+    allowed = st["deaths_seen"] + PUPPET_SNAP_SLACK
+    if pj["snaps"] > allowed:
+        ctx.fail(f"{scen}.puppet-snaps", f"{client.name}: {pj['snaps']} teleport snaps > {allowed} "
+                 f"({st['deaths_seen']} deaths seen + {PUPPET_SNAP_SLACK}; seam wraps excluded: {pj['wraps']})")
+
+
 # ── Step-2 scenarios: fleet, fuzz, fault injection ───────────────────────────
-@scenario("lag", "one of 3 players has 150 ms +/- 50 ms latency and 10% loss on its send path; the match must still run clean")
+@scenario("lag", "one of 3 players has 150 ms +/- 50 ms latency and 10% loss on its send path; the match must still run clean, and a headless Godot observer's puppets must pass the jitter gate")
 def sc_lag(ctx):
     bots = [ctx.bot(i) for i in range(1, 4)]
     lobby_join(ctx, bots)
+    observer = None
+    if shutil.which("godot") is not None:
+        # a real client with a brain (so it moves and fights) watching the laggy puppet
+        observer = GodotClient(ctx, 1, cls=1, ai="chaser").start()
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and len(bots[0].model.active) < 4:
+            time.sleep(0.25)
+        if len(bots[0].model.active) < 4:
+            ctx.fail("scenario.lag.observer-not-joined", "the Godot observer never took a slot")
     start_match(ctx, bots, bots[0])
     laggy = bots[2]
     laggy.latency, laggy.jitter, laggy.loss = 0.150, 0.050, 0.10
     for b in bots:
         b.die_rate = 0.4
-    time.sleep(25.0)
+    time.sleep(30.0)
     if bots[0].count("round_end") == 0:
-        ctx.fail("scenario.lag.no-round-end", "no round_end in 25 s with a lagging player in the match")
+        ctx.fail("scenario.lag.no-round-end", "no round_end in 30 s with a lagging player in the match")
     ctx.note(f"laggy bot dropped {laggy.dropped} packets on purpose; rounds ended: {len(bots[0].model.round_ends)}")
+    if observer is not None:
+        for line, count in observer.errors().items():
+            ctx.fail("scenario.lag.script-error", f"{observer.name}: {line} (x{count})")
+        st = observer.stats()
+        pj = st["puppets"]
+        if pj:
+            ctx.note(f"{observer.name} puppets: jitter mean {pj['jitter_mean']:.1f} px/s, p95 median {pj['jitter_p95_med']:.1f}, "
+                     f"snaps {pj['snaps']}, wraps {pj['wraps']}, stall {pj['stall_pct']:.1f}%, extrap {pj['extrap_pct']:.1f}% over {pj['frames']} puppet-frames")
+        puppet_gate(ctx, observer, heavy=False, scen="scenario.lag")
+        observer.stop()
 
 
 @scenario("silent_client", "a client that sends nothing for 20 s (hidden browser tab) keeps its seat and keeps receiving; only a dead TCP peer is dropped")
@@ -1559,7 +1624,7 @@ def sc_fuzz(ctx):
     relaying("oversized-header")
 
 
-@scenario("fleet", "N headless Godot clients (--godot, --ai personas) fight bots for --duration s; fails on any client script error, an idle brain, no kills (--ai), or no round ending (--ai, 150 s+)")
+@scenario("fleet", "N headless Godot clients (--godot, --ai personas) fight bots for --duration s; fails on any client script error, an idle brain, no kills (--ai), no round ending (--ai, 150 s+), or a brain's puppets failing the jitter/snap gate")
 def sc_fleet(ctx):
     if shutil.which("godot") is None:
         ctx.fail("fleet.no-godot", "godot binary not on PATH")
@@ -1601,6 +1666,13 @@ def sc_fleet(ctx):
         round_ends = max(round_ends, st["round_ends"])
         deaths_seen = max(deaths_seen, st["deaths_seen"])
         ctx.note(f"{c.name}: {st['netstats_lines']} NetStats lines, {st['out_sync_pos']} sync_pos sent, {len(errs)} error kinds, log {os.path.relpath(c.log_path, ROOT)}")
+        pj = st["puppets"]
+        if pj:
+            ctx.note(f"{c.name} puppets: jitter mean {pj['jitter_mean']:.1f} px/s, p95 median {pj['jitter_p95_med']:.1f} max {pj['jitter_p95_max']:.1f}, "
+                     f"snaps {pj['snaps']}, wraps {pj['wraps']}, stall {pj['stall_pct']:.1f}%, extrap {pj['extrap_pct']:.1f}% over {pj['frames']} puppet-frames")
+        if c.ai:
+            # brains move like players, so their view of the others is the quality gate
+            puppet_gate(ctx, c, heavy=ctx.args.jitter_ms > PUPPET_HEAVY_JITTER_MS, scen="fleet")
         b = st["bot"]
         if c.ai and b is None:
             ctx.fail("fleet.bot-missing", f"{c.name}: --ai={c.ai} but no brain status line in its log")

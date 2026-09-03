@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.11"
+const GAME_VERSION: String = "v0.0.15"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -39,7 +39,7 @@ var _ns_last_rtt_ms: int = -1        # from the last pong (server echoes our pin
 
 # --- HEADLESS TEST HOOKS (non-web builds only) --------------------------------
 # godot --headless --path . -- --autojoin [--name=X] [--class=N] [--server=ws://host:port] [--no-netstats] [--no-net]
-#                                [--ai=<persona>] [--ai-seed=N] [--ai-difficulty=0..1] [--latency-ms=N]
+#                                [--ai=<persona>] [--ai-seed=N] [--ai-difficulty=0..1] [--latency-ms=N] [--jitter-ms=N]
 # --autojoin makes this instance join the lobby and lock in with no UI, so a
 # headless Godot process can act as a real client for bandwidth measurements.
 # --no-net skips connecting entirely (used by tools/check_scripts.gd).
@@ -58,6 +58,71 @@ var ai_persona: String = ""          # "" = no brain; see bot_brain.gd PERSONAS
 var ai_seed: int = 0                 # 0 = random
 var ai_difficulty: float = 0.7       # 0 = slow and sloppy, 1 = sharp
 var send_latency_ms: int = 0         # artificial delay on every outgoing packet
+var send_jitter_ms: int = 0          # +/- random variation on that delay (order-preserving)
+var _last_send_timer: SceneTreeTimer = null   # the previous delayed packet's timer: later packets never overtake it
+
+# --- PUPPET JITTER TELEMETRY (Phase 3b) ---------------------------------------
+# Every remote fighter reports, per physics frame, how much its rendered speed
+# changed since the previous frame (px/s), whether it snapped (a jump over
+# PUPPET_SNAP_PX in one frame) and whether it is starved of samples. Aggregated
+# into the NetStats line so a fleet run with --latency-ms / --jitter-ms gives
+# the interpolation a number instead of an impression.
+const PUPPET_SNAP_PX := 80.0         # a teleport: more than this in one frame without crossing a seam
+const PUPPET_STALL_SEC := 0.15       # no sample for 3 ticks while the sender was moving
+# Snapshot interpolation (Phase 3b): puppets render this many ticks behind the
+# newest sample so there is always a later sample to interpolate toward.
+const RENDER_DELAY_TICKS := 2.0
+const SNAP_RING := 16
+const EXTRAP_MAX_TICKS := 4.0        # past the newest sample: follow the last velocity this long, then freeze
+const TELEPORT_PX := 80.0            # a single-tick displacement beyond this renders as a step, not a glide
+var _pj_deltas: PackedFloat32Array = PackedFloat32Array()   # |speed change| per frame, this interval
+var _pj_snaps: int = 0
+var _pj_wraps: int = 0
+var _pj_stall_frames: int = 0
+var _pj_extrap_frames: int = 0       # frames rendered past the newest sample (extrapolated or frozen)
+var _pj_frames: int = 0
+var _pj_puppets: Dictionary = {}     # player_id -> true, seen this interval
+
+func puppet_sample(p_id: int, speed_delta: float, snapped: bool, stalled: bool, wrapped: bool = false, extrapolated: bool = false) -> void:
+	if not net_stats_enabled:
+		return
+	_pj_puppets[p_id] = true
+	_pj_frames += 1
+	if extrapolated:
+		_pj_extrap_frames += 1
+	if wrapped:
+		_pj_wraps += 1        # a seam crossing: expected, not jitter
+	elif snapped:
+		_pj_snaps += 1
+	else:
+		_pj_deltas.append(speed_delta)
+	if stalled:
+		_pj_stall_frames += 1
+
+func _pj_summary() -> Dictionary:
+	var out := {"puppets": _pj_puppets.size(), "frames": _pj_frames, "mean": 0.0, "p95": 0.0,
+		"snaps": _pj_snaps, "wraps": _pj_wraps, "stall_pct": 0.0, "extrap_pct": 0.0}
+	if _pj_deltas.size() > 0:
+		var sum := 0.0
+		for d in _pj_deltas:
+			sum += d
+		out["mean"] = sum / _pj_deltas.size()
+		var sorted := _pj_deltas.duplicate()
+		sorted.sort()
+		out["p95"] = sorted[mini(int(floor(sorted.size() * 0.95)), sorted.size() - 1)]
+	if _pj_frames > 0:
+		out["stall_pct"] = 100.0 * _pj_stall_frames / _pj_frames
+		out["extrap_pct"] = 100.0 * _pj_extrap_frames / _pj_frames
+	return out
+
+func _pj_reset() -> void:
+	_pj_deltas = PackedFloat32Array()
+	_pj_snaps = 0
+	_pj_wraps = 0
+	_pj_stall_frames = 0
+	_pj_extrap_frames = 0
+	_pj_frames = 0
+	_pj_puppets.clear()
 
 # --- BINARY MOVEMENT PACKETS (Phase 2) ----------------------------------------
 # Movement is the only high-rate traffic, so it travels as a 9-byte binary frame
@@ -66,8 +131,9 @@ var send_latency_ms: int = 0         # artificial delay on every outgoing packet
 #   [1] sender slot (0 from the client; the server stamps the real slot)
 #   sync_pos (11 B):   [2..3] tick u16  [4..5] x*10 s16  [6..7] y*10 s16  [8..9] aim angle 0.1 deg u16  [10] flags
 #   spawn_projectile:  [2] weapon id    [3..4] x*10 s16  [5..6] y*10 s16  [7..8] dir angle 0.1 deg u16
-# The tick counts the sender's 20 Hz movement samples (wraps at 65536), so a
-# receiver can order packets, spot gaps, and (Phase 3b) place each sample in time.
+# The tick is the sender's 20 Hz slot clock (wraps at 65536): it advances every
+# 50 ms whether or not the slot is sent (idle suppression), so a receiver can
+# order packets, place each sample in time and read a gap as "nothing changed".
 # Everything else (lobby, deaths, rounds) stays JSON: rare, and readable in the logs.
 # serve_game.py (BIN_TYPES) and tools/chaos_bots.py mirror this layout.
 const BIN_SYNC_POS := 1
@@ -364,11 +430,29 @@ func send_net_data(dict: Dictionary):
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
 		dict["sender"] = my_player_id
 		var json_str = JSON.stringify(dict)
-		if send_latency_ms > 0:
-			# Same-delay SceneTree timers expire in creation order, so packet order holds.
-			get_tree().create_timer(send_latency_ms / 1000.0).timeout.connect(_send_text_now.bind(json_str, str(dict.get("type", "?"))))
+		var delay := _send_delay_sec()
+		if delay > 0.0:
+			_delayed(delay).timeout.connect(_send_text_now.bind(json_str, str(dict.get("type", "?"))))
 		else:
 			_send_text_now(json_str, str(dict.get("type", "?")))
+
+# Artificial latency (+/- jitter) for the headless test client. A packet's delay
+# is never shorter than what is left on the previous packet's timer, so jitter
+# delays but never reorders (TCP could not reorder either). Same model as the
+# harness bots. The floor is taken from the timer itself, not the wall clock:
+# SceneTree timers count down by frame delta, and a wall-clock due time could
+# cross a timer by one frame (seen as oracle.movement-out-of-order in v0.0.14).
+func _send_delay_sec() -> float:
+	if send_latency_ms <= 0 and send_jitter_ms <= 0:
+		return 0.0
+	var delay := (send_latency_ms + randf_range(-send_jitter_ms, send_jitter_ms)) / 1000.0
+	if _last_send_timer != null and _last_send_timer.time_left > 0.0:
+		delay = maxf(delay, _last_send_timer.time_left)
+	return maxf(delay, 0.0)
+
+func _delayed(delay: float) -> SceneTreeTimer:
+	_last_send_timer = get_tree().create_timer(delay)
+	return _last_send_timer
 
 func _send_text_now(json_str: String, type: String) -> void:
 	if ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
@@ -383,8 +467,9 @@ func _send_text_now(json_str: String, type: String) -> void:
 
 func send_net_binary(buf: PackedByteArray) -> void:
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
-		if send_latency_ms > 0:
-			get_tree().create_timer(send_latency_ms / 1000.0).timeout.connect(_send_binary_now.bind(buf))
+		var delay := _send_delay_sec()
+		if delay > 0.0:
+			_delayed(delay).timeout.connect(_send_binary_now.bind(buf))
 		else:
 			_send_binary_now(buf)
 
@@ -780,6 +865,8 @@ func _parse_test_args() -> void:
 			ai_difficulty = clampf(float(a.substr(16)), 0.0, 1.0)
 		elif a.begins_with("--latency-ms="):
 			send_latency_ms = maxi(int(a.substr(13)), 0)
+		elif a.begins_with("--jitter-ms="):
+			send_jitter_ms = maxi(int(a.substr(12)), 0)
 	if ai_persona != "" and not ai_persona in BotBrainScript.PERSONAS:
 		push_error("--ai=%s: unknown persona (one of %s)" % [ai_persona, ", ".join(BotBrainScript.PERSONAS)])
 		ai_persona = ""
@@ -789,8 +876,8 @@ func _parse_test_args() -> void:
 		var pref: int = BotBrainScript.DEFAULT_CLASS.get(ai_persona, -1)
 		if pref >= 0:
 			_autojoin_class = pref
-	if send_latency_ms > 0:
-		print("⏱️ [Global] --latency-ms=", send_latency_ms, ": every outgoing packet is delayed")
+	if send_latency_ms > 0 or send_jitter_ms > 0:
+		print("⏱️ [Global] --latency-ms=", send_latency_ms, " --jitter-ms=", send_jitter_ms, ": every outgoing packet is delayed")
 
 func _ns_count(table: Dictionary, type: String, bytes: int) -> void:
 	if table.has(type):
@@ -827,14 +914,18 @@ func _report_net_stats() -> void:
 		"total_out": _ns_total_out,
 		"uptime": (Time.get_ticks_msec() - _ns_connected_at) / 1000.0,
 		"rtt_ms": _ns_last_rtt_ms,
+		"puppets": _pj_summary(),
 	}
-	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms" % [
+	var pj: Dictionary = stats["puppets"]
+	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% pn=%d" % [
 		secs, my_player_id, get_tree().current_scene.name if get_tree().current_scene else "?",
 		stats["in_pps"], stats["in_bps"] / 1024.0, stats["in_avg"],
 		stats["out_pps"], stats["out_bps"] / 1024.0, stats["out_avg"],
 		_ns_format_types(_ns_types_in), _ns_format_types(_ns_types_out),
-		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms])
+		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms,
+		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["frames"]])
 	emit_signal("net_stats_updated", stats)
+	_pj_reset()
 	_ns_bytes_in = 0
 	_ns_bytes_out = 0
 	_ns_pkts_in = 0

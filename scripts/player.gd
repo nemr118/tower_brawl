@@ -56,8 +56,26 @@ var net_tick: int = 0                 # our 20 Hz sample counter (goes out in ev
 var _last_sync_bytes: PackedByteArray = PackedByteArray()   # last packet body (minus tick) actually sent
 var _idle_since_send: float = 0.0     # seconds since the last packet went out
 var _last_rx_tick: int = -1           # newest tick received for this puppet (stale packets are dropped)
+# Snapshot interpolation (Phase 3b). Samples live in unwrapped tick space
+# (_rx_tick_unwrapped grows without the u16 wrap) so the ring is always sorted.
+var _snaps: Array = []                # [{t, pos, aim, facing, dash, shield, bear, egg, at_msec}], oldest first
+var _rx_tick_unwrapped: int = 0
+var _render_tick: float = -1.0        # free-running render clock, in unwrapped ticks
+var _pj_extrapolating: bool = false   # this frame was rendered past the newest sample
+# puppet-jitter telemetry (remote fighters only; see Global.puppet_sample)
+var _pj_last_pos: Vector2 = Vector2.INF
+var _pj_last_speed: float = -1.0
+var _pj_last_rx_msec: int = 0         # when the newest sample arrived
+var _pj_sender_moving: bool = false   # the newest sample differed from the one before it
+
+func _clear_snapshots() -> void:
+	_snaps.clear()
+	_render_tick = -1.0
+	_rx_tick_unwrapped = 0
+
 
 func reset_net_sequence() -> void:
+	_clear_snapshots()
 	# The sender (re)joined its seat: whatever tick comes next starts a new sequence.
 	_last_rx_tick = -1
 var _last_persisted: Array = []   # ammo/form snapshot last written to storage
@@ -147,10 +165,10 @@ func _physics_process(delta: float):
 		if dash_timer <= 0.0:
 			is_dashing = false
 			
-	# REMOTE PLAYER REPLICATION
+	# REMOTE PLAYER REPLICATION: snapshot interpolation ~100 ms behind the sender
 	if not is_local_player:
-		if target_net_pos.length_squared() > 0.1:
-			global_position = global_position.lerp(target_net_pos, 24.0 * delta)
+		_render_snapshots(delta)
+		_puppet_telemetry(delta)
 		queue_redraw()
 		return
 		
@@ -258,12 +276,16 @@ func _physics_process(delta: float):
 func _sync_network_state(delta: float):
 	sync_timer += delta
 	_idle_since_send += delta
-	if sync_timer < Global.NET_TICK_INTERVAL:
+	if sync_timer < Global.NET_TICK_INTERVAL - 0.001:
 		return
-	sync_timer = 0.0
+	sync_timer -= Global.NET_TICK_INTERVAL   # keep the slots at exactly 50 ms
+	# The tick is a slot clock: it advances every 50 ms whether or not this slot
+	# goes out, so a receiver can place every sample in time and read a gap as
+	# "unchanged for that long" (Phase 3b interpolation).
+	net_tick = (net_tick + 1) & 0xFFFF
 	_persist_combat_state()
-	# 20 Hz sample (was 30). Idle suppression: if nothing observable changed since the
-	# last packet (position at 0.1 px, aim at 0.1 deg, flags), skip it, but repeat the
+	# 20 Hz sample. Idle suppression: if nothing observable changed since the last
+	# packet (position at 0.1 px, aim at 0.1 deg, flags), skip it, but repeat the
 	# state every NET_IDLE_RESEND so a late joiner or a lost packet is corrected.
 	var pkt := Global.encode_sync_pos(net_tick, global_position, aim_direction,
 		is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg)
@@ -272,8 +294,29 @@ func _sync_network_state(delta: float):
 		return
 	_last_sync_bytes = body
 	_idle_since_send = 0.0
-	net_tick = (net_tick + 1) & 0xFFFF
 	Global.send_net_binary(pkt)
+
+# Per rendered physics frame: how much this puppet's speed changed since the
+# last frame (the jitter a player sees), snaps, and frames starved of samples.
+func _puppet_telemetry(delta: float) -> void:
+	if _pj_last_pos == Vector2.INF:
+		_pj_last_pos = global_position
+		return
+	var disp := global_position - _pj_last_pos
+	_pj_last_pos = global_position
+	# a seam crossing moves the drawn position by most of the arena: expected
+	var wrapped := absf(disp.x) > 400.0 or absf(disp.y) > 300.0
+	var snapped := not wrapped and disp.length() > Global.PUPPET_SNAP_PX
+	var speed := disp.length() / delta
+	var speed_delta := 0.0
+	if snapped or wrapped or _pj_last_speed < 0.0:
+		_pj_last_speed = -1.0 if (snapped or wrapped) else speed
+	else:
+		speed_delta = absf(speed - _pj_last_speed)
+		_pj_last_speed = speed
+	var starved := _pj_sender_moving and (Time.get_ticks_msec() - _pj_last_rx_msec) > Global.PUPPET_STALL_SEC * 1000.0
+	Global.puppet_sample(player_id, speed_delta, snapped, starved, wrapped, _pj_extrapolating)
+
 
 func _on_player_state_received(p_id: int, data: Dictionary):
 	if p_id == player_id:
@@ -284,15 +327,152 @@ func _on_player_state_received(p_id: int, data: Dictionary):
 		if tick >= 0 and _last_rx_tick >= 0 and ((tick - _last_rx_tick) & 0xFFFF) >= 0x8000 \
 				and ((_last_rx_tick - tick) & 0xFFFF) <= 200:
 			return
+		if tick >= 0 and tick == _last_rx_tick:
+			return   # duplicate slot: the ring must never hold two samples with one tick
+		var new_pos := Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0)))
+		_pj_sender_moving = new_pos.distance_squared_to(target_net_pos) > 0.25
+		_pj_last_rx_msec = Time.get_ticks_msec()
+		target_net_pos = new_pos
 		if tick >= 0:
+			if _last_rx_tick < 0 or ((_last_rx_tick - tick) & 0xFFFF) < 0x8000 and _last_rx_tick != tick:
+				# a restart (counter far behind, see above) or the first sample: new sequence
+				if _last_rx_tick >= 0:
+					_clear_snapshots()
+			else:
+				_rx_tick_unwrapped += (tick - _last_rx_tick) & 0xFFFF
 			_last_rx_tick = tick
-		target_net_pos = Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0)))
-		aim_direction = Vector2(float(data.get("aim_x", 1.0)), float(data.get("aim_y", 0.0)))
-		is_facing_right = bool(data.get("facing", true))
-		is_dashing = bool(data.get("dash", false))
-		is_shielding = bool(data.get("shield", false))
-		is_bear_form = bool(data.get("bear", false))
-		is_egg = bool(data.get("egg", false))
+		else:
+			_rx_tick_unwrapped += 1
+		var aim := Vector2(float(data.get("aim_x", 1.0)), float(data.get("aim_y", 0.0)))
+		_snaps.append({"t": _rx_tick_unwrapped, "pos": new_pos, "aim": aim,
+			"facing": bool(data.get("facing", true)), "dash": bool(data.get("dash", false)),
+			"shield": bool(data.get("shield", false)), "bear": bool(data.get("bear", false)),
+			"egg": bool(data.get("egg", false)), "at_msec": _pj_last_rx_msec})
+		while _snaps.size() > Global.SNAP_RING:
+			_snaps.pop_front()
+
+
+# Where the sender is now, in unwrapped ticks: its newest tick plus the time
+# that sample has been sitting here. Robust to idle suppression (the sender's
+# clock keeps running while it sends nothing).
+func _estimated_sender_tick() -> float:
+	var newest: Dictionary = _snaps[-1]
+	return float(newest["t"]) + (Time.get_ticks_msec() - int(newest["at_msec"])) / 1000.0 * Global.NET_TICK_HZ
+
+
+# Place the puppet at render time = sender time - RENDER_DELAY_TICKS, between the
+# two samples that bracket it. A tick gap over 2 means the sender sent nothing
+# because nothing changed (idle suppression), so the state holds at the older
+# sample until one tick before the newer one. Deltas are unwrapped across the
+# horizontal seam (640 px) and the bottom seam (386 px) so a crossing is a step
+# of a few pixels, never a glide across the screen, and the result is wrapped
+# back into the arena. Flags come from the sample at render time, so dash and
+# shield windows sit on the drawn position.
+func _render_snapshots(delta: float) -> void:
+	_pj_extrapolating = false
+	if _snaps.is_empty():
+		return
+	var target := _estimated_sender_tick() - Global.RENDER_DELAY_TICKS
+	if _render_tick < 0.0 or absf(target - _render_tick) > 5.0:
+		_render_tick = target                       # first sample or a burst: resync
+	else:
+		_render_tick += delta * Global.NET_TICK_HZ  # free-running 20 Hz clock ...
+		_render_tick += (target - _render_tick) * 0.05   # ... gently pulled to the estimate
+	var r := _render_tick
+	var a: Dictionary = _snaps[0]
+	var b: Dictionary = _snaps[-1]
+	if r >= float(b["t"]):
+		_extrapolate(b, r - float(b["t"]))
+		return
+	if r <= float(a["t"]):
+		_apply_snapshot(a, a, 0.0)
+		return
+	for i in range(_snaps.size() - 1, 0, -1):
+		if float(_snaps[i - 1]["t"]) <= r:
+			a = _snaps[i - 1]
+			b = _snaps[i]
+			break
+	var ta := float(a["t"])
+	var tb := float(b["t"])
+	var u: float
+	if tb - ta > 2.0:
+		u = clampf(r - (tb - 1.0), 0.0, 1.0)       # idle hold, then the last tick's step
+	else:
+		u = clampf((r - ta) / (tb - ta), 0.0, 1.0)
+	_apply_snapshot(a, b, u)
+
+
+# Displacement from sample a to sample b, unwrapped across the horizontal seam
+# (640 px) and the bottom seam (386 px): a crossing becomes a few-pixel step.
+func _unwrapped_delta(a: Dictionary, b: Dictionary) -> Vector2:
+	var d: Vector2 = b["pos"] - a["pos"]
+	if d.x > 320.0:
+		d.x -= 640.0
+	elif d.x < -320.0:
+		d.x += 640.0
+	if d.y > 193.0:
+		d.y -= 386.0
+	elif d.y < -193.0:
+		d.y += 386.0
+	return d
+
+
+func _wrap_into_arena(p: Vector2) -> Vector2:
+	if p.x > 652.0:
+		p.x -= 640.0
+	elif p.x < -12.0:
+		p.x += 640.0
+	if p.y > 376.0:
+		p.y -= 386.0
+	elif p.y < -10.0:
+		p.y += 386.0
+	return p
+
+
+# The render clock has passed the newest sample (a late or missing packet).
+# Follow the velocity of the last motion segment for up to EXTRAP_MAX_TICKS,
+# then freeze there until a fresh sample arrives. No extrapolation off an idle
+# gap (the sender was standing still) or off a teleport.
+func _extrapolate(b: Dictionary, over_ticks: float) -> void:
+	_pj_extrapolating = true
+	var v := Vector2.ZERO
+	if _snaps.size() >= 2:
+		var a: Dictionary = _snaps[-2]
+		var gap := float(b["t"]) - float(a["t"])
+		if gap >= 1.0 and gap <= 2.0:
+			var d := _unwrapped_delta(a, b)
+			if d.length() / gap <= Global.TELEPORT_PX:
+				v = d / gap
+	var e := minf(over_ticks, Global.EXTRAP_MAX_TICKS)
+	global_position = _wrap_into_arena(b["pos"] + v * e)
+	_apply_state(b, b, 1.0)
+
+
+func _apply_snapshot(a: Dictionary, b: Dictionary, u: float) -> void:
+	var d := _unwrapped_delta(a, b)
+	var gap := maxf(float(b["t"]) - float(a["t"]), 1.0)
+	# A jump beyond TELEPORT_PX in one tick (mage blink, respawn, an idle gap
+	# ending in a teleport) is shown as a step to b, not a 50 ms glide.
+	var per_tick := d.length() / (gap if gap <= 2.0 else 1.0)
+	if per_tick > Global.TELEPORT_PX and a != b:
+		u = 1.0
+	global_position = _wrap_into_arena(a["pos"] + d * u)
+	_apply_state(a, b, u)
+
+
+func _apply_state(a: Dictionary, b: Dictionary, u: float) -> void:
+	var aa: Vector2 = a["aim"]
+	var ab: Vector2 = b["aim"]
+	if aa.length_squared() > 0.5 and ab.length_squared() > 0.5:
+		aim_direction = aa.slerp(ab, u).normalized()
+	else:
+		aim_direction = ab if u >= 0.5 else aa
+	var st: Dictionary = b if u >= 1.0 else a
+	is_facing_right = st["facing"]
+	is_dashing = st["dash"]
+	is_shielding = st["shield"]
+	is_bear_form = st["bear"]
+	is_egg = st["egg"]
 
 func _on_remote_projectile(data: Dictionary):
 	var p_id = int(data.get("sender", 1))
@@ -540,6 +720,10 @@ func respawn(spawn_pos: Vector2):
 	global_position = spawn_pos
 	target_net_pos = spawn_pos
 	_last_rx_tick = -1
+	_clear_snapshots()
+	_pj_last_pos = Vector2.INF
+	_pj_last_speed = -1.0
+	_pj_sender_moving = false
 	_last_sync_bytes = PackedByteArray()
 	velocity = Vector2.ZERO
 	is_dead = false

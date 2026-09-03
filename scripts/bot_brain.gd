@@ -674,7 +674,10 @@ func _decide_turtle(snap: Dictionary) -> Dictionary:
 	ctrl["aim"] = enemy["pos"]
 	var th: Dictionary = snap["threat"]
 	var melee_rush: bool = enemy["dashing"] and enemy["dist"] < 110.0 and absf(d.y) < 30.0
-	if _clock >= _t_shield_until and snap["special_ready"] and not snap["shielding"] and (melee_rush or (not th.is_empty() and th["t"] < reaction_delay + 0.3)):
+	# No shield while falling toward the seam: the shield branch in player.gd has no
+	# air control, so a shielded fall chains through the wrap (same rule as the griefer).
+	var can_shield: bool = snap["on_floor"] or not _platform_below(snap, snap["pos"].x, snap["pos"].y).is_empty()
+	if can_shield and _clock >= _t_shield_until and snap["special_ready"] and not snap["shielding"] and (melee_rush or (not th.is_empty() and th["t"] < reaction_delay + 0.3)):
 		if rng.randf() < lerpf(0.5, 0.97, difficulty):
 			ctrl["special"] = true          # knight: shield 0.38 s; druid in the air: 1.5 s
 			_t_shield_until = _clock + 0.6
