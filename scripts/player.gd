@@ -131,6 +131,7 @@ func _physics_process(delta: float):
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
 		velocity.y += GRAVITY * delta
 		move_and_slide()
+		_check_screen_wrap()   # an egg falling past the seam used to keep falling
 		_sync_network_state(delta)
 		queue_redraw()
 		return
@@ -184,6 +185,7 @@ func _physics_process(delta: float):
 		if not is_on_floor():
 			velocity.y += GRAVITY * delta
 		move_and_slide()
+		_check_screen_wrap()   # a druid air-shielding while falling dropped to y > 500
 		_sync_network_state(delta)
 		queue_redraw()
 		return
@@ -687,7 +689,9 @@ func _draw():
 	draw_circle(laser_end, 2.0, Color(1.0, 0.9, 0.3, 0.75))
 
 	var cape_col = Color(base_col.r * 0.6, base_col.g * 0.6, base_col.b * 0.6)
-	var cape_wave = sin(anim_time * 0.8) * 3.0 - (velocity.x * 0.03)
+	# Clamped: at dash speed the offset reached ±17 px and flipped the quad into a
+	# self-intersecting polygon ("Invalid polygon data, triangulation failed").
+	var cape_wave = clampf(sin(anim_time * 0.8) * 3.0 - (velocity.x * 0.03), -8.0, 8.0)
 	var cape_pts = PackedVector2Array([
 		Vector2(-4 * facing_mul, -8),
 		Vector2(2 * facing_mul, -8),

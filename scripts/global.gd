@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.8"
+const GAME_VERSION: String = "v0.0.11"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -39,14 +39,25 @@ var _ns_last_rtt_ms: int = -1        # from the last pong (server echoes our pin
 
 # --- HEADLESS TEST HOOKS (non-web builds only) --------------------------------
 # godot --headless --path . -- --autojoin [--name=X] [--class=N] [--server=ws://host:port] [--no-netstats] [--no-net]
+#                                [--ai=<persona>] [--ai-seed=N] [--ai-difficulty=0..1] [--latency-ms=N]
 # --autojoin makes this instance join the lobby and lock in with no UI, so a
 # headless Godot process can act as a real client for bandwidth measurements.
 # --no-net skips connecting entirely (used by tools/check_scripts.gd).
+# --ai attaches scripts/bot_brain.gd to the local fighter (arena.gd does it at
+# spawn); the brain plays through the same input actions a human presses.
+# --latency-ms delays every outgoing packet (bots on the server machine would
+# otherwise see 0 ms; the harness fault knobs only cover the protocol bots).
 var _autojoin: bool = false
 var _autojoin_name: String = "Headless"
 var _autojoin_class: int = 0
+var _autojoin_class_given: bool = false
 var _server_override: String = ""
 var _no_net: bool = false
+const BotBrainScript = preload("res://scripts/bot_brain.gd")
+var ai_persona: String = ""          # "" = no brain; see bot_brain.gd PERSONAS
+var ai_seed: int = 0                 # 0 = random
+var ai_difficulty: float = 0.7       # 0 = slow and sloppy, 1 = sharp
+var send_latency_ms: int = 0         # artificial delay on every outgoing packet
 
 # --- BINARY MOVEMENT PACKETS (Phase 2) ----------------------------------------
 # Movement is the only high-rate traffic, so it travels as a 9-byte binary frame
@@ -353,22 +364,39 @@ func send_net_data(dict: Dictionary):
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
 		dict["sender"] = my_player_id
 		var json_str = JSON.stringify(dict)
-		ws.send_text(json_str)
-		if net_stats_enabled:
-			var n := json_str.to_utf8_buffer().size()
-			_ns_pkts_out += 1
-			_ns_bytes_out += n
-			_ns_total_out += n
-			_ns_count(_ns_types_out, str(dict.get("type", "?")), n)
+		if send_latency_ms > 0:
+			# Same-delay SceneTree timers expire in creation order, so packet order holds.
+			get_tree().create_timer(send_latency_ms / 1000.0).timeout.connect(_send_text_now.bind(json_str, str(dict.get("type", "?"))))
+		else:
+			_send_text_now(json_str, str(dict.get("type", "?")))
+
+func _send_text_now(json_str: String, type: String) -> void:
+	if ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	ws.send_text(json_str)
+	if net_stats_enabled:
+		var n := json_str.to_utf8_buffer().size()
+		_ns_pkts_out += 1
+		_ns_bytes_out += n
+		_ns_total_out += n
+		_ns_count(_ns_types_out, type, n)
 
 func send_net_binary(buf: PackedByteArray) -> void:
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
-		ws.send(buf, WebSocketPeer.WRITE_MODE_BINARY)
-		if net_stats_enabled:
-			_ns_pkts_out += 1
-			_ns_bytes_out += buf.size()
-			_ns_total_out += buf.size()
-			_ns_count(_ns_types_out, _bin_type_name(buf), buf.size())
+		if send_latency_ms > 0:
+			get_tree().create_timer(send_latency_ms / 1000.0).timeout.connect(_send_binary_now.bind(buf))
+		else:
+			_send_binary_now(buf)
+
+func _send_binary_now(buf: PackedByteArray) -> void:
+	if ws.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	ws.send(buf, WebSocketPeer.WRITE_MODE_BINARY)
+	if net_stats_enabled:
+		_ns_pkts_out += 1
+		_ns_bytes_out += buf.size()
+		_ns_total_out += buf.size()
+		_ns_count(_ns_types_out, _bin_type_name(buf), buf.size())
 
 func _bin_type_name(buf: PackedByteArray) -> String:
 	if buf.size() < 1:
@@ -585,7 +613,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		
 		
 		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if my_player_id != 1:
+		if my_player_id >= 2:   # id 0 = still a spectator: no p0_* actions exist
 			var prefix1 = "p1_"
 			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
 				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
@@ -626,7 +654,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		var p_id = int(data.get("id", 1))
 		
 		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if my_player_id != 1:
+		if my_player_id >= 2:   # id 0 = still a spectator: no p0_* actions exist
 			var prefix1 = "p1_"
 			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
 				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
@@ -646,7 +674,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		var p_id = int(data.get("id", 1))
 		
 		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if my_player_id != 1:
+		if my_player_id >= 2:   # id 0 = still a spectator: no p0_* actions exist
 			var prefix1 = "p1_"
 			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
 				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
@@ -737,12 +765,32 @@ func _parse_test_args() -> void:
 			_autojoin_name = a.substr(7)
 		elif a.begins_with("--class="):
 			_autojoin_class = clampi(int(a.substr(8)), 0, ClassType.size() - 1)
+			_autojoin_class_given = true
 		elif a.begins_with("--server="):
 			_server_override = a.substr(9)
 		elif a == "--no-netstats":
 			net_stats_enabled = false
 		elif a == "--no-net":
 			_no_net = true
+		elif a.begins_with("--ai="):
+			ai_persona = a.substr(5).to_lower()
+		elif a.begins_with("--ai-seed="):
+			ai_seed = int(a.substr(10))
+		elif a.begins_with("--ai-difficulty="):
+			ai_difficulty = clampf(float(a.substr(16)), 0.0, 1.0)
+		elif a.begins_with("--latency-ms="):
+			send_latency_ms = maxi(int(a.substr(13)), 0)
+	if ai_persona != "" and not ai_persona in BotBrainScript.PERSONAS:
+		push_error("--ai=%s: unknown persona (one of %s)" % [ai_persona, ", ".join(BotBrainScript.PERSONAS)])
+		ai_persona = ""
+	if ai_persona != "" and not _autojoin_class_given:
+		# A persona plays its natural class unless --class says otherwise
+		# (wanderer: -1 = keep the default).
+		var pref: int = BotBrainScript.DEFAULT_CLASS.get(ai_persona, -1)
+		if pref >= 0:
+			_autojoin_class = pref
+	if send_latency_ms > 0:
+		print("⏱️ [Global] --latency-ms=", send_latency_ms, ": every outgoing packet is delayed")
 
 func _ns_count(table: Dictionary, type: String, bytes: int) -> void:
 	if table.has(type):

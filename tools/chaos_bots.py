@@ -1171,10 +1171,11 @@ HARNESS_LOG_DIR = os.path.join(ROOT, ".harness_logs")
 class GodotClient:
     """A real headless Godot client (global.gd --autojoin). Its log is the
     assertion surface: any SCRIPT ERROR / ERROR: line fails the scenario."""
-    def __init__(self, ctx, idx, cls):
+    def __init__(self, ctx, idx, cls, ai=""):
         self.ctx = ctx
         self.idx = idx
         self.cls = cls
+        self.ai = ai
         self.name = f"Godot{idx}"
         os.makedirs(HARNESS_LOG_DIR, exist_ok=True)
         self.log_path = os.path.join(HARNESS_LOG_DIR, f"{self.name.lower()}.log")
@@ -1183,10 +1184,20 @@ class GodotClient:
 
     def start(self):
         self.logf = open(self.log_path, "w")
-        self.proc = subprocess.Popen(
-            ["godot", "--headless", "--path", ROOT, "--", "--autojoin", f"--name={self.name}",
-             f"--class={self.cls}", f"--server=ws://{self.ctx.args.host}:{self.ctx.args.port}"],
-            stdout=self.logf, stderr=subprocess.STDOUT)
+        argv = ["godot", "--headless", "--path", ROOT, "--", "--autojoin", f"--name={self.name}",
+                f"--server=ws://{self.ctx.args.host}:{self.ctx.args.port}"]
+        if self.ai:
+            # seeded per client so a fleet run is reproducible with --seed; the
+            # persona picks its own class (chaser/turtle knight, sniper mage, rusher rogue, griefer druid)
+            argv += [f"--ai={self.ai}", f"--ai-seed={self.ctx.args.seed * 10 + self.idx}"]
+            if self.ctx.args.ai_difficulty is not None:
+                argv.append(f"--ai-difficulty={self.ctx.args.ai_difficulty}")
+        else:
+            argv.append(f"--class={self.cls}")
+        if self.ctx.args.latency_ms > 0:
+            # the Godot send path gets the same artificial latency as the protocol bots
+            argv.append(f"--latency-ms={int(self.ctx.args.latency_ms)}")
+        self.proc = subprocess.Popen(argv, stdout=self.logf, stderr=subprocess.STDOUT)
         return self
 
     def alive(self):
@@ -1218,11 +1229,27 @@ class GodotClient:
                 seen[s] = seen.get(s, 0) + 1
         return seen
 
+    BOT_LINE = re.compile(r"\[Bot (\w+) P(\d) (\d+)s\] .*?decisions=(\d+) moves=(\d+) jumps=(\d+) dashes=(\d+) "
+                          r"attacks=(\d+) specials=(\d+) evades=(\d+) \| wraps=(\d+) drops=(\d+) seams=(\d+) "
+                          r"land_avg=([\d.]+)s max_loop=(\d+)")
+
     def stats(self):
         t = self.text()
         out_sync = sum(int(m) for m in re.findall(r"out: [^|\n]*?sync_pos=(\d+)", t))
-        return {"assigned": "Assigned Player ID" in t, "netstats_lines": t.count("[NetStats"),
-                "out_sync_pos": out_sync}
+        st = {"assigned": "Assigned Player ID" in t, "netstats_lines": t.count("[NetStats"),
+              "out_sync_pos": out_sync,
+              "round_ends": sum(int(m) for m in re.findall(r"round_end=(\d+)", t)),
+              "deaths_seen": sum(int(m) for m in re.findall(r"in: [^|\n]*?player_died=(\d+)", t)),
+              "deaths_reported": sum(int(m) for m in re.findall(r"out: [^|\n]*?player_died=(\d+)", t)),
+              "bot": None}
+        bot_lines = self.BOT_LINE.findall(t)
+        if bot_lines:
+            b = bot_lines[-1]
+            st["bot"] = {"persona": b[0], "slot": int(b[1]), "seconds": int(b[2]), "decisions": int(b[3]),
+                         "moves": int(b[4]), "jumps": int(b[5]), "dashes": int(b[6]), "attacks": int(b[7]),
+                         "specials": int(b[8]), "evades": int(b[9]), "wraps": int(b[10]), "drops": int(b[11]),
+                         "seams": int(b[12]), "land_avg": float(b[13]), "max_loop": int(b[14])}
+        return st
 
 
 # ── Step-2 scenarios: fleet, fuzz, fault injection ───────────────────────────
@@ -1532,7 +1559,7 @@ def sc_fuzz(ctx):
     relaying("oversized-header")
 
 
-@scenario("fleet", "N headless Godot clients (--godot) fight bots for --duration s; fails on any client script error")
+@scenario("fleet", "N headless Godot clients (--godot, --ai personas) fight bots for --duration s; fails on any client script error, an idle brain, no kills (--ai), or no round ending (--ai, 150 s+)")
 def sc_fleet(ctx):
     if shutil.which("godot") is None:
         ctx.fail("fleet.no-godot", "godot binary not on PATH")
@@ -1541,7 +1568,8 @@ def sc_fleet(ctx):
     bots = [ctx.bot(i) for i in range(1, 5 - n)]
     if bots:
         lobby_join(ctx, bots)
-    clients = [GodotClient(ctx, i + 1, cls=(i + 1) % 5).start() for i in range(n)]
+    personas = [p.strip() for p in ctx.args.ai.split(",")] if ctx.args.ai else [""]
+    clients = [GodotClient(ctx, i + 1, cls=(i + 1) % 5, ai=personas[i % len(personas)]).start() for i in range(n)]
     ctx.say(f"{n} headless Godot client(s) starting, {len(bots)} bot(s)")
     deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
@@ -1555,8 +1583,10 @@ def sc_fleet(ctx):
         for b in bots:
             b.die_rate = 0.3
     dur = ctx.args.duration
-    ctx.say(f"playing {dur:.0f} s")
+    ctx.say(f"playing {dur:.0f} s" + (f" with personas {', '.join(personas)}" if ctx.args.ai else ""))
     time.sleep(dur)
+    round_ends = 0
+    deaths_seen = 0
     for c in clients:
         if not c.alive():
             ctx.fail("fleet.client-exited", f"{c.name} exited early (code {c.proc.returncode})")
@@ -1568,7 +1598,31 @@ def sc_fleet(ctx):
             ctx.fail("fleet.not-assigned", f"{c.name} never got a player slot")
         if st["out_sync_pos"] == 0:
             ctx.fail("fleet.client-silent", f"{c.name} never sent movement (not in the arena, or dead all along)")
+        round_ends = max(round_ends, st["round_ends"])
+        deaths_seen = max(deaths_seen, st["deaths_seen"])
         ctx.note(f"{c.name}: {st['netstats_lines']} NetStats lines, {st['out_sync_pos']} sync_pos sent, {len(errs)} error kinds, log {os.path.relpath(c.log_path, ROOT)}")
+        b = st["bot"]
+        if c.ai and b is None:
+            ctx.fail("fleet.bot-missing", f"{c.name}: --ai={c.ai} but no brain status line in its log")
+        elif b is not None:
+            # everyone fought: a brain that never attacked, never used a special and never moved is broken
+            if b["attacks"] + b["specials"] == 0 or b["moves"] == 0:
+                ctx.fail("fleet.bot-idle", f"{c.name} ({b['persona']}): attacks={b['attacks']} specials={b['specials']} moves={b['moves']} over {b['seconds']} s")
+            if b["max_loop"] >= 4:
+                ctx.fail("fleet.bot-fall-loop", f"{c.name} ({b['persona']}): {b['max_loop']} bottom wraps without landing")
+            ctx.note(f"{c.name} {b['persona']} P{b['slot']}: {b['decisions']} decisions, {b['attacks']} attacks, {b['specials']} specials, "
+                     f"{b['dashes']} dashes, {b['jumps']} jumps, {b['evades']} evades, wraps {b['wraps']} (drops {b['drops']}, "
+                     f"seams {b['seams']}, land avg {b['land_avg']:.2f} s, longest loop {b['max_loop']}), {st['deaths_reported']} deaths reported")
+    # Brainless Godot clients stand still and never get hit, so kills and round
+    # ends are only asserted when brains are in the match. A round ends after 9
+    # to 11 kills (3 stocks, four fighters) and four bots at difficulty 0.7 score
+    # about 7 a minute, so the round-end assertion needs a 150 s run; kills are
+    # expected within 30 s.
+    if ctx.args.ai and dur >= 30 and deaths_seen == 0:
+        ctx.fail("fleet.no-kills", f"no player_died reached any Godot client in {dur:.0f} s")
+    if ctx.args.ai and dur >= 150 and round_ends == 0:
+        ctx.fail("fleet.no-round-end", f"no round_end seen by any Godot client in {dur:.0f} s")
+    ctx.note(f"kills seen by a Godot client: {deaths_seen}, rounds ended: {round_ends}")
     for c in clients:
         c.stop()
 
@@ -1803,6 +1857,8 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8081)
     ap.add_argument("--godot", type=int, default=2, help="headless Godot clients in the fleet scenario (1-4)")
+    ap.add_argument("--ai", default="", help="fleet scenario: bot-brain persona for the Godot clients (wanderer, chaser, sniper, turtle, rusher, griefer); a comma list assigns one per client, round-robin")
+    ap.add_argument("--ai-difficulty", type=float, default=None, help="fleet scenario: 0..1 difficulty for the bot brains (default: the client's 0.7)")
     ap.add_argument("--latency-ms", type=float, default=0.0, help="play scenario: added send latency per bot")
     ap.add_argument("--jitter-ms", type=float, default=0.0, help="play scenario: +/- jitter on that latency")
     ap.add_argument("--loss", type=float, default=0.0, help="play scenario: send-side packet loss probability (0-1)")

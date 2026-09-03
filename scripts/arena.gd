@@ -13,6 +13,7 @@ var powerup_node: Area2D = null
 var is_arena_rotating: bool = false
 
 const PlayerScene = preload("res://scenes/player.tscn")
+const BotBrainScript = preload("res://scripts/bot_brain.gd")
 
 # HUD textures resolved once at load. _update_panel used to call load() for every
 # icon on every HUD refresh (each a resource-cache lookup); these are plain constants.
@@ -203,6 +204,12 @@ func _start_round():
 			add_child(p)
 			p.respawn(spawn_pos)
 			player_instances[p_id] = p
+			if p_id == Global.my_player_id and Global.ai_persona != "":
+				# Headless --ai client: the brain drives this fighter through the
+				# input actions (player.gd does not know it exists).
+				var brain = BotBrainScript.new()
+				brain.setup(Global.ai_persona, Global.ai_seed, Global.ai_difficulty)
+				p.add_child(brain)
 			if Global.rejoined_mid_match and p_id == Global.my_player_id:
 				# Same fight after a reload: no free quiver.
 				p.restore_combat_state(Global.load_combat_state())

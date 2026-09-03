@@ -73,11 +73,14 @@ if [[ "$BUMP" != "none" ]]; then
     [[ -n "$TITLE" ]] || { TITLE="Untitled"; echo "⚠  no --title given: creating '$NEW - Untitled.md' (rename it and fix the Changelog link)" >&2; }
     prev_page=$(ls "$NOTES_DIR"/v*.md 2>/dev/null | sed 's#.*/##; s#\.md$##' | sort -V | tail -1)
     page="$NOTES_DIR/$NEW - $TITLE.md"
-    sed -e "s/{VERSION}/$NEW/g" -e "s/{DATE}/$(date +%F)/g" -e "s/{TITLE}/$TITLE/g" \
-        -e "s/{PHASE}/tbd/g" -e "s/{HARNESS}/tbd/g" -e "s/{PREVIOUS}/${prev_page:-Changelog}/g" \
+    # Titles go into sed replacements, where & means "the match" and / and \ are special.
+    title_esc=$(printf '%s' "$TITLE" | sed 's/[&/\]/\\&/g')
+    prev_esc=$(printf '%s' "${prev_page:-Changelog}" | sed 's/[&/\]/\\&/g')
+    sed -e "s/{VERSION}/$NEW/g" -e "s/{DATE}/$(date +%F)/g" -e "s/{TITLE}/$title_esc/g" \
+        -e "s/{PHASE}/tbd/g" -e "s/{HARNESS}/tbd/g" -e "s/{PREVIOUS}/$prev_esc/g" \
         docs/patch_note_template.md > "$page"
     sed -i "/<!-- bump_build.sh inserts new versions directly below this line -->/a - [[$NEW - $TITLE]] — $(date +%F) · tbd · harness tbd" docs/Changelog.md
-    [[ -n "$prev_page" ]] && sed -i "s/^Previous: \(.*\) · Next: — /Previous: \1 · Next: [[$NEW - $TITLE]] /" "$NOTES_DIR/$prev_page.md"
+    [[ -n "$prev_page" ]] && sed -i "s/^Previous: \(.*\) · Next: — /Previous: \1 · Next: [[$NEW - $title_esc]] /" "$NOTES_DIR/$prev_page.md"
     echo "📝 patch-notes page created: $page (fill in summary / changes / metrics / harness)"
   fi
 fi
