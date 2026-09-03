@@ -28,12 +28,21 @@ const CLASS_ICON_TEX = {
 	Global.ClassType.DRUID: preload("res://assets/icons/druid.jpg"),
 }
 
-var spawn_points = [
-	Vector2(110, 200),
-	Vector2(530, 200),
-	Vector2(170, 100),
-	Vector2(470, 100)
-]
+# Bubble spawn spots (v0.0.18). The story: the four fixed spots did not move
+# when the arena flipped, so a fighter could pop up inside the floor or out of
+# view. Now every fighter comes back in the upper middle of the air, at a random
+# x in the middle half of the arena, inside a bubble (see player.gd). The random
+# number is seeded from things every screen already knows (round, player, lives,
+# flips), so every screen picks the same spot without a new network packet.
+const SPAWN_MIN_X = 160.0
+const SPAWN_MAX_X = 480.0
+const SPAWN_Y = 70.0
+
+func _spawn_spot(p_id: int) -> Vector2:
+	var lives = int(player_stocks.get(p_id, Global.max_stocks))
+	var rng = RandomNumberGenerator.new()
+	rng.seed = current_round * 100000 + p_id * 10000 + lives * 100 + Global.arena_flips
+	return Vector2(rng.randf_range(SPAWN_MIN_X, SPAWN_MAX_X), SPAWN_Y)
 
 var player_stocks = {}
 var player_instances = {}
@@ -130,10 +139,7 @@ func _exit_tree():
 		if sig.is_connected(handler):
 			sig.disconnect(handler)
 
-func _input(event):
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_R:
-			Global.reset_scores()
+# (v0.0.18: the old R key that wiped the crown counters on this screen is gone.)
 
 
 func _on_net_player_joined(p_id: int, _active_list):
@@ -194,7 +200,7 @@ func _start_round():
 		# Stocks come from the server (snapshot / player_died / new_round), so a client
 		# that rejoins mid-round shows the real count instead of a fresh 3.
 		player_stocks[p_id] = Global.server_stocks.get(p_id, Global.max_stocks)
-		var spawn_pos = spawn_points[p_id - 1]
+		var spawn_pos = _spawn_spot(p_id)
 		if p_id in player_instances and is_instance_valid(player_instances[p_id]):
 			player_instances[p_id].respawn(spawn_pos)
 		else:
@@ -252,7 +258,7 @@ func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int):
 		if not is_inside_tree():
 			return
 		if not is_round_over and victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
-			var spawn_pos = spawn_points[victim_id - 1]
+			var spawn_pos = _spawn_spot(victim_id)
 			player_instances[victim_id].respawn(spawn_pos)
 
 # Obsolete: We don't check round end locally anymore! The server does it!
@@ -318,6 +324,18 @@ func _update_hud():
 	_update_panel(p3_panel, 3)
 	_update_panel(p4_panel, 4)
 
+func _pad_label(lbl: Label) -> void:
+	# v0.0.18. The story: each top-bar label has a little 16 px icon drawn on
+	# top of its left edge. The text used to be pushed right with three spaces,
+	# but three spaces are only about 9 px wide, so the first letter hid under
+	# the icon: "Andrew" read "ndrew" and the crown number was gone. Now the
+	# label starts its text 20 px in, past the icon, with no spaces needed.
+	if lbl.has_theme_stylebox_override("normal"):
+		return
+	var pad = StyleBoxEmpty.new()
+	pad.content_margin_left = 20.0
+	lbl.add_theme_stylebox_override("normal", pad)
+
 func _update_panel(panel: Control, p_id: int):
 	if not Global.player_configs[p_id]["active"]:
 		panel.visible = false
@@ -330,6 +348,9 @@ func _update_panel(panel: Control, p_id: int):
 	var name_lbl = panel.get_node("NameLabel")
 	var stock_lbl = panel.get_node("StockLabel")
 	var score_lbl = panel.get_node("ScoreLabel")
+	_pad_label(name_lbl)
+	_pad_label(stock_lbl)
+	_pad_label(score_lbl)
 	
 	var disp_name = Global.player_names.get(p_id, "P" + str(p_id))
 	if p_id == Global.my_player_id and Global.my_player_name != "":
@@ -345,7 +366,7 @@ func _update_panel(panel: Control, p_id: int):
 		class_icon.position = Vector2(0, 2)
 		name_lbl.add_child(class_icon)
 	class_icon.texture = CLASS_ICON_TEX.get(c_type)
-	name_lbl.text = "   " + disp_name + (" (You)" if p_id == Global.my_player_id else "")
+	name_lbl.text = disp_name + (" (You)" if p_id == Global.my_player_id else "")
 	name_lbl.modulate = c_info["color"]
 	
 	var stocks = player_stocks.get(p_id, Global.max_stocks)
@@ -359,7 +380,7 @@ func _update_panel(panel: Control, p_id: int):
 		stock_icon.position = Vector2(0, 2)
 		stock_lbl.add_child(stock_icon)
 	stock_icon.texture = HEART_TEX
-	stock_lbl.text = "   x " + str(stocks)
+	stock_lbl.text = "x " + str(stocks)
 	
 	var score_icon = score_lbl.get_node_or_null("ScoreIcon")
 	if not score_icon:
@@ -371,7 +392,7 @@ func _update_panel(panel: Control, p_id: int):
 		score_icon.position = Vector2(0, 2)
 		score_lbl.add_child(score_icon)
 	score_icon.texture = CROWN_TEX
-	score_lbl.text = "   " + str(Global.player_scores[p_id])
+	score_lbl.text = str(Global.player_scores[p_id])
 
 func _host_spawn_powerup():
 	if not is_instance_valid(powerup_node) and not is_arena_rotating:

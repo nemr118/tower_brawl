@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.17"
+const GAME_VERSION: String = "v0.0.18"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -802,6 +802,8 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		last_match_state = "LOBBY"
 		reset_scores()
 		emit_signal("net_return_to_lobby")
+		if _autojoin:
+			_autojoin_relock()
 		
 	elif type == "player_died":
 		var victim = int(data.get("victim", 0))
@@ -832,6 +834,20 @@ func is_host() -> bool:
 	if active_players.size() == 0:
 		return true
 	return my_player_id == lowest
+
+func _autojoin_relock() -> void:
+	# v0.0.18. The story: a bot locked in only once, right when it got its seat.
+	# After a match ended everyone went back to the lobby and the bot just sat
+	# there, so the user had to restart the bots by hand. Now, a moment after
+	# the lobby comes back, the bot says its name and locks in again.
+	await get_tree().create_timer(1.5).timeout
+	if my_player_id < 1 or last_match_state != "LOBBY":
+		return
+	print("🤖 [Global] --autojoin: P", my_player_id, " locking in again for the next match")
+	send_net_data({"type": "set_name", "name": _autojoin_name})
+	player_configs[my_player_id]["class"] = _autojoin_class
+	locked_opponents[my_player_id] = _autojoin_class
+	send_net_data({"type": "lock_in", "class": _autojoin_class})
 
 func reset_scores():
 	player_scores = {1: 0, 2: 0, 3: 0, 4: 0}

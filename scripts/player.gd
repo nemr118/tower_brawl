@@ -37,8 +37,22 @@ var is_egg: bool = false
 var egg_timer: float = 0.0
 var shield_timer: float = 0.0
 
+# Bubble spawn (v0.0.18). The story: fighters used to pop up on fixed spots,
+# and when the arena was upside down those spots could be inside the floor or
+# out of view. Now a fighter comes back in the air, inside a bubble, and floats
+# down slowly. The bubble works like a shield: hits bounce off. It pops after
+# BUBBLE_TIME seconds, when the feet touch the ground, or the moment the
+# player attacks, dashes or uses a special.
+var is_bubble: bool = false
+var bubble_timer: float = 0.0
+const BUBBLE_TIME = 5.0          # seconds the bubble lasts at most
+const BUBBLE_FALL_SLOW = 45.0    # px/s, the slow float down
+const BUBBLE_FALL_FAST = 260.0   # px/s, when Down is held
+const BUBBLE_SIDE_SPEED = 160.0  # px/s, left and right while floating
+
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
+var _jump_fired_last_frame: bool = false   # for the jump trap (v0.0.18)
 
 var is_facing_right: bool = true
 var is_dead: bool = false
@@ -158,6 +172,8 @@ func _physics_process(delta: float):
 		
 	if spawn_invuln_timer > 0.0:
 		spawn_invuln_timer -= delta
+	if is_bubble:
+		bubble_timer -= delta
 	if shield_timer > 0.0:
 		shield_timer -= delta
 		if shield_timer <= 0.0:
@@ -171,6 +187,10 @@ func _physics_process(delta: float):
 	if not is_local_player:
 		_render_snapshots(delta)
 		_puppet_telemetry(delta)
+		# The real player tells us when the bubble popped: the shield bit in the
+		# movement packet goes off. A late safety timer covers a lost packet.
+		if is_bubble and ((_snaps.size() > 0 and not is_shielding) or bubble_timer <= -0.5):
+			is_bubble = false
 		queue_redraw()
 		return
 		
@@ -192,6 +212,33 @@ func _physics_process(delta: float):
 			rogue_kunai += 1
 			rogue_recharge_timer = 0.0
 			
+	if is_bubble:
+		var bprefix = "p" + str(player_id) + "_"
+		var wants_action = Input.is_action_just_pressed(bprefix + "attack") \
+			or Input.is_action_just_pressed(bprefix + "special") \
+			or Input.is_action_just_pressed(bprefix + "dash")
+		if wants_action or bubble_timer <= 0.0:
+			# Pop now and keep going: the normal code below runs in this same
+			# frame, so the attack or dash the player pressed still happens.
+			_pop_bubble()
+		else:
+			# Float down slowly. Left and right still work. Down drops faster.
+			var bx = Input.get_axis(bprefix + "left", bprefix + "right")
+			velocity.x = move_toward(velocity.x, bx * BUBBLE_SIDE_SPEED, ACCEL * delta)
+			if bx > 0.15:
+				is_facing_right = true
+			elif bx < -0.15:
+				is_facing_right = false
+			var fast = Input.get_action_strength(bprefix + "down") > 0.5
+			velocity.y = BUBBLE_FALL_FAST if fast else BUBBLE_FALL_SLOW
+			move_and_slide()
+			_check_screen_wrap()
+			if is_on_floor():
+				_pop_bubble()   # feet on the ground: the bubble is done
+			_sync_network_state(delta)
+			queue_redraw()
+			return
+
 	if is_dashing:
 		velocity = dash_dir * DASH_SPEED
 		move_and_slide()
@@ -251,11 +298,31 @@ func _physics_process(delta: float):
 	else:
 		jump_buffer_timer -= delta
 		
+	var jumped_now = false
 	if jump_buffer_timer > 0.0 and coyote_timer > 0.0:
 		velocity.y = JUMP_VELOCITY
 		coyote_timer = 0.0
 		jump_buffer_timer = 0.0
+		jumped_now = true
 		_squash_and_stretch(0.7, 1.3)
+
+	# Jump trap (v0.0.18). In the playtest a fighter standing on a platform
+	# sometimes could not jump with W until it walked off. We could not find
+	# the reason in the code, so this trap prints one line to the console the
+	# moment it happens, with the numbers we need to see. Two cases:
+	#   1. jump was pressed on the floor but no jump fired;
+	#   2. a jump fired last frame but the feet are already back on the floor.
+	if Input.is_action_just_pressed(prefix + "jump") and is_on_floor() and not jumped_now:
+		print("🪤 [JumpTrap] P", player_id, " pressed jump on the floor but no jump fired.",
+			" coyote=", snapped(coyote_timer, 0.001), " buffer=", snapped(jump_buffer_timer, 0.001),
+			" vel=", velocity.round(), " pos=", global_position.round(),
+			" contacts=", get_slide_collision_count(), " floor_normal=", get_floor_normal(),
+			" shield=", is_shielding, " dash=", is_dashing, " bubble=", is_bubble)
+	if _jump_fired_last_frame and is_on_floor() and velocity.y >= 0.0:
+		print("🪤 [JumpTrap] P", player_id, " jumped last frame but is back on the floor already.",
+			" vel=", velocity.round(), " pos=", global_position.round(),
+			" contacts=", get_slide_collision_count(), " floor_normal=", get_floor_normal())
+	_jump_fired_last_frame = jumped_now
 		
 	if Input.is_action_just_released(prefix + "jump") and velocity.y < -120.0:
 		velocity.y = -120.0
@@ -681,8 +748,8 @@ func _check_screen_wrap():
 		velocity.y = 80.0
 
 func take_hit(killer_id: int, _knockback_dir: Vector2, weapon_name: String = "Melee"):
-	if is_dead or spawn_invuln_timer > 0.0 or is_dashing:
-		return
+	if is_dead or spawn_invuln_timer > 0.0 or is_dashing or is_bubble:
+		return   # a fighter inside the spawn bubble cannot be hit (v0.0.18)
 		
 	if is_shielding:
 		if class_type == Global.ClassType.DRUID:
@@ -743,6 +810,7 @@ func force_die() -> void:
 	velocity = Vector2.ZERO
 	is_dashing = false
 	is_shielding = false
+	is_bubble = false
 	is_egg = false
 	collision_shape.set_deferred("disabled", true)
 	melee_area.monitoring = false
@@ -763,10 +831,24 @@ func respawn(spawn_pos: Vector2):
 	is_shielding = false
 	is_egg = false
 	is_bear_form = false
-	spawn_invuln_timer = 1.0
+	# v0.0.18: the bubble replaces the old one-second glow. The shield bit goes
+	# out in every movement packet, so every screen draws the bubble and every
+	# weapon bounces off it, just like a knight's shield.
+	is_bubble = true
+	bubble_timer = BUBBLE_TIME
+	is_shielding = true
+	shield_timer = 0.0
+	spawn_invuln_timer = 0.0
 	collision_shape.set_deferred("disabled", false)
 	_apply_class_defaults()
 	_squash_and_stretch(0.5, 1.5)
+
+func _pop_bubble() -> void:
+	# The bubble is gone. From now on hits count.
+	is_bubble = false
+	is_shielding = false
+	shield_timer = 0.0
+	_squash_and_stretch(1.3, 0.7)
 
 func pickup_arrow():
 	if current_arrows < max_arrows:
@@ -806,9 +888,17 @@ func _draw():
 	if spawn_invuln_timer > 0.0:
 		draw_arc(Vector2.ZERO, 18.0 + breath, 0.0, TAU, 20, Color(1.0, 0.9, 0.3, 0.6), 2.0)
 		draw_circle(Vector2.ZERO, 16.0, Color(1.0, 1.0, 0.6, 0.25))
+
+	if is_bubble and is_shielding:
+		# The spawn bubble: a soft blue ball with a little shine on top.
+		var bob = sin(anim_time * 0.6) * 1.5
+		draw_circle(Vector2(0, -8 + bob), 24.0, Color(0.6, 0.9, 1.0, 0.18))
+		draw_arc(Vector2(0, -8 + bob), 24.0 + breath, 0.0, TAU, 32, Color(0.85, 0.97, 1.0, 0.9), 2.0)
+		draw_arc(Vector2(-6, -16 + bob), 9.0, PI * 1.05, PI * 1.55, 8, Color(1.0, 1.0, 1.0, 0.8), 1.5)
 		
 	# --- DRUID SHAPESHIFTING OVERRIDES ---
-	var is_druid_special = (class_type == Global.ClassType.DRUID) and (is_bear_form or is_egg or is_dashing or is_shielding)
+	# (not while inside the spawn bubble: the shield bit is on, but it is not the phoenix)
+	var is_druid_special = (class_type == Global.ClassType.DRUID) and (is_bear_form or is_egg or is_dashing or (is_shielding and not is_bubble))
 	
 	if is_druid_special:
 		if is_egg:
@@ -889,7 +979,7 @@ func _draw():
 		
 	# --- NORMAL HUMANOID DRAWING ---
 
-	if is_shielding and class_type == Global.ClassType.KNIGHT:
+	if is_shielding and class_type == Global.ClassType.KNIGHT and not is_bubble:
 		draw_circle(Vector2.ZERO, 19.0, Color(0.3, 0.6, 1.0, 0.45))
 		draw_arc(Vector2.ZERO, 19.0, 0.0, TAU, 24, Color(0.8, 0.95, 1.0), 3.0)
 		

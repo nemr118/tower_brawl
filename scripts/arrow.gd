@@ -69,14 +69,15 @@ func _handle_body_collision(body: Node2D):
 			body.play_parry_effect()
 			return
 			
-		# Lethal hit!
+		# Lethal hit! (v0.0.18) The arrow keeps flying after the hit. Before, it
+		# vanished with the fighter it hit, and the archer could never pick it
+		# up again. Now it flies on and sticks into the next platform.
 		body.take_hit(shooter_id, velocity.normalized(), "Arrow")
-		queue_free()
 	elif body is StaticBody2D or body is TileMap:
 		# Stick into wall
-		stick_into_wall()
+		stick_into_wall(body)
 
-func stick_into_wall():
+func stick_into_wall(wall: Node = null):
 	is_stuck = true
 	velocity = Vector2.ZERO
 	# Add slight stick wobble juice
@@ -85,6 +86,16 @@ func stick_into_wall():
 	tween.tween_property(self, "rotation", orig_rot + 0.12, 0.04)
 	tween.tween_property(self, "rotation", orig_rot - 0.08, 0.04)
 	tween.tween_property(self, "rotation", orig_rot, 0.04)
+	# v0.0.18: become a child of the platform we hit, so when the arena turns
+	# the arrow turns with it. Before, stuck arrows stayed put in the air.
+	# The move waits until the wobble is over: the physics engine is busy right
+	# now, and the wobble must finish in the old frame before we switch parents.
+	if wall != null and wall != get_parent():
+		tween.tween_callback(_stick_to.bind(wall))
+
+func _stick_to(wall: Node) -> void:
+	if is_instance_valid(wall) and is_inside_tree() and wall != get_parent():
+		reparent(wall, true)
 
 func _on_body_entered(body: Node2D):
 	_handle_body_collision(body)
