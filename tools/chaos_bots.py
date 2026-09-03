@@ -118,7 +118,7 @@ PUPPET_JITTER_HEAVY = 100.0  # px/s mean, heavier jitter
 PUPPET_HEAVY_JITTER_MS = 60
 PUPPET_SNAP_SLACK = 5        # snaps allowed beyond the deaths the client saw
 BIN_WEAPONS = ["arrow", "firebolt", "kunai", "thorn"]
-FLAG_FACING, FLAG_DASH, FLAG_SHIELD, FLAG_BEAR, FLAG_EGG = 1, 2, 4, 8, 16
+FLAG_FACING, FLAG_DASH, FLAG_SHIELD, FLAG_BEAR, FLAG_EGG, FLAG_FLOOR = 1, 2, 4, 8, 16, 32
 
 
 def q10(v):
@@ -134,8 +134,8 @@ def u16_to_dir(a):
     return math.cos(r), math.sin(r)
 
 
-def encode_sync_pos(x, y, aim_x, aim_y, facing=True, dash=False, shield=False, bear=False, egg=False, sender=0, tick=0):
-    flags = ((FLAG_FACING if facing else 0) | (FLAG_DASH if dash else 0) | (FLAG_SHIELD if shield else 0)
+def encode_sync_pos(x, y, aim_x, aim_y, facing=True, dash=False, shield=False, bear=False, egg=False, sender=0, tick=0, floor=False):
+    flags = ((FLAG_FACING if facing else 0) | (FLAG_DASH if dash else 0) | (FLAG_SHIELD if shield else 0) | (FLAG_FLOOR if floor else 0)
              | (FLAG_BEAR if bear else 0) | (FLAG_EGG if egg else 0))
     return struct.pack("<BBHhhHB", BIN_SYNC_POS, sender, tick & 0xFFFF, q10(x), q10(y), dir_to_u16(aim_x, aim_y), flags)
 
@@ -153,7 +153,8 @@ def decode_binary(b):
         ax, ay = u16_to_dir(aim)
         return {"type": "sync_pos", "sender": sender, "tick": tick, "x": x / 10.0, "y": y / 10.0, "aim_x": ax, "aim_y": ay,
                 "facing": bool(flags & FLAG_FACING), "dash": bool(flags & FLAG_DASH),
-                "shield": bool(flags & FLAG_SHIELD), "bear": bool(flags & FLAG_BEAR), "egg": bool(flags & FLAG_EGG)}
+                "shield": bool(flags & FLAG_SHIELD), "bear": bool(flags & FLAG_BEAR), "egg": bool(flags & FLAG_EGG),
+                "floor": bool(flags & FLAG_FLOOR)}
     if b[0] == BIN_SPAWN_PROJECTILE and len(b) == BIN_PROJ_SIZE:
         _, sender, wid, x, y, d = struct.unpack("<BBBhhH", b)
         dx, dy = u16_to_dir(d)
@@ -758,12 +759,13 @@ class Bot:
         return {"type": "sync_pos", "x": self.x, "y": self.y,
                 "aim_x": math.cos(self.aim), "aim_y": math.sin(self.aim),
                 "facing": math.cos(self.aim) > 0, "dash": self.rng.random() < 0.05,
-                "shield": self.rng.random() < 0.03, "bear": False, "egg": False}
+                "shield": self.rng.random() < 0.03, "bear": False, "egg": False, "floor": self.vy == 0.0}
 
     def _sync_bytes(self):
         return encode_sync_pos(self.x, self.y, math.cos(self.aim), math.sin(self.aim),
                                facing=math.cos(self.aim) > 0, dash=self.rng.random() < 0.05,
-                               shield=self.rng.random() < 0.03, tick=self.tick)
+                               shield=self.rng.random() < 0.03, tick=self.tick,
+                               floor=self.vy == 0.0)   # resting on the fake ground = feet down
 
     def _projectile_bytes(self):
         return encode_projectile(self.rng.choice(WEAPONS), self.x + math.cos(self.aim) * 18.0,
@@ -1256,19 +1258,20 @@ class GodotClient:
               "bot": None}
         # puppet-jitter telemetry: one entry per NetStats line, aggregated over the run
         pj = [tuple(m) for m in
-              re.findall(r"puppets=(\d+) jitter=([\d.]+)/([\d.]+)px/s snaps=(\d+) wraps=(\d+) stall=([\d.]+)% extrap=([\d.]+)% pn=(\d+)", t)]
-        pj = [(int(a), float(b), float(c), int(d), int(e), float(f), float(g), int(h)) for a, b, c, d, e, f, g, h in pj]
-        pj = [x for x in pj if x[7] > 0]
+              re.findall(r"puppets=(\d+) jitter=([\d.]+)/([\d.]+)px/s snaps=(\d+) wraps=(\d+) stall=([\d.]+)% extrap=([\d.]+)% dips=(\d+) pn=(\d+)", t)]
+        pj = [(int(a), float(b), float(c), int(d), int(e), float(f), float(g), int(h), int(i)) for a, b, c, d, e, f, g, h, i in pj]
+        pj = [x for x in pj if x[8] > 0]
         if pj:
-            n = sum(x[7] for x in pj)
+            n = sum(x[8] for x in pj)
             st["puppets"] = {"lines": len(pj), "frames": n,
-                             "jitter_mean": sum(x[1] * x[7] for x in pj) / n,
+                             "jitter_mean": sum(x[1] * x[8] for x in pj) / n,
                              "jitter_p95_max": max(x[2] for x in pj),
                              "jitter_p95_med": sorted(x[2] for x in pj)[len(pj) // 2],
                              "snaps": sum(x[3] for x in pj),
                              "wraps": sum(x[4] for x in pj),
-                             "stall_pct": sum(x[5] * x[7] for x in pj) / n,
-                             "extrap_pct": sum(x[6] * x[7] for x in pj) / n}
+                             "stall_pct": sum(x[5] * x[8] for x in pj) / n,
+                             "extrap_pct": sum(x[6] * x[8] for x in pj) / n,
+                             "dips": sum(x[7] for x in pj)}
         else:
             st["puppets"] = None
         bot_lines = self.BOT_LINE.findall(t)
@@ -1296,6 +1299,10 @@ def puppet_gate(ctx, client, heavy, scen):
     if pj["snaps"] > allowed:
         ctx.fail(f"{scen}.puppet-snaps", f"{client.name}: {pj['snaps']} teleport snaps > {allowed} "
                  f"({st['deaths_seen']} deaths seen + {PUPPET_SNAP_SLACK}; seam wraps excluded: {pj['wraps']})")
+    # v0.0.17: a puppet must never be drawn below a sample that says "feet on the ground".
+    if pj["dips"] > 0:
+        ctx.fail(f"{scen}.puppet-dips", f"{client.name}: {pj['dips']} frames drew a landed puppet below its floor "
+                 f"(the v0.0.16 sinking-through-the-platform bug)")
 
 
 # ── Step-2 scenarios: fleet, fuzz, fault injection ───────────────────────────

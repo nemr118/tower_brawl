@@ -55,6 +55,7 @@ var sync_timer: float = 0.0
 var net_tick: int = 0                 # our 20 Hz sample counter (goes out in every sync_pos)
 var _last_sync_bytes: PackedByteArray = PackedByteArray()   # last packet body (minus tick) actually sent
 var _idle_since_send: float = 0.0     # seconds since the last packet went out
+var _sent_last_tick: bool = false     # did the previous 50 ms slot go out? (for the "I stopped" repeat)
 var _last_rx_tick: int = -1           # newest tick received for this puppet (stale packets are dropped)
 # Snapshot interpolation (Phase 3b). Samples live in unwrapped tick space
 # (_rx_tick_unwrapped grows without the u16 wrap) so the ring is always sorted.
@@ -62,6 +63,7 @@ var _snaps: Array = []                # [{t, pos, aim, facing, dash, shield, bea
 var _rx_tick_unwrapped: int = 0
 var _render_tick: float = -1.0        # free-running render clock, in unwrapped ticks
 var _pj_extrapolating: bool = false   # this frame was rendered past the newest sample
+var _pj_dipped: bool = false          # this frame the puppet was drawn below its newest floor sample
 # puppet-jitter telemetry (remote fighters only; see Global.puppet_sample)
 var _pj_last_pos: Vector2 = Vector2.INF
 var _pj_last_speed: float = -1.0
@@ -288,12 +290,24 @@ func _sync_network_state(delta: float):
 	# packet (position at 0.1 px, aim at 0.1 deg, flags), skip it, but repeat the
 	# state every NET_IDLE_RESEND so a late joiner or a lost packet is corrected.
 	var pkt := Global.encode_sync_pos(net_tick, global_position, aim_direction,
-		is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg)
+		is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg, is_on_floor())
 	var body := pkt.slice(4)   # everything after type, sender, tick
 	if body == _last_sync_bytes and _idle_since_send < Global.NET_IDLE_RESEND:
+		# v0.0.17 hotfix: the first quiet slot after a moving one still goes out.
+		# The story: when we land or stop, the other screens only had our last
+		# moving sample and kept guessing we were still moving (sinking through
+		# the floor, sliding past the stop). One repeat of the same spot, one
+		# tick later, tells them "I am standing right here now". Costs one
+		# 11-byte packet per stop. The floor flag in the packet makes the
+		# landing itself a change too, so a touchdown is never skipped.
+		if not _sent_last_tick:
+			return
+		_sent_last_tick = false
+		Global.send_net_binary(pkt)
 		return
 	_last_sync_bytes = body
 	_idle_since_send = 0.0
+	_sent_last_tick = true
 	Global.send_net_binary(pkt)
 
 # Per rendered physics frame: how much this puppet's speed changed since the
@@ -315,7 +329,7 @@ func _puppet_telemetry(delta: float) -> void:
 		speed_delta = absf(speed - _pj_last_speed)
 		_pj_last_speed = speed
 	var starved := _pj_sender_moving and (Time.get_ticks_msec() - _pj_last_rx_msec) > Global.PUPPET_STALL_SEC * 1000.0
-	Global.puppet_sample(player_id, speed_delta, snapped, starved, wrapped, _pj_extrapolating)
+	Global.puppet_sample(player_id, speed_delta, snapped, starved, wrapped, _pj_extrapolating, _pj_dipped)
 
 
 func _on_player_state_received(p_id: int, data: Dictionary):
@@ -347,7 +361,8 @@ func _on_player_state_received(p_id: int, data: Dictionary):
 		_snaps.append({"t": _rx_tick_unwrapped, "pos": new_pos, "aim": aim,
 			"facing": bool(data.get("facing", true)), "dash": bool(data.get("dash", false)),
 			"shield": bool(data.get("shield", false)), "bear": bool(data.get("bear", false)),
-			"egg": bool(data.get("egg", false)), "at_msec": _pj_last_rx_msec})
+			"egg": bool(data.get("egg", false)), "floor": bool(data.get("floor", false)),
+			"at_msec": _pj_last_rx_msec})
 		while _snaps.size() > Global.SNAP_RING:
 			_snaps.pop_front()
 
@@ -370,6 +385,7 @@ func _estimated_sender_tick() -> float:
 # shield windows sit on the drawn position.
 func _render_snapshots(delta: float) -> void:
 	_pj_extrapolating = false
+	_pj_dipped = false
 	if _snaps.is_empty():
 		return
 	var target := _estimated_sender_tick() - Global.RENDER_DELAY_TICKS
@@ -424,7 +440,12 @@ func _wrap_into_arena(p: Vector2) -> Vector2:
 		p.x += 640.0
 	if p.y > 376.0:
 		p.y -= 386.0
-	elif p.y < -10.0:
+	elif p.y < -193.0:
+		# v0.0.17: was -10. A fighter can really be above the top edge (a jump
+		# from the apex platform, a mage blink, an upward dash). The sender never
+		# wraps at the top, so neither may we: only a delta that crossed the
+		# bottom seam (unwrapped in _unwrapped_delta, half a seam = 193 px) may
+		# land here. Drawing a fighter at y = -50 down at y = 336 was wrong.
 		p.y += 386.0
 	return p
 
@@ -443,8 +464,18 @@ func _extrapolate(b: Dictionary, over_ticks: float) -> void:
 			var d := _unwrapped_delta(a, b)
 			if d.length() / gap <= Global.TELEPORT_PX:
 				v = d / gap
+	# v0.0.17 hotfix. The story: the other player fell, landed, and stood still.
+	# Their last sample was still falling, so we kept guessing "still falling"
+	# and drew the puppet sinking through the platform. Now the sample says
+	# "feet on the ground", so we stop the up-and-down guess and only keep the
+	# sideways one. The sender also repeats one packet when it comes to rest
+	# (see _sync_network_state), which makes v zero a tick later anyway.
+	if bool(b["floor"]):
+		v.y = 0.0
 	var e := minf(over_ticks, Global.EXTRAP_MAX_TICKS)
 	global_position = _wrap_into_arena(b["pos"] + v * e)
+	# Feet were on the ground in the newest sample, yet we drew the puppet lower: it sank.
+	_pj_dipped = bool(b["floor"]) and global_position.y > float(b["pos"].y) + 1.0
 	_apply_state(b, b, 1.0)
 
 

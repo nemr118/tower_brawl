@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.16"
+const GAME_VERSION: String = "v0.0.17"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -80,10 +80,13 @@ var _pj_snaps: int = 0
 var _pj_wraps: int = 0
 var _pj_stall_frames: int = 0
 var _pj_extrap_frames: int = 0       # frames rendered past the newest sample (extrapolated or frozen)
+var _pj_dips: int = 0                 # frames a puppet was drawn below its own floor sample
 var _pj_frames: int = 0
 var _pj_puppets: Dictionary = {}     # player_id -> true, seen this interval
 
-func puppet_sample(p_id: int, speed_delta: float, snapped: bool, stalled: bool, wrapped: bool = false, extrapolated: bool = false) -> void:
+# dipped = this frame the puppet was drawn below its newest "feet on the ground"
+# sample, so it looked like it sank into the floor (v0.0.17 hotfix check).
+func puppet_sample(p_id: int, speed_delta: float, snapped: bool, stalled: bool, wrapped: bool = false, extrapolated: bool = false, dipped: bool = false) -> void:
 	if not net_stats_enabled:
 		return
 	_pj_puppets[p_id] = true
@@ -98,10 +101,12 @@ func puppet_sample(p_id: int, speed_delta: float, snapped: bool, stalled: bool, 
 		_pj_deltas.append(speed_delta)
 	if stalled:
 		_pj_stall_frames += 1
+	if dipped:
+		_pj_dips += 1
 
 func _pj_summary() -> Dictionary:
 	var out := {"puppets": _pj_puppets.size(), "frames": _pj_frames, "mean": 0.0, "p95": 0.0,
-		"snaps": _pj_snaps, "wraps": _pj_wraps, "stall_pct": 0.0, "extrap_pct": 0.0}
+		"snaps": _pj_snaps, "wraps": _pj_wraps, "stall_pct": 0.0, "extrap_pct": 0.0, "dips": _pj_dips}
 	if _pj_deltas.size() > 0:
 		var sum := 0.0
 		for d in _pj_deltas:
@@ -121,6 +126,7 @@ func _pj_reset() -> void:
 	_pj_wraps = 0
 	_pj_stall_frames = 0
 	_pj_extrap_frames = 0
+	_pj_dips = 0
 	_pj_frames = 0
 	_pj_puppets.clear()
 
@@ -130,6 +136,7 @@ func _pj_reset() -> void:
 #   [0] type  (1 = sync_pos, 2 = spawn_projectile)
 #   [1] sender slot (0 from the client; the server stamps the real slot)
 #   sync_pos (11 B):   [2..3] tick u16  [4..5] x*10 s16  [6..7] y*10 s16  [8..9] aim angle 0.1 deg u16  [10] flags
+#                      flags bits: 1 facing, 2 dash, 4 shield, 8 bear, 16 egg, 32 feet on the ground
 #   spawn_projectile:  [2] weapon id    [3..4] x*10 s16  [5..6] y*10 s16  [7..8] dir angle 0.1 deg u16
 # The tick is the sender's 20 Hz slot clock (wraps at 65536): it advances every
 # 50 ms whether or not the slot is sent (idle suppression), so a receiver can
@@ -149,6 +156,7 @@ const FLAG_DASH := 2
 const FLAG_SHIELD := 4
 const FLAG_BEAR := 8
 const FLAG_EGG := 16
+const FLAG_FLOOR := 32            # feet on the ground (v0.0.17: stops a landed puppet from sinking)
 
 # Timers that replaced per-frame checks in _process (Phase 1).
 var _ping_timer: Timer          # 1 Hz keepalive while connected
@@ -500,7 +508,7 @@ func _u16_to_dir(a: int) -> Vector2:
 func _q10(v: float) -> int:
 	return clampi(roundi(v * 10.0), -32768, 32767)
 
-func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool) -> PackedByteArray:
+func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool, on_floor: bool = false) -> PackedByteArray:
 	var b := PackedByteArray()
 	b.resize(BIN_SYNC_SIZE)
 	b.encode_u8(0, BIN_SYNC_POS)
@@ -515,6 +523,7 @@ func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: 
 	if shield: flags |= FLAG_SHIELD
 	if bear: flags |= FLAG_BEAR
 	if egg: flags |= FLAG_EGG
+	if on_floor: flags |= FLAG_FLOOR
 	b.encode_u8(10, flags)
 	return b
 
@@ -555,6 +564,7 @@ func _handle_net_binary(pkt: PackedByteArray) -> void:
 			"shield": (flags & FLAG_SHIELD) != 0,
 			"bear": (flags & FLAG_BEAR) != 0,
 			"egg": (flags & FLAG_EGG) != 0,
+			"floor": (flags & FLAG_FLOOR) != 0,
 		})
 	elif ptype == BIN_SPAWN_PROJECTILE and pkt.size() == BIN_PROJECTILE_SIZE:
 		if net_stats_enabled:
@@ -917,13 +927,13 @@ func _report_net_stats() -> void:
 		"puppets": _pj_summary(),
 	}
 	var pj: Dictionary = stats["puppets"]
-	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% pn=%d" % [
+	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d" % [
 		secs, my_player_id, get_tree().current_scene.name if get_tree().current_scene else "?",
 		stats["in_pps"], stats["in_bps"] / 1024.0, stats["in_avg"],
 		stats["out_pps"], stats["out_bps"] / 1024.0, stats["out_avg"],
 		_ns_format_types(_ns_types_in), _ns_format_types(_ns_types_out),
 		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms,
-		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["frames"]])
+		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["dips"], pj["frames"]])
 	emit_signal("net_stats_updated", stats)
 	_pj_reset()
 	_ns_bytes_in = 0
