@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.5"
+const GAME_VERSION: String = "v0.0.7"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -176,6 +176,19 @@ var locked_opponents: Dictionary = {}
 var player_names: Dictionary = {}
 var my_player_name: String = ""
 var current_round: int = 1
+var arena_flips: int = 0               # platform half-turns this match (server counts activate_powerup)
+var server_stocks: Dictionary = {1: 3, 2: 3, 3: 3, 4: 3}   # authoritative stocks (snapshots, player_died, new_round)
+var rejoined_mid_match: bool = false   # assign_id said we resumed our own seat in a running match
+var last_match_state: String = "LOBBY"
+
+# --- SESSION IDENTITY / REJOIN (playtest fixes, v0.0.6) ------------------------
+# A random token identifies this browser across reloads and reconnects. The
+# server only honours a saved slot number together with the token that held it,
+# so a fresh lobby fills 1 -> 2 -> 3 -> 4 and a page reload gets its seat back.
+var client_token: String = ""
+var _had_slot: int = 0            # slot held when the socket dropped (this page session)
+var _rejoin_pending: bool = false # request_join sent automatically after a reconnect
+const REJOIN_WINDOW_S: int = 120  # a saved slot younger than this is rejoined automatically
 
 signal net_names_updated()
 signal net_spawn_powerup(x, y)
@@ -192,6 +205,7 @@ func _ready():
 
 	if not OS.has_feature("web"):
 		_parse_test_args()
+	client_token = _load_or_create_token()
 
 	if net_stats_enabled:
 		var stats_timer := Timer.new()
@@ -315,6 +329,10 @@ func _process(_delta):
 			ws_connected = false
 			is_connecting = false
 			_ping_timer.stop()
+			if my_player_id > 0:
+				_had_slot = my_player_id
+			my_player_id = 0
+			is_spectator = true
 			print("❌ [Global] Disconnected. Reconnecting in 2s...")
 			_reconnect_timer.start()
 		elif _reconnect_timer.is_stopped():
@@ -459,9 +477,19 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 			". Reload the versioned URL from bump_build.sh.")
 		emit_signal("net_version_error", str(data.get("server_version", "?")))
 
-	if type == "spectator_state" and _autojoin and my_player_id == 0:
-		print("🤖 [Global] --autojoin: requesting slot")
-		send_net_data({"type": "request_join", "reclaim_id": 0, "version": GAME_VERSION})
+	if type == "spectator_state" and my_player_id == 0:
+		if _autojoin:
+			print("🤖 [Global] --autojoin: requesting slot")
+			_rejoin_pending = true
+			request_join(0)
+		elif _should_auto_rejoin():
+			var slot := _had_slot if _had_slot > 0 else _load_saved_player_id()
+			print("🔁 [Global] Reconnected: asking for our seat P", slot, " back")
+			_rejoin_pending = true
+			request_join(slot)
+	if type in ["version_error", "server_full"] and _rejoin_pending:
+		_rejoin_pending = false
+		_ensure_scene_for_state(last_match_state)
 
 	if type == "spawn_powerup":
 		emit_signal("net_spawn_powerup", data.get("x", 0.0), data.get("y", 0.0))
@@ -473,6 +501,8 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 	if type == "scene_transition":
 		# Everyone occupying a slot at this moment is in the match (mirrors _setup_match on the server).
 		playing_players = active_players.duplicate()
+		for k in server_stocks:
+			server_stocks[k] = max_stocks
 		get_tree().change_scene_to_file("res://scenes/arena.tscn")
 	if type == "spectator_state":
 		is_spectator = true
@@ -502,15 +532,36 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 				locked_opponents[lp] = lc
 				if player_configs.has(lp):
 					player_configs[lp]["class"] = lc
+		if data.has("arena_flips"):
+			arena_flips = int(data.get("arena_flips", 0))
+		if data.has("stocks"):
+			var st = data.get("stocks", {})
+			for k in st:
+				server_stocks[int(k)] = int(st[k])
 		emit_signal("net_names_updated")
-		
-		if data.get("match_state", "") == "PLAYING":
-			get_tree().change_scene_to_file("res://scenes/arena.tscn")
+
+		if data.has("match_state"):
+			last_match_state = str(data.get("match_state", "LOBBY"))
+			# assign_id while PLAYING: (re)load the arena so our fighter spawns.
+			# spectator_state: put us in the scene that matches the server, unless a
+			# rejoin request is in flight (its assign_id decides the scene).
+			if type == "assign_id" and last_match_state == "PLAYING":
+				get_tree().change_scene_to_file("res://scenes/arena.tscn")
+			elif not _rejoin_pending:
+				_ensure_scene_for_state(last_match_state)
 	if type == "assign_id":
 		is_spectator = false
+		_rejoin_pending = false
+		_had_slot = 0
 		my_player_id = int(data.get("id", 1))
-		print("🎮 [Global] Assigned Player ID: ", my_player_id)
+		rejoined_mid_match = bool(data.get("rejoined", false))
+		print("🎮 [Global] Assigned Player ID: ", my_player_id, " (rejoined)" if rejoined_mid_match else "")
 		_save_player_id()   # persist so reconnects restore this slot
+		_save_last_seen()
+		if my_player_name != "":
+			# The lobby confirms a saved name before JOIN is pressed; repeat it now
+			# that we hold a slot so everyone else sees it too.
+			send_net_data({"type": "set_name", "name": my_player_name})
 		
 		# Remap local gamepad inputs to accept any controller (device: -1)
 		# This ensures phones with 1 connected controller (device 0) can play as P2, P3, or P4!
@@ -534,6 +585,9 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 				for ev in events1:
 					if ev is InputEventKey or ev is InputEventMouseButton:
 						InputMap.action_add_event(my_action, ev)
+
+		if is_mobile:
+			strip_mouse_binds()
 
 		active_players.clear()
 		for x in data.get("active_players", [1]):
@@ -613,6 +667,8 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		is_spectator = false
 		locked_opponents.clear()
 		playing_players.clear()
+		arena_flips = 0
+		last_match_state = "LOBBY"
 		reset_scores()
 		emit_signal("net_return_to_lobby")
 		
@@ -620,6 +676,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		var victim = int(data.get("victim", 0))
 		var killer = int(data.get("killer", 0))
 		var stock = int(data.get("stock", 0))
+		server_stocks[victim] = stock
 		emit_signal("net_player_died", killer, victim, stock)
 		
 	elif type == "round_end":
@@ -631,6 +688,8 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		
 	elif type == "new_round":
 		var r_num = int(data.get("round", 1))
+		for k in server_stocks:
+			server_stocks[k] = max_stocks
 		emit_signal("net_new_round", r_num)
 
 
@@ -693,6 +752,8 @@ func _ns_format_types(table: Dictionary) -> String:
 	return ", ".join(parts) if parts.size() > 0 else "-"
 
 func _report_net_stats() -> void:
+	if my_player_id > 0:
+		_save_last_seen()
 	if not ws_connected:
 		return
 	var secs := NET_STATS_INTERVAL
@@ -724,3 +785,100 @@ func _report_net_stats() -> void:
 	_ns_pkts_out = 0
 	_ns_types_in.clear()
 	_ns_types_out.clear()
+
+
+# ==============================================================================
+# SESSION IDENTITY, REJOIN, SCENE CORRECTION, INPUT SAFETY (v0.0.6)
+# ==============================================================================
+func request_join(reclaim_id: int) -> void:
+	send_net_data({"type": "request_join", "reclaim_id": reclaim_id, "version": GAME_VERSION, "token": client_token})
+
+func _should_auto_rejoin() -> bool:
+	if _had_slot > 0:
+		return true
+	if _load_saved_player_id() <= 0:
+		return false
+	return int(Time.get_unix_time_from_system()) - _load_last_seen() < REJOIN_WINDOW_S
+
+func _ensure_scene_for_state(state: String) -> void:
+	# A client that reconnects after the match ended used to stay in the arena
+	# forever (nothing ever moved it): match the scene to the server's state.
+	var scene := get_tree().current_scene
+	var path := scene.scene_file_path if scene != null else ""
+	if state == "PLAYING" and path != "res://scenes/arena.tscn":
+		get_tree().change_scene_to_file("res://scenes/arena.tscn")
+	elif state == "LOBBY" and path == "res://scenes/arena.tscn":
+		get_tree().change_scene_to_file("res://scenes/character_select.tscn")
+
+func _storage_get(key: String) -> String:
+	if OS.has_feature("web"):
+		var val = JavaScriptBridge.eval("(function(){ try { return localStorage.getItem('" + key + "'); } catch(e) { return null; } })()", true)
+		if val != null and str(val) != "null":
+			return str(val)
+		return ""
+	var path := "user://" + key + ".sav"
+	if FileAccess.file_exists(path):
+		var f := FileAccess.open(path, FileAccess.READ)
+		if f:
+			var v := f.get_as_text()
+			f.close()
+			return v
+	return ""
+
+func _storage_set(key: String, value: String) -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("(function(){ try { localStorage.setItem('" + key + "', '" + value.replace("'", "") + "'); } catch(e) {} })()", true)
+	else:
+		var f := FileAccess.open("user://" + key + ".sav", FileAccess.WRITE)
+		if f:
+			f.store_string(value)
+			f.close()
+
+func _load_or_create_token() -> String:
+	var t := _storage_get("towerbrawl_token")
+	if t == "":
+		t = "%08x%08x" % [randi(), randi()]
+		_storage_set("towerbrawl_token", t)
+	return t
+
+func _save_last_seen() -> void:
+	_storage_set("towerbrawl_seen", str(int(Time.get_unix_time_from_system())))
+
+func _load_last_seen() -> int:
+	var v := _storage_get("towerbrawl_seen")
+	return int(v) if v != "" else 0
+
+func _notification(what: int) -> void:
+	# A hidden or unfocused tab never receives the key-up for a key that was down
+	# when focus left, so the fighter keeps running until focus returns. Release
+	# every player action the moment focus is lost.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		for action in InputMap.get_actions():
+			var a := str(action)
+			if a.begins_with("p") and a.length() > 2 and a[1].is_valid_int():
+				Input.action_release(action)
+
+func strip_mouse_binds() -> void:
+	# Godot emulates a mouse click from every touch, and the PC input map binds
+	# mouse buttons to attack / special. On a touch device that made every tap on
+	# the virtual joystick fire an arrow. Touch devices attack via the on-screen
+	# buttons only.
+	for action in InputMap.get_actions():
+		var a := str(action)
+		if not (a.begins_with("p") and a.length() > 2 and a[1].is_valid_int()):
+			continue
+		for ev in InputMap.action_get_events(action):
+			if ev is InputEventMouseButton:
+				InputMap.action_erase_event(action, ev)
+
+# Combat state (ammo, form) is client-side; persist it so a page reload that
+# rejoins the same fight (assign_id.rejoined) does not hand out a fresh quiver.
+func save_combat_state(state: Dictionary) -> void:
+	_storage_set("towerbrawl_combat", JSON.stringify(state))
+
+func load_combat_state() -> Dictionary:
+	var raw := _storage_get("towerbrawl_combat")
+	if raw == "":
+		return {}
+	var parsed = JSON.parse_string(raw)
+	return parsed if typeof(parsed) == TYPE_DICTIONARY else {}

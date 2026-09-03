@@ -21,8 +21,14 @@ var active_right_touches = {}
 func _ready():
 	Global.connect("net_connected", Callable(self, "_on_net_connected"))
 	# Automatically detect if running on mobile or touch device
-	var is_mobile = OS.has_feature("mobile") or OS.has_feature("web_android") or OS.has_feature("web_ios")
-	visible = is_mobile
+	# Show on anything that can be touched. The feature tags alone missed a phone in
+	# the playtest (no controls at all), so also trust Global's user-agent check and
+	# the display server, and reveal on the first screen touch no matter what.
+	visible = Global.is_mobile or OS.has_feature("mobile") or OS.has_feature("web_android") \
+		or OS.has_feature("web_ios") or DisplayServer.is_touchscreen_available()
+	if visible:
+		Global.is_mobile = true
+		Global.strip_mouse_binds()
 
 	btn_jump.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn_attack.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -42,9 +48,15 @@ func _update_base_center():
 
 func _input(event):
 	if not visible:
+		if event is InputEventScreenTouch and event.pressed:
+			visible = true
+			Global.is_mobile = true
+			Global.strip_mouse_binds()
+			_update_base_center()
 		return
 		
 	if event is InputEventScreenTouch:
+		get_viewport().set_input_as_handled()
 		if event.pressed:
 			# Left half of screen -> Joystick
 			if event.position.x < (get_viewport().get_visible_rect().size.x / 2.0) and joy_touch_index == -1:
@@ -72,6 +84,7 @@ func _input(event):
 				active_right_touches.erase(event.index)
 				
 	elif event is InputEventScreenDrag:
+		get_viewport().set_input_as_handled()
 		if event.index == joy_touch_index and is_touching_joystick:
 			_handle_joystick_move(event.position)
 		else:

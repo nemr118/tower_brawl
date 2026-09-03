@@ -56,7 +56,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.5"
+GAME_VERSION = "v0.0.7"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -164,6 +164,21 @@ MATCH_SCORE_LIMIT = 5               # crowns needed to win the match (client sho
 NEXT_ROUND_DELAY = 2.6              # seconds between round_end and new_round / return_to_lobby
 MATCH_END_DELAY = 6.0               # seconds the "wins the match" banner stays before return_to_lobby
 spectator_sockets = []              # pure spectators only; a socket holding a slot is NOT in here
+
+# Playtest fixes (v0.0.6) ----------------------------------------------------
+CLIENT_READ_TIMEOUT = 120.0         # safety net only; liveness comes from TCP keepalive (a hidden tab sends nothing for minutes)
+TCP_KEEPALIVE = (10, 5, 3)          # idle s, probe interval s, probes: a dead peer is detected in ~25 s
+REJOIN_GRACE = 8.0                  # s a fighter's seat is held after a mid-match disconnect (page reload, Wi-Fi blip)
+FORFEIT_GRACE = 1.5                 # s after an explicit leave before the round is decided (two leaving together = no winner)
+RECENT_SLOT_S = 120.0               # s a client token may reclaim its previous lobby slot
+DEATH_DEDUPE_S = 1.5                # any client may report a death; repeats inside this window are the same death
+slot_tokens = {}                    # pid -> client token currently holding the slot
+recent_slots = {}                   # token -> (pid, time left)
+pending_rejoin = {}                 # pid -> {"token", "seq", "until"}: seat held, not counted alive
+pending_names = {}                  # id(sock) -> name sent before the client had a slot
+last_death = {}                     # pid -> time of the last accepted death report
+global_arena_flips = 0              # activate_powerup count this match (platform rotation for late arrivals)
+_grace_seq = 0
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -316,6 +331,7 @@ def _state_snapshot(ptype, **extra):
         "current_round":   global_current_round,
         "scores":          global_player_scores,
         "stocks":          global_player_stocks,
+        "arena_flips":     global_arena_flips,
     }
     d.update(extra)
     return d
@@ -325,11 +341,12 @@ def _remove_player(pid):
         while pid in lst:
             lst.remove(pid)
     global_alive_players.discard(pid)
+    pending_rejoin.pop(pid, None)
 
 def _reset_match_state():
     global global_match_state, global_playing_players, global_waiting_players, global_current_round
     global global_alive_players, global_is_round_over, global_transition_sent, global_round_player_count
-    global global_match_over
+    global global_match_over, global_arena_flips
     global_match_over = False
     global_match_state = 'LOBBY'
     global_playing_players = []
@@ -339,14 +356,18 @@ def _reset_match_state():
     global_is_round_over = False
     global_transition_sent = False
     global_round_player_count = 0
+    global_arena_flips = 0
     for i in range(1, 5):
         global_player_scores[i] = 0
         global_player_stocks[i] = 3
     player_locked.clear()
+    pending_rejoin.clear()
+    last_death.clear()
 
 def _setup_match():
     global global_match_state, global_playing_players, global_waiting_players, global_current_round
     global global_alive_players, global_is_round_over, global_transition_sent, global_round_player_count
+    global global_arena_flips
     present = _present_players()
     global_match_state = 'PLAYING'
     global_current_round = 1
@@ -356,21 +377,30 @@ def _setup_match():
     global_is_round_over = False
     global_transition_sent = False
     global_round_player_count = len(present)
+    global_arena_flips = 0
     for i in range(1, 5):
         global_player_scores[i] = 0
         global_player_stocks[i] = 3
+    pending_rejoin.clear()
+    last_death.clear()
+
+def _live_alive():
+    """Alive fighters that are actually connected. A fighter inside its rejoin
+    grace is neither a winner nor a loser until the grace runs out."""
+    return {p for p in global_alive_players if p not in pending_rejoin}
 
 def _check_round_end(label):
-    """End the round when at most one player is alive, judged on LIVE state.
-    (The old code compared against a per-thread `active` list captured at each
-    player's join, so a round hung whenever the first joiner was eliminated last.)"""
+    """End the round when at most one connected fighter is alive, judged on LIVE
+    state. (The old code compared against a per-thread `active` list captured at
+    each player's join, so a round hung whenever the first joiner was eliminated last.)"""
     global global_is_round_over, global_match_over
     if global_match_state != 'PLAYING' or global_is_round_over:
         return False
-    if len(global_alive_players) > 1 or global_round_player_count < 2:
+    live = _live_alive()
+    if len(live) > 1 or global_round_player_count < 2:
         return False
     global_is_round_over = True
-    winner = next(iter(global_alive_players)) if len(global_alive_players) == 1 else 0
+    winner = next(iter(live)) if len(live) == 1 else 0
     if winner > 0:
         global_player_scores[winner] += 1
         if global_player_scores[winner] >= MATCH_SCORE_LIMIT:
@@ -418,6 +448,7 @@ def _next_round_later(label):
             global_round_player_count = len(present)
             for i in range(1, 5):
                 global_player_stocks[i] = 3
+            last_death.clear()
             logger.info(f"[{label}] NEW ROUND STARTING: Round {global_current_round}")
             broadcast(json.dumps({"type": "new_round", "round": global_current_round}))
 
@@ -429,8 +460,33 @@ def _idle_reset_if_empty(label):
         _reset_match_state()
         broadcast(json.dumps({"type": "return_to_lobby"}))
 
+def _hold_seat(label, pid, token, delay):
+    """(lobby_lock held) A fighter's place in the match is kept for `delay` seconds.
+    A disconnect mid-match (page reload, Wi-Fi blip) gets REJOIN_GRACE with its token;
+    an explicit leave gets FORFEIT_GRACE so two players leaving together produce no
+    accidental forfeit win. The round is only decided when the grace runs out."""
+    global _grace_seq
+    _grace_seq += 1
+    pending_rejoin[pid] = {"token": token, "seq": _grace_seq, "until": time.time() + delay}
+    threading.Thread(target=_grace_expired, args=(label, pid, _grace_seq, delay), daemon=True, name="grace").start()
+
+def _grace_expired(label, pid, seq, delay):
+    time.sleep(delay)
+    with lobby_lock:
+        entry = pending_rejoin.get(pid)
+        if entry is None or entry["seq"] != seq:
+            return  # came back, or superseded
+        pending_rejoin.pop(pid, None)
+        _remove_player(pid)
+        if player_slots[pid - 1] is None:
+            player_locked.pop(pid, None)
+            player_names.pop(pid, None)
+        logger.info(f"[{label}] P{pid} did not return within {delay:g} s: removed from the match")
+        _idle_reset_if_empty(label)
+        _check_round_end(label)
+
 def ws_client_thread(sock, addr, label, skip_handshake=False):
-    global global_transition_sent
+    global global_transition_sent, global_arena_flips
     if not skip_handshake and not ws_handshake(sock):
         try: sock.close()
         except: pass
@@ -438,12 +494,21 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
 
     # Relay traffic is many small frames; without TCP_NODELAY the second frame of a
     # burst waits for the peer's delayed ACK (~40 ms stalls, seen as RTT spikes).
+    # Liveness is TCP keepalive, not application pings: a browser tab in the
+    # background stops running Godot (no pings for minutes) but its socket is alive,
+    # and dropping it every 10 s was the source of most playtest chaos. A dead peer
+    # (Wi-Fi gone) is detected by the kernel in ~25 s.
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        idle, interval, probes = TCP_KEEPALIVE
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, probes)
     except OSError:
         pass
 
-    sock.settimeout(10.0)
+    sock.settimeout(CLIENT_READ_TIMEOUT)
     assigned_id = None
     with lobby_lock:
         spectator_sockets.append({"sock": sock, "addr": str(addr)})
@@ -509,7 +574,14 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                             old_id = assigned_id
                             player_slots[old_id - 1] = None
                             player_locked.pop(old_id, None)
-                            _remove_player(old_id)
+                            token = slot_tokens.pop(old_id, None)
+                            if token:
+                                recent_slots[token] = (old_id, time.time())
+                            in_match = global_match_state == 'PLAYING' and old_id in global_playing_players
+                            if in_match:
+                                _hold_seat(label, old_id, None, FORFEIT_GRACE)
+                            else:
+                                _remove_player(old_id)
                             assigned_id = None
                             spectator_sockets.append({"sock": sock, "addr": str(addr)})  # pure spectator again
                             print(f"[{label}] P{old_id} became spectator.")
@@ -518,8 +590,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                                 "id": old_id,
                                 "active_players": _present_players(),
                             }))
-                            _check_round_end(label)
-                            _idle_reset_if_empty(label)
+                            if not in_match:
+                                _idle_reset_if_empty(label)
+                                _check_round_end(label)
                     continue
 
                 if mtype == "request_join":
@@ -538,62 +611,94 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                             reclaim_id = int(data.get("reclaim_id", 0) or 0)
                         except (TypeError, ValueError):
                             reclaim_id = 0
+                        token = str(data.get("token", ""))[:64]
                         hot_reclaim = False
-                        if 1 <= reclaim_id <= 4:
-                            old = player_slots[reclaim_id - 1]
-                            if old is not None and old["sock"] is not sock:
-                                # Hot reclaim (page reload before the old socket timed out): evict it.
-                                # Its thread sees the slot is no longer its own and stays silent,
-                                # and the roster is unchanged so nobody gets player_joined either.
-                                hot_reclaim = True
-                                try: old["sock"].close()
-                                except: pass
-                            player_slots[reclaim_id - 1] = {"sock": sock, "addr": str(addr)}
-                            assigned_id = reclaim_id
-                        else:
+                        rejoin = False
+                        target = None
+                        # A saved slot number is only honoured with the client token that held
+                        # it: a page reload (hot reclaim), a fighter inside its rejoin grace, or
+                        # a client that left the lobby less than RECENT_SLOT_S ago. Everyone
+                        # else fills the lowest free slot, 1 -> 2 -> 3 -> 4.
+                        if 1 <= reclaim_id <= 4 and token:
+                            cur = player_slots[reclaim_id - 1]
+                            if cur is not None and cur["sock"] is not sock:
+                                if slot_tokens.get(reclaim_id) == token:
+                                    hot_reclaim = True
+                                    target = reclaim_id
+                                    try: cur["sock"].close()
+                                    except: pass
+                            else:
+                                pend = pending_rejoin.get(reclaim_id)
+                                recent = recent_slots.get(token)
+                                if pend is not None and pend["token"] == token:
+                                    rejoin = True
+                                    target = reclaim_id
+                                elif recent and recent[0] == reclaim_id and time.time() - recent[1] < RECENT_SLOT_S:
+                                    target = reclaim_id
+                        if target is None:
                             for i in range(4):
-                                if player_slots[i] is None:
-                                    player_slots[i] = {"sock": sock, "addr": str(addr)}
-                                    assigned_id = i + 1
+                                if player_slots[i] is None and (i + 1) not in pending_rejoin:
+                                    target = i + 1
                                     break
-                        if assigned_id is None:
+                        if target is None:
                             print("DEBUG_JOIN: Server full")
                             ws_send(sock, json.dumps({"type": "server_full"}))
                             continue
+                        player_slots[target - 1] = {"sock": sock, "addr": str(addr)}
+                        assigned_id = target
+                        if token:
+                            slot_tokens[assigned_id] = token
+                            recent_slots.pop(token, None)
                         print(f"DEBUG_JOIN: Assigned ID: {assigned_id}")
 
                         # A slot holder is no longer a pure spectator. Leaving it in both
                         # lists made every broadcast arrive twice.
                         spectator_sockets[:] = [s for s in spectator_sockets if s["sock"] is not sock]
-                        _remove_player(assigned_id)
-                        if global_match_state == 'PLAYING':
-                            global_waiting_players.append(assigned_id)
-                        else:
-                            global_playing_players.append(assigned_id)
-                        snapshot = _state_snapshot("assign_id", id=assigned_id)
+                        if rejoin:
+                            pending_rejoin.pop(assigned_id, None)   # seat resumed: still playing, still alive
+                        elif not hot_reclaim:
+                            _remove_player(assigned_id)
+                            if global_match_state == 'PLAYING':
+                                global_waiting_players.append(assigned_id)
+                            else:
+                                global_playing_players.append(assigned_id)
+                        pending = pending_names.pop(id(sock), None)
+                        if pending:
+                            player_names[assigned_id] = pending
+                        # rejoined: this socket resumed its own seat in a RUNNING match (page
+                        # reload inside the grace, or hot reclaim). The client keeps its ammo.
+                        snapshot = _state_snapshot("assign_id", id=assigned_id,
+                                                   rejoined=bool((rejoin or hot_reclaim) and global_match_state == 'PLAYING'
+                                                                 and assigned_id in global_playing_players))
                         joined = {
-                            "type":           "player_joined",
-                            "id":             assigned_id,
-                            "active_players": snapshot["active_players"],
-                            "player_names":   snapshot["player_names"],
+                            "type":            "player_joined",
+                            "id":              assigned_id,
+                            "active_players":  snapshot["active_players"],
+                            "playing_players": snapshot["playing_players"],
+                            "player_names":    snapshot["player_names"],
                         }
 
                     logger.info(f"[{label}] Player Status Update: Spectator became ACTIVE PLAYER (P{assigned_id})"
-                                + (" [hot reclaim]" if hot_reclaim else ""))
+                                + (" [hot reclaim]" if hot_reclaim else "") + (" [rejoined mid-match]" if rejoin else ""))
                     ws_send(sock, json.dumps(snapshot))
                     if not hot_reclaim:
                         broadcast(json.dumps(joined), exclude=sock)
                     continue
 
-                if assigned_id is None:
-                    continue  # spectators may only ping / request_join
-
                 if mtype == "set_name":
+                    name = str(data.get("name", ""))[:12]
+                    if assigned_id is None:
+                        # Clients confirm a saved name before pressing JOIN; keep it for the slot.
+                        pending_names[id(sock)] = name
+                        continue
                     with lobby_lock:
-                        player_names[assigned_id] = str(data.get("name", ""))[:12]
+                        player_names[assigned_id] = name
                         names = {str(k): v for k, v in player_names.items()}
                     broadcast(json.dumps({"type": "name_update", "player_names": names}))
                     continue
+
+                if assigned_id is None:
+                    continue  # spectators may only ping / request_join / set_name
 
                 if mtype in ("force_start", "match_started"):
                     # Transition guard: only the first start request sets the match up,
@@ -623,22 +728,32 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
 
                 if mtype == "player_died":
+                    # Observer-authoritative: whichever client sees the hit reports it (the
+                    # victim's own client, the attacker's for melee and stomps, a spectator).
+                    # The first report inside DEATH_DEDUPE_S counts, the rest are the same death.
                     victim = int(data.get("victim", 0))
                     killer = int(data.get("killer", 0))
                     weapon = data.get("weapon", "Unknown")
                     if not 1 <= victim <= 4:
                         continue
-                    victim_name = player_names.get(victim, "Bot")
-                    killer_name = player_names.get(killer, "Bot")
-                    if killer == victim:
-                        logger.info(f"[{label}] P{victim} ({victim_name}) COMMITTED SUICIDE with '{weapon}'")
-                    else:
-                        logger.info(f"[{label}] P{victim} ({victim_name}) was KILLED by P{killer} ({killer_name}) with '{weapon}'")
                     with lobby_lock:
-                        if victim in global_alive_players:
-                            global_player_stocks[victim] -= 1
-                            if global_player_stocks[victim] <= 0:
-                                global_alive_players.discard(victim)
+                        now = time.time()
+                        if global_match_state != 'PLAYING' or victim not in global_alive_players or victim in pending_rejoin:
+                            logger.debug(f"[{label}] death of P{victim} reported by P{assigned_id} ignored (not a live fighter)")
+                            continue
+                        if now - last_death.get(victim, 0.0) < DEATH_DEDUPE_S:
+                            logger.debug(f"[{label}] death of P{victim} reported by P{assigned_id} ignored (duplicate report)")
+                            continue
+                        last_death[victim] = now
+                        victim_name = player_names.get(victim, "Bot")
+                        killer_name = player_names.get(killer, "Bot")
+                        if killer == victim:
+                            logger.info(f"[{label}] P{victim} ({victim_name}) COMMITTED SUICIDE with '{weapon}' (reported by P{assigned_id})")
+                        else:
+                            logger.info(f"[{label}] P{victim} ({victim_name}) was KILLED by P{killer} ({killer_name}) with '{weapon}' (reported by P{assigned_id})")
+                        global_player_stocks[victim] -= 1
+                        if global_player_stocks[victim] <= 0:
+                            global_alive_players.discard(victim)
                         broadcast(json.dumps({
                             "type": "player_died",
                             "victim": victim,
@@ -653,6 +768,12 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     with lobby_lock:
                         player_locked[assigned_id] = int(data.get("class", 0))
 
+                if mtype == "activate_powerup":
+                    # Track the arena flip so a client arriving mid-match (spectator
+                    # reconnect, late joiner) draws the platforms the right way up.
+                    with lobby_lock:
+                        global_arena_flips += 1
+
                 # Fall-through relay for the remaining JSON events (lock_in, powerups, anything
                 # unknown and small). The sender is stamped from the assigned slot: clients
                 # cannot impersonate each other. Movement travels as binary (above).
@@ -666,28 +787,40 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     # ── Cleanup ─────────────────────────────────────────────────────────────
     with lobby_lock:
         spectator_sockets[:] = [s for s in spectator_sockets if s["sock"] is not sock]
+        pending_names.pop(id(sock), None)
 
     if assigned_id is not None:
         freed = False
+        in_match = False
         with lobby_lock:
             entry = player_slots[assigned_id - 1]
             if entry and entry["sock"] is sock:
                 player_slots[assigned_id - 1] = None
-                player_locked.pop(assigned_id, None)
-                player_names.pop(assigned_id, None)
-                _remove_player(assigned_id)
+                token = slot_tokens.pop(assigned_id, None)
+                if token:
+                    recent_slots[token] = (assigned_id, time.time())
+                in_match = global_match_state == 'PLAYING' and assigned_id in global_playing_players
+                if in_match:
+                    # Seat, name and class are kept for REJOIN_GRACE: a page reload comes back
+                    # into the same fight. player_left still goes out so the puppet freezes.
+                    _hold_seat(label, assigned_id, token, REJOIN_GRACE)
+                else:
+                    player_locked.pop(assigned_id, None)
+                    player_names.pop(assigned_id, None)
+                    _remove_player(assigned_id)
                 freed = True
                 remaining = _present_players()
         if freed:
-            print(f"[{label}] P{assigned_id} LEFT    remaining={remaining}")
+            print(f"[{label}] P{assigned_id} LEFT    remaining={remaining}" + (f"  (seat held {REJOIN_GRACE:g} s)" if in_match else ""))
             broadcast(json.dumps({
                 "type":           "player_left",
                 "id":             assigned_id,
                 "active_players": remaining,
             }))
-            with lobby_lock:
-                _check_round_end(label)
-                _idle_reset_if_empty(label)
+            if not in_match:
+                with lobby_lock:
+                    _idle_reset_if_empty(label)
+                    _check_round_end(label)
         else:
             # Slot was taken over by a reclaim: the new socket owns it, say nothing.
             logger.info(f"[{label}] P{assigned_id} old socket closed after hot reclaim (slot kept by the new connection)")
@@ -730,6 +863,25 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def translate_path(self, path):
         path = path.split('?', 1)[0]
         return super().translate_path(path)
+
+    def do_GET(self):
+        # One stable URL for everyone: "/" (or "/play") redirects to the current
+        # versioned page. The version is read live from global.gd, so this follows
+        # every bump_build.sh run and survives an editor F5 re-export, which rewrites
+        # the plain index.html without the mainPack patch.
+        path = self.path.split('?', 1)[0].rstrip('/') or '/'
+        # A refresh of an old versioned page (pruned by bump_build.sh --clean) lands
+        # on the current one instead of a 404.
+        stale_versioned = (re.fullmatch(r"/index_v\d+\.\d+\.\d+\.html", path)
+                           and not os.path.exists(os.path.join(BUILD_DIR, path.lstrip('/'))))
+        if path in ('/', '/index.html', '/play') or stale_versioned:
+            target = f"/index_{get_game_version()}.html"
+            if os.path.exists(os.path.join(BUILD_DIR, target.lstrip('/'))):
+                self.send_response(302)
+                self.send_header("Location", target)
+                self.end_headers()
+                return
+        super().do_GET()
 
     def handle_one_request(self):
         try:

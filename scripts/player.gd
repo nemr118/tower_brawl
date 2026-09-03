@@ -52,6 +52,7 @@ var aim_direction: Vector2 = Vector2.RIGHT
 var is_local_player: bool = true
 var target_net_pos: Vector2 = Vector2.ZERO
 var sync_timer: float = 0.0
+var _last_persisted: Array = []   # ammo/form snapshot last written to storage
 
 # Class Resources
 var max_arrows: int = 3
@@ -246,6 +247,7 @@ func _sync_network_state(delta: float):
 	sync_timer += delta
 	if sync_timer >= 0.033:
 		sync_timer = 0.0
+		_persist_combat_state()
 		# 9-byte binary packet (see Global.encode_sync_pos); was ~190 bytes of JSON.
 		Global.send_net_binary(Global.encode_sync_pos(
 			global_position, aim_direction, is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg))
@@ -452,15 +454,37 @@ func take_hit(killer_id: int, _knockback_dir: Vector2, weapon_name: String = "Me
 	visible = false
 	collision_shape.set_deferred("disabled", true)
 	
-	
-	var is_dummy_bot = ("TargetBot" in Global.player_names.get(player_id, ""))
-	if is_local_player or is_dummy_bot:
-		Global.send_net_data({
-			"type": "player_died",
-				"killer": killer_id,
-				"victim": player_id,
-				"weapon": weapon_name
-		})
+	# Observer-authoritative: whichever client saw the hit reports it (the victim's
+	# own client, the attacker's for melee and stomps, a spectator). The server
+	# accepts the first report and ignores repeats of the same death. Before, only
+	# the victim's client could report, so melee kills never counted and a puppet
+	# that died on one screen stayed dead there and alive everywhere else.
+	Global.send_net_data({
+		"type": "player_died",
+			"killer": killer_id,
+			"victim": player_id,
+			"weapon": weapon_name
+	})
+
+func _persist_combat_state() -> void:
+	# Written only when something changed (a few times per round), read back by
+	# arena.gd after a reload that rejoined the same fight.
+	var snap := [current_arrows, mage_charges, rogue_kunai, is_bear_form, Global.current_round]
+	if snap == _last_persisted:
+		return
+	_last_persisted = snap
+	Global.save_combat_state({"arrows": current_arrows, "charges": mage_charges,
+		"kunai": rogue_kunai, "bear": is_bear_form, "round": Global.current_round, "slot": player_id})
+
+func restore_combat_state(d: Dictionary) -> void:
+	if d.is_empty() or int(d.get("slot", -1)) != player_id:
+		return
+	current_arrows = clampi(int(d.get("arrows", max_arrows)), 0, max_arrows)
+	mage_charges = clampi(int(d.get("charges", 3)), 0, 3)
+	rogue_kunai = clampi(int(d.get("kunai", 4)), 0, 4)
+	is_bear_form = bool(d.get("bear", false)) and class_type == Global.ClassType.DRUID
+	_last_persisted = [current_arrows, mage_charges, rogue_kunai, is_bear_form, Global.current_round]
+	queue_redraw()
 
 func force_die() -> void:
 	# The server (via arena.gd) says this player is dead. Remote clients cannot

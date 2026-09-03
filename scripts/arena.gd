@@ -112,6 +112,9 @@ func _ready():
 	if Global.my_player_id > 0:
 		join_btn.visible = false
 	
+	# Platforms the right way up for a client arriving mid-match (spectator
+	# reconnect, late joiner): the server counts the flips for us.
+	platforms_node.rotation = Global.arena_flips * PI
 	_start_new_match()
 
 func _exit_tree():
@@ -179,7 +182,9 @@ func _start_round():
 			player_instances.erase(p_id)
 
 	for p_id in roster:
-		player_stocks[p_id] = Global.max_stocks
+		# Stocks come from the server (snapshot / player_died / new_round), so a client
+		# that rejoins mid-round shows the real count instead of a fresh 3.
+		player_stocks[p_id] = Global.server_stocks.get(p_id, Global.max_stocks)
 		var spawn_pos = spawn_points[p_id - 1]
 		if p_id in player_instances and is_instance_valid(player_instances[p_id]):
 			player_instances[p_id].respawn(spawn_pos)
@@ -190,6 +195,10 @@ func _start_round():
 			add_child(p)
 			p.respawn(spawn_pos)
 			player_instances[p_id] = p
+			if Global.rejoined_mid_match and p_id == Global.my_player_id:
+				# Same fight after a reload: no free quiver.
+				p.restore_combat_state(Global.load_combat_state())
+				Global.rejoined_mid_match = false
 
 	_update_hud()
 	_show_banner("ROUND " + str(current_round) + " - FIGHT!", 1.5)
@@ -397,6 +406,7 @@ func _activate_rotation():
 		return
 		
 	is_arena_rotating = true
+	Global.arena_flips += 1
 	_show_banner("** ARENA SHIFT! **", 2.5)
 	
 	var tween = create_tween()
@@ -410,8 +420,7 @@ func _activate_rotation():
 	is_arena_rotating = false
 
 func _on_arena_join_pressed():
-	var saved_id = Global._load_saved_player_id()
-	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id})
+	Global.request_join(Global._load_saved_player_id())
 	var j_btn = get_node_or_null("JoinBtn")
 	if j_btn:
 		j_btn.text = "QUEUED FOR LOBBY..."

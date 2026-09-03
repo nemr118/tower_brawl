@@ -56,20 +56,24 @@ MOVEMENT_TYPES = ("sync_pos", "spawn_projectile")
 DUP_WINDOW_EVENT = 0.150
 DUP_WINDOW_MOVEMENT = 0.020
 RESPAWN_DELAY = 1.2         # arena.gd respawn delay
+SPAWN_INVULN = 1.0          # player.gd spawn_invuln_timer: no death possible right after a respawn
 NEXT_ROUND_DELAY = 2.6      # serve_game.py NEXT_ROUND_DELAY
 MATCH_END_DELAY = 6.0       # serve_game.py MATCH_END_DELAY (banner time before return_to_lobby)
 MATCH_SCORE_LIMIT = 5       # serve_game.py MATCH_SCORE_LIMIT
+REJOIN_GRACE = 8.0          # serve_game.py REJOIN_GRACE: a fighter's seat is held after a disconnect
+FORFEIT_GRACE = 1.5         # serve_game.py FORFEIT_GRACE: explicit leave, round decided after this
+DEATH_DEDUPE_S = 1.5        # serve_game.py DEATH_DEDUPE_S
 
 # ── Schema ───────────────────────────────────────────────────────────────────
 NUM = "num"
 SCHEMA = {
     "spectator_state": {"active_players": list, "playing_players": list, "match_state": str,
                         "locked_players": dict, "player_names": dict, "current_round": int,
-                        "scores": dict, "stocks": dict},
-    "assign_id": {"id": int, "active_players": list, "playing_players": list, "match_state": str,
+                        "scores": dict, "stocks": dict, "arena_flips": int},
+    "assign_id": {"id": int, "rejoined": bool, "active_players": list, "playing_players": list, "match_state": str,
                   "locked_players": dict, "player_names": dict, "current_round": int,
-                  "scores": dict, "stocks": dict},
-    "player_joined": {"id": int, "active_players": list, "player_names": dict},
+                  "scores": dict, "stocks": dict, "arena_flips": int},
+    "player_joined": {"id": int, "active_players": list, "playing_players": list, "player_names": dict},
     "player_left": {"id": int, "active_players": list},
     "name_update": {"player_names": dict},
     "lock_in": {"class": int, "sender": int},
@@ -197,6 +201,12 @@ class Model:
         self.round_end_at = None       # watchdog: next_round / return_to_lobby expected
         self.alive_le1_since = None    # watchdog: round_end expected
         self.round_ends = []           # (round, winner)
+        self.pending = {}              # pid -> deadline: seat held by the server after a disconnect/leave
+
+    def expire_pending(self, now):
+        for pid in [p for p, t in self.pending.items() if t <= now]:
+            self.pending.pop(pid, None)
+        self._check_alive_watchdog(now)
 
     def _sync_snapshot(self, pkt):
         self.state = pkt["match_state"]
@@ -212,6 +222,8 @@ class Model:
         self.alive = {p for p in self.playing if self.stocks.get(p, 3) > 0} if self.state == "PLAYING" else set()
 
     def _check_alive_watchdog(self, now):
+        if any(t > now for t in self.pending.values()):
+            return  # a seat is still held; the server decides the round only when the grace ends
         if self.state == "PLAYING" and len(self.alive) <= 1 and not self.round_over and self.alive_le1_since is None:
             self.alive_le1_since = now
 
@@ -230,12 +242,24 @@ class Model:
             self.names = {int(k): v for k, v in pkt["player_names"].items()}
             if pid not in self.active:
                 F.fail("oracle.joined-not-active", f"{who}: player_joined {pid} but active={sorted(self.active)}")
-            (self.waiting if self.state == "PLAYING" else self.playing).add(pid)
+            if "playing_players" in pkt:
+                self.playing = ints(pkt["playing_players"])
+                if pid in self.playing:
+                    self.waiting.discard(pid)
+                    self.pending.pop(pid, None)
+                    if self.state == "PLAYING" and self.stocks.get(pid, 3) > 0:
+                        self.alive.add(pid)   # rejoined its held seat
+                else:
+                    self.waiting.add(pid)
+            else:
+                (self.waiting if self.state == "PLAYING" else self.playing).add(pid)
         elif t == "player_left":
             pid = int(pkt["id"])
             self.active = ints(pkt["active_players"])
             if pid in self.active:
                 F.fail("oracle.left-still-active", f"{who}: player_left {pid} but active={sorted(self.active)}")
+            if self.state == "PLAYING" and pid in self.playing:
+                self.pending[pid] = now + REJOIN_GRACE + 1.0   # seat held; may come back
             self.playing.discard(pid)
             self.waiting.discard(pid)
             self.alive.discard(pid)
@@ -315,6 +339,7 @@ class Model:
             self.playing = set()
             self.waiting = set()
             self.alive = set()
+            self.pending = {}
             self.round_over = False
             self.match_over = False
             self.round_end_at = None
@@ -335,6 +360,7 @@ class Bot:
         self.rng = random.Random(ctx.seed * 1000 + bot_id)
         self.F = ctx.findings
         self.model = Model()
+        self.token = f"harness-{ctx.seed}-{bot_id}-{self.name}"   # client identity across reconnects
         self.ws = None
         self.open = False
         self.slot = None
@@ -354,6 +380,7 @@ class Bot:
         self.die_rate = ctx.args.die_rate
         self.dead = False
         self.dead_until = None
+        self.invuln_until = 0.0
         self.pending_death_at = None
         self.match_started_at = None
         self.x = self.rng.uniform(40, ARENA_W - 40)
@@ -470,8 +497,12 @@ class Bot:
 
     # -- client actions -------------------------------------------------------
     def join(self, version=None, reclaim=0):
-        self.send({"type": "request_join", "reclaim_id": reclaim,
+        self.send({"type": "request_join", "reclaim_id": reclaim, "token": self.token,
                    "version": version if version is not None else self.ctx.version})
+
+    def report_death(self, victim, killer, weapon="Harness"):
+        """Observer report: this bot saw `victim` die (need not be itself)."""
+        self.send({"type": "player_died", "victim": victim, "killer": killer, "weapon": weapon})
 
     def set_name(self, name=None):
         self.send({"type": "set_name", "name": name or self.name})
@@ -638,12 +669,13 @@ class Bot:
                     if self.dead_until is not None and now >= self.dead_until:
                         self.dead = False
                         self.dead_until = None
+                        self.invuln_until = now + SPAWN_INVULN
                 if not self.dead and self.slot in self.model.alive:
                     self._step_motion(period)
                     self.send_binary(self._sync_bytes())
                     if self.rng.random() < 0.02:
                         self.send_binary(self._projectile_bytes())
-                    if self.die_rate > 0 and self.rng.random() < self.die_rate * period:
+                    if self.die_rate > 0 and now >= self.invuln_until and self.rng.random() < self.die_rate * period:
                         self.log(f"dying (stock before={self.model.stocks.get(self.slot)})")
                         self.die()
             next_tick += period
@@ -651,6 +683,7 @@ class Bot:
 
     def _watchdogs(self, now):
         m = self.model
+        m.expire_pending(now)
         if m.alive_le1_since is not None and now - m.alive_le1_since > 2.0:
             self.F.fail("timeout.round-end", f"{self.name}: alive={sorted(m.alive)} for >2 s with no round_end (round {m.round})")
             m.alive_le1_since = None
@@ -752,6 +785,8 @@ def lobby_join(ctx, bots, lock=True):
         if pkt is None:
             ctx.fail("timeout.assign-id", f"{b.name}: no assign_id after request_join")
             continue
+        if pkt.get("rejoined", False):
+            ctx.fail("server.rejoined-on-fresh-join", f"{b.name}: a fresh lobby join was flagged rejoined")
         b.set_name()
         time.sleep(0.15)
         if lock:
@@ -935,7 +970,9 @@ def sc_reclaim(ctx):
     slot = a.slot
     a.disconnect()
     time.sleep(0.6)
-    a2 = ctx.bot(2, "A-again").connect()
+    a2 = ctx.bot(2, "A-again")
+    a2.token = a.token
+    a2.connect()
     a2.wait_for("spectator_state", 3.0)
     a2.join(reclaim=slot)
     _, aid2 = a2.wait_for("assign_id", 3.0)
@@ -949,7 +986,9 @@ def sc_reclaim(ctx):
     b.join()
     b.wait_for("assign_id", 3.0)
     bslot = b.slot
-    b2 = ctx.bot(4, "B-reload").connect()
+    b2 = ctx.bot(4, "B-reload")
+    b2.token = b.token
+    b2.connect()
     b2.wait_for("spectator_state", 3.0)
     b2.join(reclaim=bslot)
     _, bid2 = b2.wait_for("assign_id", 3.0)
@@ -960,6 +999,17 @@ def sc_reclaim(ctx):
         time.sleep(0.1)
     if b.open:
         ctx.fail("scenario.reclaim.old-socket-open", "old socket still open 3 s after its slot was reclaimed")
+    # a stranger (different token) asking for an occupied slot gets the lowest free one instead
+    c = ctx.bot(5, "Stranger").connect()
+    c.wait_for("spectator_state", 3.0)
+    c.join(reclaim=bslot)
+    _, cid = c.wait_for("assign_id", 3.0)
+    if cid is None:
+        ctx.fail("scenario.reclaim.stranger-no-slot", "stranger got no slot at all")
+    elif c.slot == bslot:
+        ctx.fail("server.reclaim-without-token", f"a client with a different token took occupied slot {bslot}")
+    if not b2.open:
+        ctx.fail("server.reclaim-without-token", "the legitimate holder was evicted by a stranger's reclaim")
 
 
 @scenario("server_full", "a fifth client asking for a slot is told server_full and keeps receiving as a spectator")
@@ -1168,8 +1218,8 @@ def sc_lag(ctx):
     ctx.note(f"laggy bot dropped {laggy.dropped} packets on purpose; rounds ended: {len(bots[0].model.round_ends)}")
 
 
-@scenario("stop_pinging", "a client goes silent (no pings, no movement) but keeps reading; the server must drop it and tell the others")
-def sc_stop_pinging(ctx):
+@scenario("silent_client", "a client that sends nothing for 20 s (hidden browser tab) keeps its seat and keeps receiving; only a dead TCP peer is dropped")
+def sc_silent_client(ctx):
     bots = [ctx.bot(i) for i in range(1, 4)]
     lobby_join(ctx, bots)
     start_match(ctx, bots, bots[0])
@@ -1178,19 +1228,123 @@ def sc_stop_pinging(ctx):
     time.sleep(2.0)
     ghost = bots[2]
     m = bots[0].mark()
-    t0 = time.monotonic()
+    mg = ghost.mark()
     ghost.muted = True
-    ctx.say(f"{ghost.name} (P{ghost.slot}) goes silent")
-    _, left = bots[0].wait_for("player_left", 25.0, since=m, pred=lambda p: int(p["id"]) == ghost.slot)
-    if left is None:
-        ctx.fail("server.silent-client-not-dropped", "no player_left for a client that stopped pinging for 25 s")
+    ctx.say(f"{ghost.name} (P{ghost.slot}) goes silent for 20 s (still reading)")
+    _, left = bots[0].wait_for("player_left", 20.0, since=m, pred=lambda p: int(p["id"]) == ghost.slot)
+    if left is not None:
+        ctx.fail("server.silent-client-dropped", "a connected client that merely stopped sending was dropped (hidden tabs do this for minutes)")
+    if ghost.count("sync_pos", since=mg) == 0:
+        ctx.fail("server.silent-client-not-served", "the silent client stopped receiving relayed movement")
+    ghost.muted = False
+    m2 = ghost.mark()
+    ghost.send({"type": "ping", "t": time.monotonic()})
+    _, pong = ghost.wait_for("pong", 2.0, since=m2)
+    if pong is None:
+        ctx.fail("server.silent-client-socket-dead", "the silent client could not resume after 20 s")
     else:
-        ctx.note(f"silent client dropped after {time.monotonic() - t0:.1f} s")
-    deadline = time.monotonic() + 5.0
-    while ghost.open and time.monotonic() < deadline:
-        time.sleep(0.1)
-    if ghost.open:
-        ctx.fail("server.silent-client-socket-open", "server announced player_left but left the silent socket open")
+        ctx.note("silent client kept its seat for 20 s and resumed")
+
+
+@scenario("reload_mid_match", "a fighter disconnects mid-round (page reload) and rejoins with its token within the grace: same seat, still in the match, no forfeit")
+def sc_reload_mid_match(ctx):
+    a, b = ctx.bot(1, "A"), ctx.bot(2, "B")
+    lobby_join(ctx, [a, b])
+    start_match(ctx, [a, b], a)
+    a.die_rate = b.die_rate = 0.0
+    time.sleep(3.0)
+    bslot = b.slot
+    m = a.mark()
+    b.disconnect()
+    ctx.say(f"B (P{bslot}) drops")
+    _, left = a.wait_for("player_left", 3.0, since=m, pred=lambda p: int(p["id"]) == bslot)
+    if left is None:
+        ctx.fail("scenario.rejoin.no-player-left", "no player_left when B dropped")
+    time.sleep(2.0)
+    if a.count("round_end", since=m) > 0:
+        ctx.fail("server.forfeit-before-grace", f"round ended 2 s after a disconnect; the seat should be held {REJOIN_GRACE:g} s")
+    b2 = ctx.bot(3, "B-reloaded")
+    b2.token = b.token
+    b2.connect()
+    b2.wait_for("spectator_state", 3.0)
+    b2.join(reclaim=bslot)
+    _, aid = b2.wait_for("assign_id", 3.0)
+    if aid is None:
+        ctx.fail("scenario.rejoin.no-assign", "rejoin after reload got no assign_id")
+        return
+    if b2.slot != bslot:
+        ctx.fail("scenario.rejoin.slot", f"rejoined as P{b2.slot}, expected P{bslot}")
+    if aid["match_state"] != "PLAYING":
+        ctx.fail("scenario.rejoin.state", f"rejoin landed in {aid['match_state']}, expected PLAYING")
+    if bslot not in ints(aid["playing_players"]):
+        ctx.fail("scenario.rejoin.not-playing", f"rejoined player is not in playing_players={aid['playing_players']}")
+    if not aid.get("rejoined", False):
+        ctx.fail("scenario.rejoin.flag", "assign_id after a mid-match reload lacks rejoined=true (client would hand out a fresh quiver)")
+    _, joined = a.wait_for("player_joined", 3.0, since=m, pred=lambda p: int(p["id"]) == bslot)
+    if joined is None:
+        ctx.fail("scenario.rejoin.no-player-joined", "the other player never heard the rejoin")
+    elif bslot not in ints(joined.get("playing_players", [])):
+        ctx.fail("scenario.rejoin.joined-not-playing", "player_joined for the rejoin lacks the seat in playing_players")
+    b2.autoplay = True
+    time.sleep(REJOIN_GRACE + 1.0)
+    if a.count("round_end", since=m) > 0:
+        ctx.fail("scenario.rejoin.round-ended", "the round ended even though the fighter came back in time")
+    else:
+        ctx.note("reload mid-match: same seat, still fighting, no forfeit")
+
+
+@scenario("simultaneous_leave", "both fighters press leave within half a second: no forfeit win, straight back to the lobby")
+def sc_simultaneous_leave(ctx):
+    a, b = ctx.bot(1, "A"), ctx.bot(2, "B")
+    lobby_join(ctx, [a, b])
+    start_match(ctx, [a, b], a)
+    a.die_rate = b.die_rate = 0.0
+    time.sleep(2.0)
+    m = a.mark()
+    a.send({"type": "leave_slot"})
+    time.sleep(0.3)
+    b.send({"type": "leave_slot"})
+    a.autoplay = b.autoplay = False
+    _, back = a.wait_for("return_to_lobby", FORFEIT_GRACE + NEXT_ROUND_DELAY + 3.0, since=m)
+    if back is None:
+        ctx.fail("scenario.simultaneous-leave.no-lobby", "no return_to_lobby after both players left")
+    for _, t, pkt in list(a.events[m:]):
+        if t == "round_end" and int(pkt.get("winner", 0)) > 0:
+            ctx.fail("server.accidental-forfeit", f"P{pkt['winner']} was awarded the round although both players left within 0.3 s")
+            break
+    else:
+        ctx.note("both left: no winner awarded, lobby reached")
+
+
+@scenario("observer_death", "any client may report a death; the first report counts once, repeats inside the dedupe window are ignored")
+def sc_observer_death(ctx):
+    bots = [ctx.bot(i) for i in range(1, 4)]
+    lobby_join(ctx, bots)
+    start_match(ctx, bots, bots[0])
+    for b in bots:
+        b.die_rate = 0.0
+    time.sleep(1.5)
+    a, victim, observer = bots
+    m = a.mark()
+    observer.report_death(victim.slot, observer.slot, "Melee")
+    time.sleep(0.2)
+    a.report_death(victim.slot, a.slot, "Arrow")          # the same death seen from another screen
+    time.sleep(1.0)
+    deaths = [pkt for _, t, pkt in list(a.events[m:]) if t == "player_died" and int(pkt["victim"]) == victim.slot]
+    if len(deaths) != 1:
+        ctx.fail("server.death-dedupe", f"{len(deaths)} player_died broadcasts for one death reported by two clients")
+    elif int(deaths[0]["stock"]) != 2:
+        ctx.fail("server.observer-death-stock", f"stock after an observer-reported death = {deaths[0]['stock']}, expected 2")
+    time.sleep(DEATH_DEDUPE_S + 0.5)
+    m2 = a.mark()
+    observer.report_death(victim.slot, observer.slot, "Melee")
+    _, d2 = a.wait_for("player_died", 2.0, since=m2, pred=lambda p: int(p["victim"]) == victim.slot)
+    if d2 is None:
+        ctx.fail("server.observer-death-rejected", "a second, later death report from an observer was not accepted")
+    elif int(d2["stock"]) != 1:
+        ctx.fail("server.observer-death-stock", f"stock after the second death = {d2['stock']}, expected 1")
+    else:
+        ctx.note("observer-reported deaths: counted once, deduped, stocks 3 -> 2 -> 1")
 
 
 @scenario("slow_reader", "a client stops reading for 20 s; the others must keep receiving (no head-of-line blocking) and the stalled client must be dropped")

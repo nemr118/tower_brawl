@@ -493,8 +493,7 @@ func _confirm_name(n: String):
 	_update_roster()
 
 func _on_join_pressed():
-	var saved_id = Global._load_saved_player_id()
-	Global.send_net_data({"type": "request_join", "reclaim_id": saved_id, "version": Global.GAME_VERSION})
+	Global.request_join(Global._load_saved_player_id())
 
 func _on_spectate_pressed():
 	Global.send_net_data({"type": "leave_slot"})
