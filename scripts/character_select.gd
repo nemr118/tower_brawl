@@ -232,7 +232,7 @@ func _on_opponent_locked_in(opp_id: int, opp_class: int):
 	_check_all_ready()
 
 func _input(event):
-	if not is_name_set or is_revealing:
+	if not is_name_set or is_revealing or local_player_id <= 0:
 		return
 		
 	var prefix = "p" + str(local_player_id) + "_"

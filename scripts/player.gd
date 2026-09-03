@@ -52,6 +52,14 @@ var aim_direction: Vector2 = Vector2.RIGHT
 var is_local_player: bool = true
 var target_net_pos: Vector2 = Vector2.ZERO
 var sync_timer: float = 0.0
+var net_tick: int = 0                 # our 20 Hz sample counter (goes out in every sync_pos)
+var _last_sync_bytes: PackedByteArray = PackedByteArray()   # last packet body (minus tick) actually sent
+var _idle_since_send: float = 0.0     # seconds since the last packet went out
+var _last_rx_tick: int = -1           # newest tick received for this puppet (stale packets are dropped)
+
+func reset_net_sequence() -> void:
+	# The sender (re)joined its seat: whatever tick comes next starts a new sequence.
+	_last_rx_tick = -1
 var _last_persisted: Array = []   # ammo/form snapshot last written to storage
 
 # Class Resources
@@ -146,6 +154,8 @@ func _physics_process(delta: float):
 		return
 		
 	# LOCAL PLAYER CONTROLS
+	if player_id < 1 or player_id > 4:
+		return   # no input map for an unassigned id (guard: seen once in a fleet run as "p0_left")
 	if attack_cooldown > 0.0: attack_cooldown -= delta
 	if special_cooldown > 0.0: special_cooldown -= delta
 	if dash_cooldown_timer > 0.0: dash_cooldown_timer -= delta
@@ -245,15 +255,35 @@ func _physics_process(delta: float):
 
 func _sync_network_state(delta: float):
 	sync_timer += delta
-	if sync_timer >= 0.033:
-		sync_timer = 0.0
-		_persist_combat_state()
-		# 9-byte binary packet (see Global.encode_sync_pos); was ~190 bytes of JSON.
-		Global.send_net_binary(Global.encode_sync_pos(
-			global_position, aim_direction, is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg))
+	_idle_since_send += delta
+	if sync_timer < Global.NET_TICK_INTERVAL:
+		return
+	sync_timer = 0.0
+	_persist_combat_state()
+	# 20 Hz sample (was 30). Idle suppression: if nothing observable changed since the
+	# last packet (position at 0.1 px, aim at 0.1 deg, flags), skip it, but repeat the
+	# state every NET_IDLE_RESEND so a late joiner or a lost packet is corrected.
+	var pkt := Global.encode_sync_pos(net_tick, global_position, aim_direction,
+		is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg)
+	var body := pkt.slice(4)   # everything after type, sender, tick
+	if body == _last_sync_bytes and _idle_since_send < Global.NET_IDLE_RESEND:
+		return
+	_last_sync_bytes = body
+	_idle_since_send = 0.0
+	net_tick = (net_tick + 1) & 0xFFFF
+	Global.send_net_binary(pkt)
 
 func _on_player_state_received(p_id: int, data: Dictionary):
 	if p_id == player_id:
+		# Drop a sample older than the newest one we have (wrap-aware u16 compare),
+		# but a counter far behind (> 200 ticks = 10 s) means the sender restarted
+		# (page reload, rejoin): treat it as a new sequence instead of freezing.
+		var tick := int(data.get("tick", -1))
+		if tick >= 0 and _last_rx_tick >= 0 and ((tick - _last_rx_tick) & 0xFFFF) >= 0x8000 \
+				and ((_last_rx_tick - tick) & 0xFFFF) <= 200:
+			return
+		if tick >= 0:
+			_last_rx_tick = tick
 		target_net_pos = Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0)))
 		aim_direction = Vector2(float(data.get("aim_x", 1.0)), float(data.get("aim_y", 0.0)))
 		is_facing_right = bool(data.get("facing", true))
@@ -474,7 +504,8 @@ func _persist_combat_state() -> void:
 		return
 	_last_persisted = snap
 	Global.save_combat_state({"arrows": current_arrows, "charges": mage_charges,
-		"kunai": rogue_kunai, "bear": is_bear_form, "round": Global.current_round, "slot": player_id})
+		"kunai": rogue_kunai, "bear": is_bear_form, "round": Global.current_round, "slot": player_id,
+		"tick": net_tick})
 
 func restore_combat_state(d: Dictionary) -> void:
 	if d.is_empty() or int(d.get("slot", -1)) != player_id:
@@ -483,6 +514,8 @@ func restore_combat_state(d: Dictionary) -> void:
 	mage_charges = clampi(int(d.get("charges", 3)), 0, 3)
 	rogue_kunai = clampi(int(d.get("kunai", 4)), 0, 4)
 	is_bear_form = bool(d.get("bear", false)) and class_type == Global.ClassType.DRUID
+	# Movement ticks continue after a reload so receivers never see the counter restart.
+	net_tick = (int(d.get("tick", 0)) + 100) & 0xFFFF
 	_last_persisted = [current_arrows, mage_charges, rogue_kunai, is_bear_form, Global.current_round]
 	queue_redraw()
 
@@ -504,6 +537,8 @@ func force_die() -> void:
 func respawn(spawn_pos: Vector2):
 	global_position = spawn_pos
 	target_net_pos = spawn_pos
+	_last_rx_tick = -1
+	_last_sync_bytes = PackedByteArray()
 	velocity = Vector2.ZERO
 	is_dead = false
 	visible = true

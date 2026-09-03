@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.7"
+const GAME_VERSION: String = "v0.0.8"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -53,13 +53,19 @@ var _no_net: bool = false
 # instead of ~190 bytes of JSON. Layout (little-endian):
 #   [0] type  (1 = sync_pos, 2 = spawn_projectile)
 #   [1] sender slot (0 from the client; the server stamps the real slot)
-#   sync_pos:          [2..3] x*10 s16  [4..5] y*10 s16  [6..7] aim angle 0.1 deg u16  [8] flags
+#   sync_pos (11 B):   [2..3] tick u16  [4..5] x*10 s16  [6..7] y*10 s16  [8..9] aim angle 0.1 deg u16  [10] flags
 #   spawn_projectile:  [2] weapon id    [3..4] x*10 s16  [5..6] y*10 s16  [7..8] dir angle 0.1 deg u16
+# The tick counts the sender's 20 Hz movement samples (wraps at 65536), so a
+# receiver can order packets, spot gaps, and (Phase 3b) place each sample in time.
 # Everything else (lobby, deaths, rounds) stays JSON: rare, and readable in the logs.
 # serve_game.py (BIN_TYPES) and tools/chaos_bots.py mirror this layout.
 const BIN_SYNC_POS := 1
 const BIN_SPAWN_PROJECTILE := 2
-const BIN_PACKET_SIZE := 9
+const BIN_SYNC_SIZE := 11
+const BIN_PROJECTILE_SIZE := 9
+const NET_TICK_HZ := 20.0            # movement samples per second (was 30)
+const NET_TICK_INTERVAL := 1.0 / NET_TICK_HZ
+const NET_IDLE_RESEND := 0.5         # an unchanged state is still repeated this often (keepalive for late joiners)
 const BIN_WEAPONS: PackedStringArray = ["arrow", "firebolt", "kunai", "thorn"]
 const FLAG_FACING := 1
 const FLAG_DASH := 2
@@ -381,26 +387,27 @@ func _u16_to_dir(a: int) -> Vector2:
 func _q10(v: float) -> int:
 	return clampi(roundi(v * 10.0), -32768, 32767)
 
-func encode_sync_pos(pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool) -> PackedByteArray:
+func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool) -> PackedByteArray:
 	var b := PackedByteArray()
-	b.resize(BIN_PACKET_SIZE)
+	b.resize(BIN_SYNC_SIZE)
 	b.encode_u8(0, BIN_SYNC_POS)
 	b.encode_u8(1, 0)
-	b.encode_s16(2, _q10(pos.x))
-	b.encode_s16(4, _q10(pos.y))
-	b.encode_u16(6, _dir_to_u16(aim))
+	b.encode_u16(2, tick & 0xFFFF)
+	b.encode_s16(4, _q10(pos.x))
+	b.encode_s16(6, _q10(pos.y))
+	b.encode_u16(8, _dir_to_u16(aim))
 	var flags := 0
 	if facing: flags |= FLAG_FACING
 	if dash: flags |= FLAG_DASH
 	if shield: flags |= FLAG_SHIELD
 	if bear: flags |= FLAG_BEAR
 	if egg: flags |= FLAG_EGG
-	b.encode_u8(8, flags)
+	b.encode_u8(10, flags)
 	return b
 
 func encode_projectile(weapon: String, pos: Vector2, dir: Vector2) -> PackedByteArray:
 	var b := PackedByteArray()
-	b.resize(BIN_PACKET_SIZE)
+	b.resize(BIN_PROJECTILE_SIZE)
 	b.encode_u8(0, BIN_SPAWN_PROJECTILE)
 	b.encode_u8(1, 0)
 	b.encode_u8(2, maxi(BIN_WEAPONS.find(weapon), 0))
@@ -410,23 +417,24 @@ func encode_projectile(weapon: String, pos: Vector2, dir: Vector2) -> PackedByte
 	return b
 
 func _handle_net_binary(pkt: PackedByteArray) -> void:
-	if pkt.size() != BIN_PACKET_SIZE:
+	if pkt.size() < 2:
 		if net_stats_enabled:
 			_ns_count(_ns_types_in, "<bad-binary>", pkt.size())
 		return
 	var ptype := pkt.decode_u8(0)
 	var sender := pkt.decode_u8(1)
-	if ptype == BIN_SYNC_POS:
+	if ptype == BIN_SYNC_POS and pkt.size() == BIN_SYNC_SIZE:
 		if net_stats_enabled:
 			_ns_count(_ns_types_in, "sync_pos", pkt.size())
 		if sender == my_player_id:
 			return
-		var flags := pkt.decode_u8(8)
-		var aim := _u16_to_dir(pkt.decode_u16(6))
+		var flags := pkt.decode_u8(10)
+		var aim := _u16_to_dir(pkt.decode_u16(8))
 		emit_signal("net_player_state_received", sender, {
 			"sender": sender,
-			"x": pkt.decode_s16(2) / 10.0,
-			"y": pkt.decode_s16(4) / 10.0,
+			"tick": pkt.decode_u16(2),
+			"x": pkt.decode_s16(4) / 10.0,
+			"y": pkt.decode_s16(6) / 10.0,
 			"aim_x": aim.x,
 			"aim_y": aim.y,
 			"facing": (flags & FLAG_FACING) != 0,
@@ -435,7 +443,7 @@ func _handle_net_binary(pkt: PackedByteArray) -> void:
 			"bear": (flags & FLAG_BEAR) != 0,
 			"egg": (flags & FLAG_EGG) != 0,
 		})
-	elif ptype == BIN_SPAWN_PROJECTILE:
+	elif ptype == BIN_SPAWN_PROJECTILE and pkt.size() == BIN_PROJECTILE_SIZE:
 		if net_stats_enabled:
 			_ns_count(_ns_types_in, "spawn_projectile", pkt.size())
 		if sender == my_player_id:
@@ -835,6 +843,9 @@ func _storage_set(key: String, value: String) -> void:
 			f.close()
 
 func _load_or_create_token() -> String:
+	if _autojoin:
+		# Headless test clients share one user:// directory; give each its own identity.
+		return "headless-" + _autojoin_name
 	var t := _storage_get("towerbrawl_token")
 	if t == "":
 		t = "%08x%08x" % [randi(), randi()]

@@ -13,6 +13,10 @@ import http.server
 import socketserver
 import socket
 import ssl
+import select
+import fcntl
+import termios
+import collections
 import threading
 import logging
 import sys
@@ -56,7 +60,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.7"
+GAME_VERSION = "v0.0.8"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -67,7 +71,13 @@ STATS_INTERVAL = 10.0    # seconds between [STATS] lines in server.log, 0 = off
 MAX_FRAME_BYTES = 4096   # a frame header claiming more than this closes the socket (no trusting the length field)
 MAX_RELAY_BYTES = 1024   # text messages above this are dropped, never relayed (no amplification)
 # Binary packets: [0] type, [1] sender slot (stamped here), fixed-size body. See global.gd.
-BIN_TYPES = {1: ("sync_pos", 9), 2: ("spawn_projectile", 9)}
+BIN_TYPES = {1: ("sync_pos", 11), 2: ("spawn_projectile", 9)}   # sync_pos gained a u16 tick (Phase 3a)
+
+# Phase 3a: per-client send queues + backpressure ---------------------------
+MAX_QUEUE_FRAMES = 128   # queued frames per client before movement frames are dropped
+MAX_QUEUE_BYTES  = 32 * 1024
+STALL_MIN_BYTES  = 2048  # unsent bytes in the kernel before a client counts as "not reading"
+STALL_TIMEOUT    = 5.0   # s of no send progress above that -> the client is disconnected
 # -----------------------------------------------------------------------------
 
 HTTP_PORT  = 8000
@@ -103,7 +113,7 @@ def get_game_version():
 # WebSocket frame headers and TLS overhead are not counted.
 net_stats_lock = threading.Lock()
 net_stats = {"in_pkts": 0, "in_bytes": 0, "out_pkts": 0, "out_bytes": 0,
-             "out_fail": 0, "in_types": {}}
+             "out_fail": 0, "out_drop": 0, "in_types": {}}
 
 def _stat_in(nbytes):
     with net_stats_lock:
@@ -129,7 +139,7 @@ def stats_loop():
             s = dict(net_stats)
             s["in_types"] = dict(net_stats["in_types"])
             net_stats.update({"in_pkts": 0, "in_bytes": 0, "out_pkts": 0,
-                              "out_bytes": 0, "out_fail": 0, "in_types": {}})
+                              "out_bytes": 0, "out_fail": 0, "out_drop": 0, "in_types": {}})
         with lobby_lock:
             players = sum(1 for p in player_slots if p)
             sockets = len(spectator_sockets)
@@ -140,7 +150,7 @@ def stats_loop():
             f" | IN {s['in_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['in_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
             f" (avg {s['in_bytes'] / max(s['in_pkts'], 1):.0f} B)"
             f" | OUT {s['out_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['out_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
-            f" fail={s['out_fail']} | in: {top or '-'}")
+            f" fail={s['out_fail']} drop={s['out_drop']} | in: {top or '-'}")
 
 # ── Shared lobby ──────────────────────────────────────────────────────────────
 # player_slots[i] = {"sock": socket, "addr": str}  or  None
@@ -252,29 +262,174 @@ def ws_read(sock):
     except Exception:
         return None
 
-def ws_send(sock, msg):
-    """msg: str -> text frame, bytes -> binary frame."""
+def ws_frame(msg):
+    """Server->client frame (unmasked). msg: str -> text frame, bytes -> binary frame."""
+    if isinstance(msg, (bytes, bytearray)):
+        payload = bytes(msg)
+        frame = bytearray([0x82])
+    else:
+        payload = msg.encode("utf-8")
+        frame = bytearray([0x81])
+    n = len(payload)
+    if n <= 125:
+        frame.append(n)
+    elif n <= 65535:
+        frame += bytes([126]) + struct.pack(">H", n)
+    else:
+        frame += bytes([127]) + struct.pack(">Q", n)
+    frame += payload
+    return bytes(frame)
+
+def _sock_outq(sock):
+    """Bytes the kernel still has to deliver on this socket (unsent + unacked)."""
     try:
-        if isinstance(msg, (bytes, bytearray)):
-            payload = bytes(msg)
-            frame = bytearray([0x82])
+        return struct.unpack("i", fcntl.ioctl(sock.fileno(), termios.TIOCOUTQ, struct.pack("i", 0)))[0]
+    except (OSError, ValueError):
+        return 0
+
+class ClientConn:
+    """Per-client outgoing queue with its own writer thread (Phase 3a).
+
+    broadcast() used to call a blocking sendall() on every socket in turn, so one
+    peer that stopped reading stalled the relay for everybody once the kernel
+    buffers filled. Now every socket has a bounded queue: enqueue never blocks,
+    movement frames are dropped first when a queue backs up (events are kept),
+    and a client whose kernel send queue stops draining for STALL_TIMEOUT is
+    disconnected. A hidden browser tab still reads (its queue stays empty), so
+    it is never mistaken for a stalled reader."""
+    def __init__(self, sock, label):
+        self.sock = sock
+        self.label = label
+        self.q = collections.deque()
+        self.q_bytes = 0
+        self.movement_pending = 0
+        self.cv = threading.Condition()
+        self.alive = True
+        self.dropped = 0
+        self.stall_since = None
+        self.last_outq = 0
+        self.last_stall_check = time.time()
+        self.thread = threading.Thread(target=self._writer, daemon=True, name="writer")
+        self.thread.start()
+
+    def enqueue(self, frame, movement=False):
+        with self.cv:
+            if not self.alive:
+                return False
+            if len(self.q) >= MAX_QUEUE_FRAMES or self.q_bytes + len(frame) > MAX_QUEUE_BYTES:
+                if movement:
+                    self.dropped += 1
+                    _stat_drop()
+                    return False
+                # keep events: throw away queued movement to make room
+                kept = collections.deque()
+                for f, mv in self.q:
+                    if mv:
+                        self.dropped += 1
+                        self.q_bytes -= len(f)
+                        _stat_drop()
+                    else:
+                        kept.append((f, mv))
+                self.q = kept
+                if len(self.q) >= MAX_QUEUE_FRAMES or self.q_bytes + len(frame) > MAX_QUEUE_BYTES:
+                    self._stalled("event queue full")
+                    return False
+            self.q.append((frame, movement))
+            self.q_bytes += len(frame)
+            self.cv.notify()
+            return True
+
+    def _stalled(self, why):
+        if self.alive:
+            logger.warning(f"[{self.label}] client not reading ({why}); disconnecting")
+        self.close()
+
+    def close(self):
+        with self.cv:
+            self.alive = False
+            self.q.clear()
+            self.q_bytes = 0
+            self.cv.notify_all()
+        # shutdown() wakes the reader thread blocked in recv(); close() alone would not.
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+    def _check_stall(self):
+        # Sampled about once per second whatever the writer is doing: a peer that
+        # keeps reading holds its kernel backlog near zero; one that stopped shows a
+        # backlog that never shrinks.
+        now = time.time()
+        if now - self.last_stall_check < 1.0:
+            return
+        self.last_stall_check = now
+        outq = _sock_outq(self.sock)
+        if outq >= STALL_MIN_BYTES and outq >= self.last_outq:
+            if self.stall_since is None:
+                self.stall_since = now
+            elif now - self.stall_since > STALL_TIMEOUT:
+                self._stalled(f"{outq} B unsent for {STALL_TIMEOUT:g} s")
+                return
         else:
-            payload = msg.encode("utf-8")
-            frame = bytearray([0x81])
-        n = len(payload)
-        if n <= 125:
-            frame.append(n)
-        elif n <= 65535:
-            frame += bytes([126]) + struct.pack(">H", n)
-        else:
-            frame += bytes([127]) + struct.pack(">Q", n)
-        frame += payload
-        sock.sendall(bytes(frame))
-        _stat_out(n, True)
-        return True
-    except Exception:
-        _stat_out(0, False)
-        return False
+            self.stall_since = None
+        self.last_outq = outq
+
+    def _writer(self):
+        while True:
+            with self.cv:
+                while self.alive and not self.q:
+                    self.cv.wait(1.0)
+                    if self.alive:
+                        self._check_stall()
+                if not self.alive:
+                    return
+                frame, _ = self.q.popleft()
+                self.q_bytes -= len(frame)
+            self._check_stall()
+            if not self.alive:
+                return
+            view = memoryview(frame)
+            try:
+                while view:
+                    _, w, _ = select.select([], [self.sock], [], 1.0)
+                    if not w:
+                        self._check_stall()
+                        if not self.alive:
+                            return
+                        continue
+                    n = self.sock.send(view)
+                    view = view[n:]
+                _stat_out(len(frame), True)   # handed to the kernel; peer progress is judged by _check_stall
+            except Exception:
+                _stat_out(0, False)
+                self.close()
+                return
+
+conns = {}
+conns_lock = threading.Lock()
+
+def _stat_drop():
+    with net_stats_lock:
+        net_stats["out_drop"] += 1
+
+def ws_send(sock, msg, movement=False):
+    """Queue msg for one socket (never blocks the caller)."""
+    with conns_lock:
+        conn = conns.get(id(sock))
+    if conn is None:
+        try:
+            sock.sendall(ws_frame(msg))
+            _stat_out(len(msg), True)
+            return True
+        except Exception:
+            _stat_out(0, False)
+            return False
+    return conn.enqueue(ws_frame(msg), movement)
 
 def _is_movement(msg, msg_type=None):
     if msg_type is not None:
@@ -294,8 +449,9 @@ def broadcast(msg, exclude=None, msg_type=None):
     is removed from the spectator list on request_join and put back on leave_slot);
     the identity set below guarantees single delivery even if that invariant slips.
     Movement packets are not logged unless LOG_MOVEMENT.
-    A socket that fails to send is closed; its own thread then runs the normal
-    disconnect cleanup (player_left broadcast, round-end / idle checks)."""
+    Frames are queued per client (ClientConn); a socket whose writer fails or
+    stalls is closed and its own reader thread runs the normal disconnect
+    cleanup (player_left broadcast, round-end / idle checks)."""
     if isinstance(msg, str) and (LOG_MOVEMENT or not _is_movement(msg, msg_type)):
         logger.debug(f"BROADCAST: {msg}")
     with lobby_lock:
@@ -309,12 +465,19 @@ def broadcast(msg, exclude=None, msg_type=None):
                 continue
             seen.add(id(s))
             targets.append(s)
-    for s in targets:
-        if not ws_send(s, msg):
+    frame = ws_frame(msg)
+    movement = msg_type in MOVEMENT_TYPES if msg_type is not None else isinstance(msg, (bytes, bytearray))
+    with conns_lock:
+        queues = [(s, conns.get(id(s))) for s in targets]
+    for s, conn in queues:
+        if conn is None:
             try:
-                s.close()
+                s.sendall(frame)
             except Exception:
-                pass
+                try: s.close()
+                except Exception: pass
+        else:
+            conn.enqueue(frame, movement)
 
 # ── Match state helpers (every one of these expects lobby_lock to be held) ────
 def _present_players():
@@ -509,6 +672,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
         pass
 
     sock.settimeout(CLIENT_READ_TIMEOUT)
+    conn = ClientConn(sock, label)
+    with conns_lock:
+        conns[id(sock)] = conn
     assigned_id = None
     with lobby_lock:
         spectator_sockets.append({"sock": sock, "addr": str(addr)})
@@ -785,6 +951,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
         pass
 
     # ── Cleanup ─────────────────────────────────────────────────────────────
+    with conns_lock:
+        conns.pop(id(sock), None)
+    conn.close()
     with lobby_lock:
         spectator_sockets[:] = [s for s in spectator_sockets if s["sock"] is not sock]
         pending_names.pop(id(sock), None)

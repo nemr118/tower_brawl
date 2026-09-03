@@ -49,6 +49,7 @@ const NET_SIGNAL_HANDLERS = {
 	"net_spawn_powerup": "_on_net_spawn_powerup",
 	"net_activate_powerup": "_on_net_activate_powerup",
 	"net_version_error": "_on_net_version_error",
+	"net_player_joined": "_on_net_player_joined",
 }
 
 @onready var hud = $HUD
@@ -134,6 +135,11 @@ func _input(event):
 			Global.reset_scores()
 
 
+func _on_net_player_joined(p_id: int, _active_list):
+	# A fighter came back to its seat (reload): its movement sequence starts over.
+	if p_id in player_instances and is_instance_valid(player_instances[p_id]):
+		player_instances[p_id].reset_net_sequence()
+
 func _on_return_to_lobby():
 	get_tree().change_scene_to_file("res://scenes/character_select.tscn")
 
@@ -182,6 +188,8 @@ func _start_round():
 			player_instances.erase(p_id)
 
 	for p_id in roster:
+		if p_id < 1 or p_id > 4:
+			continue
 		# Stocks come from the server (snapshot / player_died / new_round), so a client
 		# that rejoins mid-round shows the real count instead of a fresh 3.
 		player_stocks[p_id] = Global.server_stocks.get(p_id, Global.max_stocks)

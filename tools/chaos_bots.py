@@ -8,7 +8,7 @@ Tower Brawl test harness: protocol bots with an oracle, assertions and scenarios
     ./venv/bin/python tools/chaos_bots.py --list
 
 Every bot is a headless WebSocket client that behaves like the Godot client
-(join, name, lock in, 30 Hz binary sync_pos while alive, silence while dead, 1 s pings)
+(join, name, lock in, 20 Hz binary sync_pos with idle suppression while alive, silence while dead, 1 s pings)
 and keeps a MODEL of what the server state should be. Every packet the server
 sends is checked against a per-type SCHEMA, against the model (ORACLE), and
 against a short window of recently received packets (DUPLICATE detection).
@@ -86,7 +86,7 @@ SCHEMA = {
     "version_error": {"server_version": str},
     "server_full": {},
     "pong": {},
-    "sync_pos": {"x": NUM, "y": NUM, "aim_x": NUM, "aim_y": NUM, "facing": bool, "dash": bool,
+    "sync_pos": {"tick": int, "x": NUM, "y": NUM, "aim_x": NUM, "aim_y": NUM, "facing": bool, "dash": bool,
                  "shield": bool, "bear": bool, "egg": bool, "sender": int},
     "spawn_projectile": {"weapon": str, "pos_x": NUM, "pos_y": NUM, "dir_x": NUM, "dir_y": NUM,
                          "sender": int},
@@ -105,7 +105,9 @@ def _type_ok(value, expected):
 
 # ── Binary movement packets (Phase 2; mirrors global.gd / serve_game.py) ────
 BIN_SYNC_POS, BIN_SPAWN_PROJECTILE = 1, 2
-BIN_SIZE = 9
+BIN_SYNC_SIZE, BIN_PROJ_SIZE = 11, 9      # sync_pos carries a u16 tick since Phase 3a
+NET_TICK_HZ = 20.0
+NET_IDLE_RESEND = 0.5
 BIN_WEAPONS = ["arrow", "firebolt", "kunai", "thorn"]
 FLAG_FACING, FLAG_DASH, FLAG_SHIELD, FLAG_BEAR, FLAG_EGG = 1, 2, 4, 8, 16
 
@@ -123,10 +125,10 @@ def u16_to_dir(a):
     return math.cos(r), math.sin(r)
 
 
-def encode_sync_pos(x, y, aim_x, aim_y, facing=True, dash=False, shield=False, bear=False, egg=False, sender=0):
+def encode_sync_pos(x, y, aim_x, aim_y, facing=True, dash=False, shield=False, bear=False, egg=False, sender=0, tick=0):
     flags = ((FLAG_FACING if facing else 0) | (FLAG_DASH if dash else 0) | (FLAG_SHIELD if shield else 0)
              | (FLAG_BEAR if bear else 0) | (FLAG_EGG if egg else 0))
-    return struct.pack("<BBhhHB", BIN_SYNC_POS, sender, q10(x), q10(y), dir_to_u16(aim_x, aim_y), flags)
+    return struct.pack("<BBHhhHB", BIN_SYNC_POS, sender, tick & 0xFFFF, q10(x), q10(y), dir_to_u16(aim_x, aim_y), flags)
 
 
 def encode_projectile(weapon, x, y, dx, dy, sender=0):
@@ -135,15 +137,15 @@ def encode_projectile(weapon, x, y, dx, dy, sender=0):
 
 def decode_binary(b):
     """bytes -> the same dict shape the JSON packets had, or None if malformed."""
-    if len(b) != BIN_SIZE:
+    if not b:
         return None
-    if b[0] == BIN_SYNC_POS:
-        _, sender, x, y, aim, flags = struct.unpack("<BBhhHB", b)
+    if b[0] == BIN_SYNC_POS and len(b) == BIN_SYNC_SIZE:
+        _, sender, tick, x, y, aim, flags = struct.unpack("<BBHhhHB", b)
         ax, ay = u16_to_dir(aim)
-        return {"type": "sync_pos", "sender": sender, "x": x / 10.0, "y": y / 10.0, "aim_x": ax, "aim_y": ay,
+        return {"type": "sync_pos", "sender": sender, "tick": tick, "x": x / 10.0, "y": y / 10.0, "aim_x": ax, "aim_y": ay,
                 "facing": bool(flags & FLAG_FACING), "dash": bool(flags & FLAG_DASH),
                 "shield": bool(flags & FLAG_SHIELD), "bear": bool(flags & FLAG_BEAR), "egg": bool(flags & FLAG_EGG)}
-    if b[0] == BIN_SPAWN_PROJECTILE:
+    if b[0] == BIN_SPAWN_PROJECTILE and len(b) == BIN_PROJ_SIZE:
         _, sender, wid, x, y, d = struct.unpack("<BBBhhH", b)
         dx, dy = u16_to_dir(d)
         return {"type": "spawn_projectile", "sender": sender,
@@ -202,6 +204,7 @@ class Model:
         self.alive_le1_since = None    # watchdog: round_end expected
         self.round_ends = []           # (round, winner)
         self.pending = {}              # pid -> deadline: seat held by the server after a disconnect/leave
+        self.last_tick = {}            # sender -> newest movement tick seen (order check)
 
     def expire_pending(self, now):
         for pid in [p for p, t in self.pending.items() if t <= now]:
@@ -242,6 +245,7 @@ class Model:
             self.names = {int(k): v for k, v in pkt["player_names"].items()}
             if pid not in self.active:
                 F.fail("oracle.joined-not-active", f"{who}: player_joined {pid} but active={sorted(self.active)}")
+            self.last_tick.pop(pid, None)   # (re)joined: movement sequence starts over
             if "playing_players" in pkt:
                 self.playing = ints(pkt["playing_players"])
                 if pid in self.playing:
@@ -345,6 +349,14 @@ class Model:
             self.round_end_at = None
             self.alive_le1_since = None
             self.locked = {}
+        elif t == "sync_pos":
+            snd, tick = int(pkt["sender"]), int(pkt["tick"])
+            prev = self.last_tick.get(snd)
+            # behind by up to 200 ticks (10 s) = reordered; further back = the sender
+            # restarted its counter (reload / rejoin), which is a new sequence
+            if prev is not None and ((tick - prev) & 0xFFFF) >= 0x8000 and ((prev - tick) & 0xFFFF) <= 200:
+                F.fail("oracle.movement-out-of-order", f"{who}: P{snd} tick {tick} after {prev}")
+            self.last_tick[snd] = tick
         elif t == "name_update":
             self.names = {int(k): v for k, v in pkt["player_names"].items()}
         elif t == "lock_in":
@@ -397,11 +409,15 @@ class Bot:
         self._delayed_cv = threading.Condition()
         self._delayed_seq = 0
         self._delayed_thread = None
+        self._last_due = 0.0        # latency+jitter never reorders (TCP cannot)
         self.paused_rx = False    # slow reader: stop draining the socket
         self.muted = False        # silent client: send nothing at all (not even pings)
         self.sockopt = None       # e.g. a tiny SO_RCVBUF for the slow-reader scenario
         self.last_sync_at = None  # inter-arrival tracking of relayed sync_pos
         self.max_sync_gap = 0.0
+        self.tick = 0             # our movement sample counter
+        self._last_sync_body = None
+        self._last_sync_sent = 0.0
 
     def log(self, msg):
         if self.ctx.args.verbose:
@@ -444,7 +460,8 @@ class Bot:
             self.dropped += 1
             return
         if self.latency > 0:
-            due = time.monotonic() + self.latency + self.rng.uniform(-self.jitter, self.jitter)
+            due = max(self._last_due, time.monotonic() + self.latency + self.rng.uniform(-self.jitter, self.jitter))
+            self._last_due = due
             with self._delayed_cv:
                 self._delayed_seq += 1
                 heapq.heappush(self._delayed, (due, self._delayed_seq, raw))
@@ -672,7 +689,13 @@ class Bot:
                         self.invuln_until = now + SPAWN_INVULN
                 if not self.dead and self.slot in self.model.alive:
                     self._step_motion(period)
-                    self.send_binary(self._sync_bytes())
+                    pkt = self._sync_bytes()
+                    body = pkt[4:]                      # idle suppression, same rule as player.gd
+                    if body != self._last_sync_body or now - self._last_sync_sent >= NET_IDLE_RESEND:
+                        self._last_sync_body = body
+                        self._last_sync_sent = now
+                        self.tick = (self.tick + 1) & 0xFFFF
+                        self.send_binary(pkt)
                     if self.rng.random() < 0.02:
                         self.send_binary(self._projectile_bytes())
                     if self.die_rate > 0 and now >= self.invuln_until and self.rng.random() < self.die_rate * period:
@@ -730,7 +753,7 @@ class Bot:
     def _sync_bytes(self):
         return encode_sync_pos(self.x, self.y, math.cos(self.aim), math.sin(self.aim),
                                facing=math.cos(self.aim) > 0, dash=self.rng.random() < 0.05,
-                               shield=self.rng.random() < 0.03)
+                               shield=self.rng.random() < 0.03, tick=self.tick)
 
     def _projectile_bytes(self):
         return encode_projectile(self.rng.choice(WEAPONS), self.x + math.cos(self.aim) * 18.0,
@@ -865,7 +888,7 @@ def sc_smoke(ctx):
     lobby_join(ctx, bots)
     start_match(ctx, bots, bots[0])
     for b in bots:
-        b.die_rate = max(ctx.args.die_rate, 0.15)
+        b.die_rate = max(ctx.args.die_rate, 0.3)
     ctx.say("playing 20 s")
     time.sleep(20.0)
     for b in bots:
@@ -1265,6 +1288,7 @@ def sc_reload_mid_match(ctx):
         ctx.fail("server.forfeit-before-grace", f"round ended 2 s after a disconnect; the seat should be held {REJOIN_GRACE:g} s")
     b2 = ctx.bot(3, "B-reloaded")
     b2.token = b.token
+    b2.tick = (b.tick + 100) & 0xFFFF     # the real client continues its counter across a reload
     b2.connect()
     b2.wait_for("spectator_state", 3.0)
     b2.join(reclaim=bslot)
@@ -1347,7 +1371,7 @@ def sc_observer_death(ctx):
         ctx.note("observer-reported deaths: counted once, deduped, stocks 3 -> 2 -> 1")
 
 
-@scenario("slow_reader", "a client stops reading for 20 s; the others must keep receiving (no head-of-line blocking) and the stalled client must be dropped")
+@scenario("slow_reader", "a client stops reading; the others must keep receiving (no head-of-line blocking) and the stalled client must be dropped within ~35 s")
 def sc_slow_reader(ctx):
     bots = [ctx.bot(1), ctx.bot(2)]
     slow = ctx.bot(3, "SlowReader")
@@ -1382,11 +1406,11 @@ def sc_slow_reader(ctx):
             eta = f"; at this rate a 4 MB kernel send buffer fills in ~{4 * 1024 * 1024 / rate / 60:.0f} min, after which every other player stalls up to 10 s per broadcast" if rate > 0 else ""
             ctx.fail("server.no-backpressure",
                      f"{qs[-1] // 1024} KB queued in the kernel for a client that stopped reading 20 s ago; nothing detects or drops it{eta}")
-    _, left = bots[0].wait_for("player_left", 5.0, since=m, pred=lambda p: int(p["id"]) == slow.slot)
+    _, left = bots[0].wait_for("player_left", 15.0, since=m, pred=lambda p: int(p["id"]) == slow.slot)
     if left is None:
-        ctx.fail("server.stalled-reader-tolerated", "a client that has not read for 25 s is still a member of the match (no application-level read timeout)")
+        ctx.fail("server.stalled-reader-tolerated", "a client that has not read for 35 s is still a member of the match (send queue / stall detection missing)")
     else:
-        ctx.note(f"slow reader dropped after {time.monotonic() - t0:.1f} s")
+        ctx.note(f"slow reader dropped after {time.monotonic() - t0:.1f} s (server stall detection)")
     slow.paused_rx = False
 
 
@@ -1435,10 +1459,13 @@ def sc_fuzz(ctx):
     alive("binary-bad-type"); relaying("binary-bad-type")
     fz.send_raw_frame(ws_frame(bytes([1, 0, 1, 2, 3]), opcode=2))
     alive("binary-wrong-length"); relaying("binary-wrong-length")
+    fz.send_raw_frame(ws_frame(bytes([1, 0]) + bytes(7), opcode=2))   # old 9-byte sync_pos layout
+    alive("binary-old-layout"); relaying("binary-old-layout")
 
     # sender spoofing in the binary header: the server must stamp the real slot
     m = bots[1].mark()
-    fz.send_binary(encode_sync_pos(123.4, 56.7, 1.0, 0.0, sender=bots[0].slot))
+    fz.tick = (fz.tick + 1) & 0xFFFF
+    fz.send_binary(encode_sync_pos(123.4, 56.7, 1.0, 0.0, sender=bots[0].slot, tick=fz.tick))
     _, got = bots[1].wait_for("sync_pos", 1.5, since=m, pred=lambda p: abs(p["x"] - 123.4) < 0.06 and abs(p["y"] - 56.7) < 0.06)
     if got is None:
         ctx.fail("fuzz.spoof.not-relayed", "spoofed-sender movement packet never reached the other players")
@@ -1449,6 +1476,7 @@ def sc_fuzz(ctx):
     t0 = time.monotonic()
     for _ in range(3000):
         fz.x = (fz.x + 0.7) % ARENA_W     # guarantee every packet differs after 0.1 px quantisation
+        fz.tick = (fz.tick + 1) & 0xFFFF
         fz._write(fz._sync_bytes())
     m = fz.mark()
     fz.send({"type": "ping", "t": time.monotonic()})
@@ -1770,7 +1798,7 @@ def main():
     ap.add_argument("--bots", type=int, default=3, help="bots for the play scenario")
     ap.add_argument("--duration", type=float, default=60.0, help="seconds for the play and fleet scenarios")
     ap.add_argument("--die-rate", type=float, default=0.15, help="per-second probability an alive bot dies (0 = immortal)")
-    ap.add_argument("--rate", type=float, default=30.0, help="sync_pos packets per second while alive")
+    ap.add_argument("--rate", type=float, default=NET_TICK_HZ, help="movement samples per second while alive (client: 20)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8081)
