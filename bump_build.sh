@@ -94,6 +94,11 @@ set -e
 after=$(stat -c %y "$BUILD_DIR/index.pck" 2>/dev/null || echo none)
 [[ "$after" != "$before" && "$after" != none ]] \
   || { echo "✗ export did not write a new $BUILD_DIR/index.pck" >&2; exit 1; }
+# The page must come from our own shell (web/shell.html), which carries the
+# phone helpers (tap for full screen, "turn your phone" sign). If the export
+# preset ever loses that setting, stop here instead of shipping a plain page.
+grep -q 'id="fs-gate"' "$BUILD_DIR/index.html" \
+  || { echo "✗ $BUILD_DIR/index.html has no phone helpers: check html/custom_html_shell in export_presets.cfg" >&2; exit 1; }
 
 echo "== [4/4] Cache-bust: index_$NEW.pck =="
 cp "$BUILD_DIR/index.pck"  "$BUILD_DIR/index_$NEW.pck"

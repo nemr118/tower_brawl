@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+		<title>$GODOT_PROJECT_NAME</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: $GODOT_SPLASH_COLOR;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+
+/* ---- Tower Brawl phone helpers ----
+   Problem: on a phone the browser bars eat part of the screen, and the game
+   only looks right when the phone is sideways.
+   Fix: three little signs. They all start hidden. A script below turns them
+   on only when a phone needs them. A PC never sees them. */
+#fs-gate, #fs-button, #rotate-hint {
+	display: none;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	color: #ffffff;
+	text-align: center;
+	-webkit-user-select: none;
+	user-select: none;
+	touch-action: none;
+}
+/* Big dark sheet over the whole page: "tap to play full screen". */
+#fs-gate {
+	position: fixed;
+	inset: 0;
+	z-index: 4;
+	background-color: rgba(0, 0, 0, 0.6);
+	font-size: 1.8rem;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+#fs-gate.show {
+	display: flex;
+}
+#fs-gate small, #rotate-hint small {
+	display: block;
+	font-size: 1rem;
+	opacity: 0.85;
+	margin-top: 0.8rem;
+}
+/* Small button in the top right corner: get full screen back after leaving it. */
+#fs-button {
+	position: fixed;
+	top: 0.5rem;
+	right: 0.5rem;
+	z-index: 4;
+	width: 2.6rem;
+	height: 2.6rem;
+	border: 2px solid rgba(255, 255, 255, 0.7);
+	border-radius: 0.5rem;
+	background-color: rgba(0, 0, 0, 0.5);
+	font-size: 1.4rem;
+	line-height: 1;
+	padding: 0;
+	cursor: pointer;
+}
+#fs-button.show {
+	display: block;
+}
+/* Sign that asks to turn the phone sideways. It sits under the tap sheet,
+   so a tap can still ask the phone to turn itself. */
+#rotate-hint {
+	position: fixed;
+	inset: 0;
+	z-index: 3;
+	background-color: #101018;
+	font-size: 1.5rem;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+/* A little drawn phone that turns sideways, so the sign needs no words to be understood. */
+#rotate-hint .phone {
+	width: 2.4rem;
+	height: 4rem;
+	border: 3px solid #ffffff;
+	border-radius: 0.5rem;
+	margin-bottom: 1.2rem;
+	animation: fs-turn 2s ease-in-out infinite;
+}
+@keyframes fs-turn {
+	0%, 30% { transform: rotate(0deg); }
+	60%, 100% { transform: rotate(90deg); }
+}
+/* The iPhone tip only shows on phones that cannot do full screen at all. */
+#rotate-hint .ios-tip {
+	display: none;
+}
+#rotate-hint.no-fullscreen .ios-tip {
+	display: block;
+}
+/* Only a touch screen that is held upright shows the sign. A PC window that is
+   taller than wide does not. */
+@media (orientation: portrait) and (pointer: coarse) {
+	#rotate-hint.ready {
+		display: flex;
+	}
+}
+		</style>
+		$GODOT_HEAD_INCLUDE
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="$GODOT_SPLASH_CLASSES" src="$GODOT_SPLASH" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<!-- Phone helpers (see the "phone helpers" notes in the style and script). -->
+		<div id="fs-gate">Tap to play full screen<small>Then hold your phone sideways</small></div>
+		<button id="fs-button" type="button" aria-label="Full screen">&#x26F6;</button>
+		<div id="rotate-hint"><div class="phone"></div>Please turn your phone sideways<small class="ios-tip">On an iPhone: tap Share, then "Add to Home Screen" to play full screen.</small></div>
+
+		<script src="$GODOT_URL"></script>
+		<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+		<script>
+// ---- Tower Brawl phone helpers ----
+// The story: on a phone the browser bars eat part of the screen, and the game
+// only looks right sideways. One tap on the dark sheet does two things:
+//   1. asks the browser to fill the whole screen,
+//   2. asks the phone to turn (and stay) sideways.
+// Some phones cannot do one or both (an iPhone cannot do either). Then we fall
+// back to a sign that asks the player to turn the phone by hand.
+(function () {
+	const gate = document.getElementById('fs-gate');
+	const button = document.getElementById('fs-button');
+	const hint = document.getElementById('rotate-hint');
+	const page = document.documentElement;
+
+	// Is this a touch screen? Two checks, because some phones only pass one.
+	const isTouch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+	// Can this browser fill the screen at all? (iPhone Safari cannot.)
+	const canFullscreen = !!(page.requestFullscreen || page.webkitRequestFullscreen);
+
+	function isFullscreen() {
+		// Already filling the screen, or opened from the home screen like an app.
+		return !!(document.fullscreenElement || document.webkitFullscreenElement)
+			|| navigator.standalone === true
+			|| window.matchMedia('(display-mode: fullscreen)').matches;
+	}
+
+	function refresh() {
+		// The corner button only shows while we are NOT filling the screen.
+		button.classList.toggle('show', canFullscreen && !isFullscreen());
+	}
+
+	function turnSideways() {
+		// Ask the phone to turn sideways and stay there. Not every phone can.
+		// If it cannot, we just print a note and move on: the "turn your
+		// phone" sign is still there for the player.
+		try {
+			if (screen.orientation && screen.orientation.lock) {
+				return screen.orientation.lock('landscape').catch(function (err) {
+					console.log('[shell] phone will not turn by itself: ' + err.message);
+				});
+			}
+		} catch (err) {
+			console.log('[shell] phone will not turn by itself: ' + err.message);
+		}
+		return Promise.resolve();
+	}
+
+	function enterFullscreen() {
+		// This must run inside a tap. Browsers ignore the request otherwise.
+		gate.classList.remove('show');
+		let request;
+		try {
+			if (page.requestFullscreen) {
+				request = page.requestFullscreen({ navigationUI: 'hide' });
+			} else if (page.webkitRequestFullscreen) {
+				page.webkitRequestFullscreen();
+				request = Promise.resolve();
+			} else {
+				request = Promise.reject(new Error('this browser cannot fill the screen'));
+			}
+		} catch (err) {
+			request = Promise.reject(err);
+		}
+		Promise.resolve(request).then(turnSideways, function (err) {
+			console.log('[shell] no full screen: ' + err.message);
+		}).then(refresh);
+	}
+
+	if (!canFullscreen) {
+		hint.classList.add('no-fullscreen');
+	}
+	if (!isTouch) {
+		return; // a PC needs none of this
+	}
+	// From now on the "turn your phone" sign may show up when held upright.
+	hint.classList.add('ready');
+	if (canFullscreen && !isFullscreen()) {
+		gate.classList.add('show');
+	}
+	// A tap on any of the three signs tries again.
+	gate.addEventListener('click', enterFullscreen);
+	button.addEventListener('click', enterFullscreen);
+	hint.addEventListener('click', enterFullscreen);
+	// The corner button comes back when the player leaves full screen
+	// (the back gesture on Android does that).
+	document.addEventListener('fullscreenchange', refresh);
+	document.addEventListener('webkitfullscreenchange', refresh);
+	refresh();
+}());
+		</script>
+	</body>
+</html>
