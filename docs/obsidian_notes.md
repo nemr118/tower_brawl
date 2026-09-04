@@ -52,7 +52,7 @@ Versioning scheme: `v0.0.x` while building; `v0.1.0` is the target once the VHS 
 ### 5. The Test Harness (formerly the Chaos Bots)
 `tools/chaos_bots.py` is a protocol test harness: every bot behaves like the Godot client (join, name, lock in, 30 Hz `sync_pos` while alive, silence while dead, 1 s pings) and keeps a model of what the server state should be. Every packet is checked against a per-type schema, the model (oracle) and a duplicate-broadcast detector. Named scenarios end with a report and a non-zero exit code on any finding.
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                  # scenarios
+./venv/bin/python tools/chaos_bots.py --list                  # scenarios (19 since v0.0.23)
 ./venv/bin/python tools/chaos_bots.py                         # run them all
 ./venv/bin/python tools/chaos_bots.py --restart-each          # restart the server before each one (isolates scenarios)
 ./venv/bin/python tools/chaos_bots.py --scenario smoke --trace /tmp/trace.jsonl   # packet capture with model snapshots
@@ -112,6 +112,12 @@ Bots tell the server who they are: `"bot": "<persona>"` in `request_join` (`"pro
  "learning": {"episode": null, "reward": null, "weights": {}, "deltas": {}}}
 ```
 `state`, `target`, `combat` and `learning` are empty slots for future bot brains (a state like `seeking`, `retreating`, `camping`; the seat it hunts; accuracy and air time; learning weights and their deltas). The deck draws them as soon as a brain fills them.
+
+**The harness gate (v0.0.23).** The server reads the same `harness_state.json` once a second. While `state` is `running` or `restarting`, `written_at` is under 5 s old and the harness `pid` is alive, every seat is for bots only. A person who presses JOIN gets a `join_locked` packet and stays a spectator; a person already seated is moved back to spectator (`[LEAVE] P1 was moved to spectator by the harness gate` in `server.log`, `[GATE]` lines when the gate closes and opens). Bots pass because they say `"bot"` in `request_join` (`"protocol"`, `"headless"`, or a persona). The screen shows a small amber ticker: `TESTS RUNNING - JOIN IS LOCKED / Scenario: reclaim / Tests done: 5 / 19` (lobby, in the JOIN MATCH spot) or one line under the arena top bar. The deck header says `SEATS LOCKED (harness)`. `--no-state` turns the file off, so it also leaves the gate open. Check the gate from the shell:
+```bash
+python3 -c "import json; print(json.load(open('status.json'))['harness'])"   # {'active': True, 'state': 'running', 'scenario': 'smoke', 'done': 0, 'total': 19, ...}
+grep "\[GATE\]" server.log | tail                                           # when the gate closed and opened
+```
 
 ---
 

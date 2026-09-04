@@ -33,6 +33,7 @@ import time
 #   [MATCH] the match started or ended   [ROUND] a round started or ended
 #   [KILL] a fighter died           [NET]   a bad packet or a network problem
 #   [STATS] the 10-second traffic line (unchanged since v0.0.1)
+#   [GATE] the harness gate opened or closed a seat (v0.0.23)
 #   [MSG] / [SEND] every event packet in and out (debug level: debug.log only)
 # The file format "HH:MM:SS | LEVEL | message" did not change.
 logger = logging.getLogger("TowerBrawl")
@@ -142,7 +143,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.22"
+GAME_VERSION = "v0.0.23"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -343,6 +344,7 @@ def _build_status(prev_totals, prev_conns, dt):
             "bots": _bot_count(),
             "spectators": len(spectator_sockets),
             "sockets": sum(1 for p in player_slots if p) + len(spectator_sockets),
+            "harness": dict(harness_gate),   # v0.0.23: is the harness gate closed right now?
         }
     status["traffic"] = {
         "in_pps": round(rate("in_pkts"), 1),
@@ -362,10 +364,14 @@ def status_loop():
     prev_conns = {}
     last = time.time()
     tmp = STATUS_FILE + ".tmp"
+    # v0.0.23: read harness_state.json right away, so a server that the harness
+    # just restarted is locked from its first second, not after the first sleep.
+    _harness_tick(time.time())
     while True:
         time.sleep(STATUS_INTERVAL)
         try:
             now = time.time()
+            _harness_tick(now)
             status, prev_totals, prev_conns = _build_status(prev_totals, prev_conns, now - last)
             last = now
             with open(tmp, "w", encoding="utf-8") as f:
@@ -463,8 +469,112 @@ def _bot_from_join(value, pid):
     if not isinstance(value, str) or not value.strip():
         return None
     persona = value.strip()[:BOT_PERSONA_MAX]
-    return {"schema": 1, "kind": "protocol" if persona == "protocol" else "brain",
-            "seat": pid, "persona": persona, "updated_at": time.time()}
+    kind = "brain"
+    if persona in ("protocol", "headless"):
+        kind = persona          # "protocol" = harness bot, "headless" = plain headless client (v0.0.23)
+    return {"schema": 1, "kind": kind, "seat": pid, "persona": persona, "updated_at": time.time()}
+
+# Harness gate (v0.0.23) -----------------------------------------------------
+# The story: someone could open the game while tools/chaos_bots.py was running
+# and take a seat in the middle of a test. Now the server reads
+# harness_state.json (the harness writes it once a second). While its "state"
+# is "running" or "restarting", the heartbeat is fresh and the harness process
+# is alive, the seats are for bots only: a human request_join gets a
+# join_locked packet, and a human already in a seat is moved back to spectator
+# (same code path as leave_slot). Everyone connected gets a harness_status
+# packet when the numbers change, so a spectator screen can show a small
+# ticker: the scenario name and "tests done X / Y".
+HARNESS_FILE = os.path.join(BASE_DIR, "harness_state.json")
+HARNESS_STALE = 5.0                 # s without a heartbeat = the harness is gone (same number as watch_server.py)
+HARNESS_ACTIVE_STATES = ("running", "restarting")
+harness_gate = {"active": False, "state": "idle", "scenario": None,
+                "done": 0, "total": 0, "passed": 0, "failed": 0, "minor": 0}
+_harness_last_sent = None           # text of the last harness_status packet: we only send when it changes
+demoted_socks = set()               # id(sock) of seats taken back by the gate; the reader thread drops its seat number
+
+def _pid_alive(pid):
+    """True when the process is still there. A missing pid counts as alive,
+    so the freshness rule decides on its own."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+def _read_harness_state():
+    try:
+        with open(HARNESS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+def _gate_from_file(data, now):
+    """Turn harness_state.json into the small gate dict. No file = open gate."""
+    gate = {"active": False, "state": "idle", "scenario": None,
+            "done": 0, "total": 0, "passed": 0, "failed": 0, "minor": 0}
+    if not isinstance(data, dict):
+        return gate
+    state = str(data.get("state", "idle"))[:16]
+    gate["state"] = state
+    sc = data.get("scenario")
+    if isinstance(sc, dict) and sc.get("name"):
+        gate["scenario"] = str(sc.get("name"))[:32]
+    suite = data.get("suite")
+    if isinstance(suite, dict):
+        gate["done"] = _as_int(suite.get("index", 0))
+        for k in ("total", "passed", "failed", "minor"):
+            gate[k] = _as_int(suite.get(k, 0))
+    try:
+        fresh = now - float(data.get("written_at", 0) or 0) < HARNESS_STALE
+    except (TypeError, ValueError):
+        fresh = False
+    gate["active"] = state in HARNESS_ACTIVE_STATES and fresh and _pid_alive(data.get("pid"))
+    return gate
+
+def _harness_status_packet():
+    return json.dumps({"type": "harness_status", **harness_gate}, separators=(",", ":"))
+
+def _harness_tick(now):
+    """Once a second from status_loop. Reads the file, locks or opens the gate,
+    and tells everyone when the ticker text changed."""
+    global _harness_last_sent
+    gate = _gate_from_file(_read_harness_state(), now)
+    with lobby_lock:
+        was_active = harness_gate["active"]
+        harness_gate.update(gate)
+    if gate["active"] and not was_active:
+        logger.info(f"[GATE] harness run seen ({gate['state']}): seats are for bots only until it ends")
+        _demote_humans()
+    elif was_active and not gate["active"]:
+        logger.info(f"[GATE] harness run over ({gate['state']}): seats are open again")
+    pkt = _harness_status_packet()
+    if pkt != _harness_last_sent:
+        _harness_last_sent = pkt
+        broadcast(pkt, msg_type="harness_status")
+
+def _demote_humans():
+    """Every seat whose owner did not say "bot" in request_join goes back to
+    spectator. The owner gets join_locked with demoted=true."""
+    with lobby_lock:
+        humans = [(i + 1, player_slots[i]) for i in range(4)
+                  if player_slots[i] is not None and (i + 1) not in player_bots]
+    for pid, entry in humans:
+        sock = entry["sock"]
+        with lobby_lock:
+            if player_slots[pid - 1] is not entry:
+                continue        # the seat changed hands while we looked
+            demoted_socks.add(id(sock))
+        _release_seat(sock, entry["addr"], entry["label"], pid,
+                      f"was moved to spectator by the harness gate")
+        ws_send(sock, json.dumps({"type": "join_locked", "demoted": True, **harness_gate}))
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -723,7 +833,7 @@ def _is_movement(msg, msg_type=None):
 # match flow (new_round, return_to_lobby, scene_transition...) is server-authoritative.
 SERVER_ONLY_TYPES = {"spectator_state", "assign_id", "player_joined", "player_left", "name_update",
                      "scene_transition", "round_end", "new_round", "return_to_lobby",
-                     "version_error", "server_full", "pong"}
+                     "version_error", "server_full", "pong", "harness_status", "join_locked"}
 
 def broadcast(msg, exclude=None, msg_type=None):
     """Send msg once to every connected socket except `exclude`.
@@ -765,6 +875,36 @@ def broadcast(msg, exclude=None, msg_type=None):
 # ── Match state helpers (every one of these expects lobby_lock to be held) ────
 def _present_players():
     return [i + 1 for i in range(4) if player_slots[i]]
+
+def _release_seat(sock, addr, label, old_id, why):
+    """Give a seat back and make its socket a plain spectator again.
+
+    Used by leave_slot (the player pressed SPECTATE or LEAVE MATCH) and by the
+    harness gate (v0.0.23, the server takes the seat back). Mid-match the seat
+    is held for FORFEIT_GRACE seconds first, so two players leaving together do
+    not hand one of them a win. Everyone else hears player_left."""
+    with lobby_lock:
+        player_slots[old_id - 1] = None
+        player_locked.pop(old_id, None)
+        token = slot_tokens.pop(old_id, None)
+        if token:
+            recent_slots[token] = (old_id, time.time())
+        in_match = global_match_state == 'PLAYING' and old_id in global_playing_players
+        if in_match:
+            _hold_seat(label, old_id, None, FORFEIT_GRACE)
+        else:
+            _remove_player(old_id)
+        player_bots.pop(old_id, None)
+        spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})  # pure spectator again
+        logger.info(f"[LEAVE] P{old_id} {why}")
+        broadcast(json.dumps({
+            "type": "player_left",
+            "id": old_id,
+            "active_players": _present_players(),
+        }))
+        if not in_match:
+            _idle_reset_if_empty(label)
+            _check_round_end(label)
 
 def _state_snapshot(ptype, **extra):
     d = {
@@ -983,6 +1123,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
 
     logger.info(f"[CONN] spectator connected via {label} from {_ip(addr)}")
     ws_send(sock, json.dumps(snapshot))
+    if harness_gate["active"]:
+        ws_send(sock, _harness_status_packet())   # v0.0.23: the ticker, so a new spectator sees it at once
 
     try:
         while True:
@@ -993,6 +1135,12 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
             conn.in_pkts += 1
             conn.in_bytes += len(payload)
             conn.last_rx = time.time()
+            if assigned_id is not None and id(sock) in demoted_socks:
+                # v0.0.23: the harness gate took this seat back from the status
+                # thread. This thread only learns it here, so forget the seat now.
+                with lobby_lock:
+                    demoted_socks.discard(id(sock))
+                assigned_id = None
             if opcode == 0:
                 continue
 
@@ -1044,30 +1192,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
 
                 if mtype == "leave_slot":
-                    with lobby_lock:
-                        if assigned_id is not None:
-                            old_id = assigned_id
-                            player_slots[old_id - 1] = None
-                            player_locked.pop(old_id, None)
-                            token = slot_tokens.pop(old_id, None)
-                            if token:
-                                recent_slots[token] = (old_id, time.time())
-                            in_match = global_match_state == 'PLAYING' and old_id in global_playing_players
-                            if in_match:
-                                _hold_seat(label, old_id, None, FORFEIT_GRACE)
-                            else:
-                                _remove_player(old_id)
-                            assigned_id = None
-                            spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})  # pure spectator again
-                            logger.info(f"[LEAVE] P{old_id} gave up its seat and is a spectator again")
-                            broadcast(json.dumps({
-                                "type": "player_left",
-                                "id": old_id,
-                                "active_players": _present_players(),
-                            }))
-                            if not in_match:
-                                _idle_reset_if_empty(label)
-                                _check_round_end(label)
+                    if assigned_id is not None:
+                        _release_seat(sock, addr, label, assigned_id, "gave up its seat and is a spectator again")
+                        assigned_id = None
                     continue
 
                 if mtype == "request_join":
@@ -1078,6 +1205,11 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         logger.warning(f"[JOIN] rejected via {label} from {_ip(addr)}: client build {client_version!r}, "
                                        f"server {expected_version!r} (old page in the browser cache?)")
                         ws_send(sock, json.dumps({"type": "version_error", "server_version": expected_version}))
+                        continue
+                    if harness_gate["active"] and _bot_from_join(data.get("bot"), 0) is None:
+                        # v0.0.23: tests are running, so a human waits and watches.
+                        logger.info(f"[GATE] join refused via {label} from {_ip(addr)}: the harness is running, humans watch for now")
+                        ws_send(sock, json.dumps({"type": "join_locked", "demoted": False, **harness_gate}))
                         continue
 
                     with lobby_lock:
@@ -1309,6 +1441,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     conn.close()
     with lobby_lock:
         spectator_sockets[:] = [s for s in spectator_sockets if s["sock"] is not sock]
+        demoted_socks.discard(id(sock))
         pending_names.pop(id(sock), None)
 
     if assigned_id is not None:

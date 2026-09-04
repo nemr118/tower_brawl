@@ -75,7 +75,11 @@ const NET_SIGNAL_HANDLERS = {
 	"net_force_start": "_on_net_force_start",
 	"net_names_updated": "_update_roster",
 	"net_version_error": "_on_net_version_error",
+	"net_harness_status": "_on_harness_status",
+	"net_join_locked": "_on_join_locked",
 }
+
+const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
 
 func _exit_tree():
 	for sig_name in NET_SIGNAL_HANDLERS:
@@ -180,12 +184,24 @@ func _ready():
 	name_btn.z_index = 100
 	add_child(name_btn)
 	
-	if Global.my_player_id > 0 and Global.my_player_id in Global.active_players:
-		join_btn.visible = false
-		spectate_btn.visible = true
-	else:
-		join_btn.visible = true
-		spectate_btn.visible = false
+	# v0.0.23: the test ticker sits where JOIN MATCH sits. Only one of them shows.
+	var ticker = HarnessTickerScript.new(false)
+	ticker.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	ticker.position = Vector2(0, 0)
+	ticker.custom_minimum_size = Vector2(250, 60)
+	add_child(ticker)
+
+	_update_roster()
+
+func _on_harness_status(_info: Dictionary):
+	# The gate closed or opened: show or hide JOIN MATCH and LOCK IN.
+	_update_roster()
+
+func _on_join_locked(_demoted: bool, _old_id: int):
+	# The server kept our seat for the tests. We are a spectator now.
+	local_player_id = 0
+	_sync_global_configs()
+	_update_roster()
 
 func _on_connected_to_server(p_id: int):
 	local_player_id = p_id
@@ -307,15 +323,17 @@ func _lock_in_champion():
 func _update_roster():
 	var j_btn = get_node_or_null("JoinBtn")
 	var s_btn = get_node_or_null("SpectateBtn")
-	if not Global.is_spectator and Global.my_player_id > 0 and Global.my_player_id in Global.active_players:
+	var seated := not Global.is_spectator and Global.my_player_id > 0 and Global.my_player_id in Global.active_players
+	var locked := bool(Global.harness_info.get("active", false))   # v0.0.23: tests running, JOIN hidden
+	if seated:
 		if j_btn: j_btn.visible = false
 		if s_btn: s_btn.visible = true
 	else:
-		if j_btn: j_btn.visible = true
+		if j_btn: j_btn.visible = not locked
 		if s_btn: s_btn.visible = false
 		
 	if lock_btn:
-		lock_btn.visible = (not Global.is_spectator and Global.my_player_id > 0 and Global.my_player_id in Global.active_players)
+		lock_btn.visible = seated and not locked
 		
 	_update_player_card(p1_card, 1)
 	_update_player_card(p2_card, 2)

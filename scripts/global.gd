@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.22"
+const GAME_VERSION: String = "v0.0.23"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -285,6 +285,16 @@ signal net_names_updated()
 signal net_spawn_powerup(x, y)
 signal net_activate_powerup(powerup_id)
 signal net_force_start()
+
+# Harness gate (v0.0.23). While tools/chaos_bots.py runs, the server keeps the
+# seats for bots and sends a harness_status packet whenever the numbers change.
+# The newest one lives here, so a scene that opens later can read it at once.
+# join_locked means the server said no to our request_join (or took our seat
+# back, demoted = true) because the tests are running.
+signal net_harness_status(info: Dictionary)
+signal net_join_locked(demoted: bool, old_id: int)
+var harness_info: Dictionary = {"active": false, "state": "idle", "scenario": null,
+	"done": 0, "total": 0, "passed": 0, "failed": 0, "minor": 0}
 
 func _ready():
 
@@ -620,7 +630,22 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 			print("🔁 [Global] Reconnected: asking for our seat P", slot, " back")
 			_rejoin_pending = true
 			request_join(slot)
-	if type in ["version_error", "server_full"] and _rejoin_pending:
+	if type == "harness_status" or type == "join_locked":
+		for k in harness_info.keys():
+			if data.has(k):
+				harness_info[k] = data[k]
+		emit_signal("net_harness_status", harness_info)
+	if type == "join_locked":
+		var demoted := bool(data.get("demoted", false))
+		var old_id := my_player_id
+		if demoted:
+			print("🔒 [Global] The test harness took our seat P", old_id, ": we watch until the tests finish")
+			my_player_id = 0
+		else:
+			print("🔒 [Global] JOIN refused: the test harness is running, we watch for now")
+		is_spectator = true
+		emit_signal("net_join_locked", demoted, old_id)
+	if type in ["version_error", "server_full", "join_locked"] and _rejoin_pending:
 		_rejoin_pending = false
 		_ensure_scene_for_state(last_match_state)
 
@@ -971,6 +996,10 @@ func request_join(reclaim_id: int) -> void:
 	# dashboard can show a bot badge on the seat. A human client sends nothing here.
 	if ai_persona != "":
 		packet["bot"] = ai_persona
+	elif _autojoin:
+		# v0.0.23: a headless test client with no brain is still not a person.
+		# It says so, or the harness gate would keep it out of the fleet test.
+		packet["bot"] = "headless"
 	send_net_data(packet)
 
 func _should_auto_rejoin() -> bool:

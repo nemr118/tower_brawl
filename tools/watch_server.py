@@ -174,6 +174,8 @@ def header_text(status, age):
         ptxt += f" ({bots} bot{'s' if bots != 1 else ''})"
     parts.append(ptxt)
     parts.append(f"{status['spectators']} spectator{'s' if status['spectators'] != 1 else ''}")
+    if (status.get("harness") or {}).get("active"):
+        parts.append("SEATS LOCKED (harness)")   # v0.0.23: the server keeps the seats for bots
     parts.append(f"up {fmt_uptime(status['uptime_s'])}")
     parts.append(f"{age:.1f}s ago")
     return " | ".join(parts)

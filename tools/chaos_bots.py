@@ -86,6 +86,10 @@ SCHEMA = {
     "version_error": {"server_version": str},
     "server_full": {},
     "pong": {},
+    # v0.0.23 harness gate: the ticker for spectators, and the "no seat for you" answer.
+    # "scenario" is left out on purpose: it is None between scenarios.
+    "harness_status": {"active": bool, "state": str, "done": int, "total": int, "passed": int, "failed": int, "minor": int},
+    "join_locked": {"demoted": bool, "active": bool, "state": str, "done": int, "total": int},
     "sync_pos": {"tick": int, "x": NUM, "y": NUM, "aim_x": NUM, "aim_y": NUM, "facing": bool, "dash": bool,
                  "shield": bool, "bear": bool, "egg": bool, "sender": int},
     "spawn_projectile": {"weapon": str, "pos_x": NUM, "pos_y": NUM, "dir_x": NUM, "dir_y": NUM,
@@ -649,12 +653,16 @@ class Bot:
             return False
 
     # -- client actions -------------------------------------------------------
-    def join(self, version=None, reclaim=0):
+    def join(self, version=None, reclaim=0, bot="protocol"):
         # "bot": "protocol" (v0.0.22) tells the server this seat is a harness bot,
-        # so the dashboard can show a bot badge and count it.
-        self.send({"type": "request_join", "reclaim_id": reclaim, "token": self.token,
-                   "version": version if version is not None else self.ctx.version,
-                   "bot": "protocol"})
+        # so the dashboard can show a bot badge and count it. Since v0.0.23 the
+        # server also keeps the seats for bots while the harness runs, so
+        # bot=None (no field at all) plays a human knocking on the door.
+        pkt = {"type": "request_join", "reclaim_id": reclaim, "token": self.token,
+               "version": version if version is not None else self.ctx.version}
+        if bot is not None:
+            pkt["bot"] = bot
+        self.send(pkt)
 
     def report_death(self, victim, killer, weapon="Harness"):
         """Observer report: this bot saw `victim` die (need not be itself)."""
@@ -1910,6 +1918,61 @@ def sc_fleet(ctx):
     ctx.note(f"kills seen by a Godot client: {deaths_seen}, rounds ended: {round_ends}")
     for c in clients:
         c.stop()
+
+@scenario("harness_gate", "v0.0.23 gate: while the harness runs, a client with no \"bot\" field in request_join gets join_locked and no seat but keeps receiving; a protocol bot and a plain headless client still get seats; everyone receives harness_status with this scenario's name and the tests-done count")
+def sc_harness_gate(ctx):
+    if ctx.args.no_state:
+        ctx.say("--no-state: harness_state.json is not written, so the gate stays open; nothing to test")
+        return
+    # 1. A "human" connects: no bot field. It must see the ticker first.
+    human = Bot(ctx, 1, "Human").connect()
+    _, st = human.wait_for("spectator_state", 3.0)
+    if st is None:
+        ctx.fail("timeout.spectator-state", "Human: no spectator_state after connect")
+        return
+    _, tick = human.wait_for("harness_status", 4.0,
+                             pred=lambda p: p.get("active") is True and p.get("scenario") == "harness_gate")
+    if tick is None:
+        ctx.fail("scenario.gate.no-ticker", "Human: no harness_status with active=true and scenario='harness_gate' within 4 s")
+    else:
+        if tick.get("state") not in ("running", "restarting"):
+            ctx.fail("scenario.gate.ticker-state", f"harness_status.state={tick.get('state')!r}")
+        if tick.get("total", 0) < 1 or tick.get("done", 0) > tick.get("total", 0):
+            ctx.fail("scenario.gate.ticker-count", f"done={tick.get('done')} total={tick.get('total')}")
+        ctx.say(f"ticker: {tick.get('scenario')} done {tick.get('done')} / {tick.get('total')}")
+    # 2. The human asks for a seat and must be told no.
+    mark = human.mark()
+    human.join(bot=None)
+    _, locked = human.wait_for("join_locked", 3.0, since=mark)
+    if locked is None:
+        ctx.fail("scenario.gate.no-join-locked", "Human: request_join without a bot field got no join_locked")
+    elif locked.get("demoted") is not False or locked.get("active") is not True:
+        ctx.fail("scenario.gate.join-locked-fields", f"join_locked={locked}")
+    time.sleep(1.0)
+    if human.count("assign_id", since=mark) > 0:
+        ctx.fail("scenario.gate.human-seated", "Human: got assign_id while the harness was running")
+    # 3. Bots still get seats: one protocol bot, one that looks like a plain headless Godot client.
+    proto = ctx.bot(2)
+    lobby_join(ctx, [proto], lock=False)
+    headless = Bot(ctx, 3, "Headless").connect()
+    _, st = headless.wait_for("spectator_state", 3.0)
+    if st is None:
+        ctx.fail("timeout.spectator-state", "Headless: no spectator_state after connect")
+    headless.join(bot="headless")
+    _, pkt = headless.wait_for("assign_id", 3.0)
+    if pkt is None:
+        ctx.fail("scenario.gate.headless-refused", "Headless: \"bot\": \"headless\" did not get a seat while the harness ran")
+    # 4. The human is still a spectator and still hears the room.
+    _, joined = human.wait_for("player_joined", 3.0, since=mark, pred=lambda p: p.get("id") == (proto.slot or -1))
+    if joined is None:
+        ctx.fail("scenario.gate.spectator-deaf", "Human: no player_joined for the protocol bot after being refused")
+    seats = st.get("active_players", []) if st else []
+    if pkt is not None and human.slot:
+        ctx.fail("scenario.gate.human-has-slot", f"Human: slot={human.slot} while locked (seats {seats})")
+    ctx.say("human refused, bot and headless seated, spectator still receiving")
+    for b in (human, proto, headless):
+        b.disconnect()
+
 
 @scenario("play", "free play for --duration seconds with --bots bots (bandwidth baseline; use --die-rate 0 for steady state)")
 def sc_play(ctx):

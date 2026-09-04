@@ -121,7 +121,11 @@ const NET_SIGNAL_HANDLERS = {
 	"net_activate_powerup": "_on_net_activate_powerup",
 	"net_version_error": "_on_net_version_error",
 	"net_player_joined": "_on_net_player_joined",
+	"net_harness_status": "_on_harness_status",
+	"net_join_locked": "_on_join_locked",
 }
+
+const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
 
 @onready var hud = $HUD
 @onready var banner_label = $HUD/CenterBanner/BannerLabel
@@ -181,8 +185,18 @@ func _ready():
 	join_btn.z_index = 100
 	add_child(join_btn)
 	
-	if Global.my_player_id > 0:
+	if Global.my_player_id > 0 or bool(Global.harness_info.get("active", false)):
 		join_btn.visible = false
+
+	# v0.0.23: one-line test ticker under the top bar, on the right, out of the fight.
+	var ticker = HarnessTickerScript.new(true)
+	ticker.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	ticker.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	ticker.offset_left = -10
+	ticker.offset_right = -10
+	ticker.offset_top = 48
+	ticker.offset_bottom = 48
+	$HUD.add_child(ticker)
 	
 	# Platforms the right way up for a client arriving mid-match (spectator
 	# reconnect, late joiner): the server counts the flips for us.
@@ -210,6 +224,38 @@ func _on_net_player_joined(p_id: int, _active_list):
 
 func _on_return_to_lobby():
 	get_tree().change_scene_to_file("res://scenes/character_select.tscn")
+
+func _on_harness_status(info: Dictionary):
+	# v0.0.23: the gate closed or opened. A spectator's JOIN NEXT MATCH button
+	# hides while the tests run and comes back, ready to press, when they end.
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn:
+		var locked := bool(info.get("active", false))
+		j_btn.visible = Global.my_player_id == 0 and not locked
+		if not locked and j_btn.disabled and j_btn.text != "RELOAD THE PAGE TO JOIN":
+			j_btn.text = "JOIN NEXT MATCH"
+			j_btn.disabled = false
+
+func _on_join_locked(demoted: bool, old_id: int):
+	# The server said no to JOIN NEXT MATCH, or took our seat back for the tests.
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn:
+		j_btn.text = "JOIN NEXT MATCH"
+		j_btn.disabled = false
+		j_btn.visible = false
+	if not demoted:
+		return
+	# Same steps as SPECTATE (LEAVE MATCH), but the server already freed the seat.
+	if pause_overlay:
+		pause_overlay.visible = false
+	var p_node = get_node_or_null("Player" + str(old_id))
+	if p_node:
+		p_node.queue_free()
+	player_instances.erase(old_id)
+	for child in $HUD.get_children():
+		if child is Button and child.text == "LEAVE MATCH":
+			child.visible = false
+	_show_banner("THE TESTS TOOK YOUR SEAT. WATCH UNTIL THEY FINISH.", 4.0)
 
 func _on_net_version_error(server_version: String):
 	# The server refused our JOIN NEXT MATCH: the browser is running a cached build.
