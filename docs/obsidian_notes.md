@@ -78,13 +78,40 @@ godot --headless --path . -- --autojoin --name=Headless --class=2
 ```
 Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type). The same line appears in the browser console of any real client. The server logs a `[STATS]` line every 10 s in `server.log`.
 
-### 7. The live server dashboard (v0.0.21)
+### 7. The live operations deck (v0.0.21, grown in v0.0.22)
 ```bash
 ./venv/bin/python tools/watch_server.py              # live view, redraws every second, Ctrl+C to stop
 ./venv/bin/python tools/watch_server.py --plain      # plain text, no colours
 ./venv/bin/python tools/watch_server.py --once       # one picture, then exit (handy in a script)
 ```
-The server writes `status.json` once a second (match state, one row per seat, traffic rates, the last 40 tagged log lines). The dashboard only reads that file; it never talks to the server. A red bar means the file is missing or older than 3 s, so the server is probably down (`systemctl --user status towerbrawl`). Every `server.log` line starts with a tag since v0.0.21: `[JOIN] [LEAVE] [CONN] [NAME] [LOCK] [MATCH] [ROUND] [KILL] [NET] [STATS]`. The packet dumps (`[MSG]`, `[SEND]`) are debug level and go to `debug.log` only. Colours show only on a real terminal; the files stay plain.
+The server writes `status.json` once a second (match state, one row per seat with kills, deaths and ping, the bot cards, the kill timeline, traffic rates, the last 40 tagged log lines). The harness writes `harness_state.json` while it runs. The deck only reads those two files; it never talks to the server. A red bar means `status.json` is missing or older than 3 s, so the server is probably down (`systemctl --user status towerbrawl`). A yellow bar means the harness is restarting the server between scenarios.
+
+The picture is a stack of panels. A panel with nothing to show is not drawn:
+- `HEADER`: state, round, flips, players (with the bot count), spectators, uptime.
+- `HARNESS`: only while a harness run is alive. Scenario name and place in the suite, a progress bar, what the scenario tests, the last step, the checklist (✔ PASS, ✖ FAIL, ▲ Minor, ● running, ○ waiting), findings and warnings. A finished run stays as one line for ten minutes.
+- `SEATS`: name (🤖 for a bot), class, state, lives, crowns, `K/D`, `Ping`, `Health` (`good`, `laggy` over 150 ms, `slow` when the send queue backs up, `quiet` after 3 s of silence, `stalled` after 5 s, `held`, `empty`), link, packets in, queue and drops, seconds since the last packet.
+- `FIGHT`: once the match has a kill. A `kills/5s` bar chart, one lane per fighter (◆ kill, ✕ death, ◈ both), a ┃ line where a new round started, a `round` row with `R1`, `R2`, … Newest on the right. Stays after the match ends ("last match") until the next one starts.
+- `BOT ARENA`: when a bot brain is in the match. Persona, difficulty, state, target, accuracy, air time, actions, wraps, fall loop, aim error, uptime, learning deltas. Empty future slots print `-`.
+- `TRAFFIC`: IN and OUT lines. `EVENTS`: the newest tagged log lines fill the rest of the screen.
+
+Every `server.log` line starts with a tag since v0.0.21: `[JOIN] [LEAVE] [CONN] [NAME] [LOCK] [MATCH] [ROUND] [KILL] [NET] [STATS]`. The packet dumps (`[MSG]`, `[SEND]`) are debug level and go to `debug.log` only. Colours show only on a real terminal; the files stay plain.
+
+### 8. The harness on the deck (v0.0.22)
+While `tools/chaos_bots.py` runs it writes `harness_state.json` in the repo root (gitignored): the run state, the suite checklist, the running scenario with its step, findings and warnings, and the bot cards of the Godot clients in a fleet run. A heartbeat thread refreshes it once a second. `--no-state` turns it off.
+
+Results have three levels now. `PASS`, `FAIL`, and `MINOR`: the scenario passed but something complained (`ctx.warn(name, detail)` in the harness). The two warnings today are `server.error-logged` (the server wrote an `ERROR` line or a traceback during the scenario) and `fleet.script-warning` (a Godot client printed a `WARNING:` line). The report table has a `warn` column and a `WARNINGS` block; the JSON report carries `warnings` and `minor` per scenario.
+
+Bots tell the server who they are: `"bot": "<persona>"` in `request_join` (`"protocol"` for a harness bot), and a brain sends a `bot_status` card every 5 s. The server keeps the last card per seat in `status.json` (`seats[].bot`) and never relays it. The card shape is the same in `status.json` and in `harness_state.json` (`bots[]`):
+```json
+{"schema": 1, "kind": "brain", "seat": 2, "persona": "sniper", "seed": 421, "difficulty": 0.7, "uptime_s": 45,
+ "state": null, "target": null, "goal": [320, 200],
+ "actions": {"decisions": 412, "moves": 300, "jumps": 40, "dashes": 12, "attacks": 38, "specials": 6, "evades": 7},
+ "nav": {"wraps": 3, "drops": 1, "seams": 2, "land_avg_s": 0.42, "max_loop": 1},
+ "aim": {"err_mean_deg": 0.0, "err_max_deg": 0.1, "frames": 900},
+ "combat": {"kills": null, "deaths": null, "shots": null, "hits": null, "accuracy": null, "air_time_pct": null, "damage_dealt": null},
+ "learning": {"episode": null, "reward": null, "weights": {}, "deltas": {}}}
+```
+`state`, `target`, `combat` and `learning` are empty slots for future bot brains (a state like `seeking`, `retreating`, `camping`; the seat it hunts; accuracy and air time; learning weights and their deltas). The deck draws them as soon as a brain fills them.
 
 ---
 

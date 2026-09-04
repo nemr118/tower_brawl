@@ -112,6 +112,28 @@ def _ip(addr):
     except Exception:
         return str(addr)
 
+def _as_int(value, default=0):
+    """A whole number from a packet field, or `default` when the field is not one.
+    The story: the fuzz test sends "victim": "abc" and int("abc") blew up with a
+    traceback in the log. Bad values are dropped quietly now. True/False are not
+    numbers here either."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value == int(value):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return default
+    return default
+
+def _lives_text(n):
+    """'1 life left', '0 lives left', '2 lives left'. Plain English for the log."""
+    return f"{n} life left" if n == 1 else f"{n} lives left"
+
 import hashlib
 import base64
 import struct
@@ -120,7 +142,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.21"
+GAME_VERSION = "v0.0.22"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -212,11 +234,13 @@ def stats_loop():
                               "out_bytes": 0, "out_fail": 0, "out_drop": 0, "in_types": {}})
         with lobby_lock:
             players = sum(1 for p in player_slots if p)
+            bots = _bot_count()
             spectators = len(spectator_sockets)   # sockets without a slot (a slot holder is not in here)
             state = global_match_state
         top = ", ".join(f"{k}={v}" for k, v in sorted(s["in_types"].items(), key=lambda kv: -kv[1])[:6])
+        bots_txt = f" ({bots} bot{'s' if bots != 1 else ''})" if bots else ""
         logger.info(
-            f"[STATS {STATS_INTERVAL:.0f}s] {state} players={players} spectators={spectators} sockets={players + spectators}"
+            f"[STATS {STATS_INTERVAL:.0f}s] {state} players={players}{bots_txt} spectators={spectators} sockets={players + spectators}"
             f" | IN {s['in_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['in_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
             f" (avg {s['in_bytes'] / max(s['in_pkts'], 1):.0f} B)"
             f" | OUT {s['out_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['out_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
@@ -273,8 +297,14 @@ def _build_status(prev_totals, prev_conns, dt):
                 "crowns": global_player_scores.get(pid, 0),
                 "held_s": round(max(pend["until"] - now, 0.0), 1) if pend else None,
                 "in_pps": 0.0, "in_kbps": 0.0, "queue": 0, "dropped": 0, "seen_s": None, "age_s": None,
+                # v0.0.22: fight counts for this match, the client's ping, and its bot card.
+                "kills": match_kd[pid]["kills"],
+                "deaths": match_kd[pid]["deaths"],
+                "rtt_ms": None,
+                "bot": player_bots.get(pid) if entry is not None or pend else None,
             }
             if conn is not None:
+                seat["rtt_ms"] = conn.rtt_ms
                 key = id(entry["sock"])
                 p_pkts, p_bytes = prev_conns.get(key, (conn.in_pkts, conn.in_bytes))
                 seat["in_pps"] = round((conn.in_pkts - p_pkts) / dt, 1)
@@ -302,8 +332,15 @@ def _build_status(prev_totals, prev_conns, dt):
                 "playing": list(global_playing_players),
                 "waiting": list(global_waiting_players),
                 "alive": sorted(global_alive_players),
+                # v0.0.22: every kill and every round of the current (or last) match.
+                "timeline": {
+                    "started_at": match_timeline["started_at"],
+                    "kills": list(match_timeline["kills"]),
+                    "rounds": [list(r) for r in match_timeline["rounds"]],
+                },
             },
             "seats": seats,
+            "bots": _bot_count(),
             "spectators": len(spectator_sockets),
             "sockets": sum(1 for p in player_slots if p) + len(spectator_sockets),
         }
@@ -396,6 +433,38 @@ pending_names = {}                  # id(sock) -> name sent before the client ha
 last_death = {}                     # pid -> time of the last accepted death report
 global_arena_flips = 0              # activate_powerup count this match (platform rotation for late arrivals)
 _grace_seq = 0
+
+# Fight telemetry (v0.0.22) --------------------------------------------------
+# The story: the dashboard wanted to show who is winning, not only who is alive.
+# So the server now counts kills and deaths per seat for the current match and
+# keeps a small timeline of every kill and every round. All of it starts fresh
+# in _setup_match and stays readable after the match ends, until the next one.
+TIMELINE_MAX_KILLS = 300            # a match never has this many, it is only a safety cap
+match_kd = {i: {"kills": 0, "deaths": 0} for i in range(1, 5)}   # pid -> counts this match
+match_timeline = {"started_at": None, "kills": [], "rounds": []}
+# One kill is [seconds since match start, killer, victim, weapon, round].
+# One round is [round number, start seconds, winner or None while it runs].
+
+# Bots (v0.0.22) -------------------------------------------------------------
+# A headless bot says "bot": "<persona>" in request_join, and a bot brain sends
+# a bot_status packet every 5 s with its numbers. The server keeps the last one
+# per seat here and copies it into status.json. It is never sent to the players.
+player_bots = {}                    # pid -> the last bot telemetry dict for that seat
+BOT_STATUS_MAX_BYTES = 1024         # a bot_status packet bigger than this is dropped
+BOT_PERSONA_MAX = 16
+
+def _bot_count():
+    """(lobby_lock held) How many of the seated players said they are bots."""
+    return sum(1 for i in range(4) if player_slots[i] and (i + 1) in player_bots)
+
+def _bot_from_join(value, pid):
+    """The bot card for a seat from the "bot" field of request_join, or None.
+    "protocol" is a harness bot, anything else is a brain persona."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    persona = value.strip()[:BOT_PERSONA_MAX]
+    return {"schema": 1, "kind": "protocol" if persona == "protocol" else "brain",
+            "seat": pid, "persona": persona, "updated_at": time.time()}
 # ─────────────────────────────────────────────────────────────────────────────
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -518,6 +587,7 @@ class ClientConn:
         self.in_bytes = 0
         self.last_rx = time.time()
         self.opened_at = time.time()
+        self.rtt_ms = None          # v0.0.22: the round trip the client measured, sent with its pings
         self.stall_since = None
         self.last_outq = 0
         self.last_stall_check = time.time()
@@ -759,6 +829,17 @@ def _setup_match():
         global_player_stocks[i] = 3
     pending_rejoin.clear()
     last_death.clear()
+    # A new match: the fight telemetry starts from zero (v0.0.22).
+    for i in range(1, 5):
+        match_kd[i] = {"kills": 0, "deaths": 0}
+    match_timeline["started_at"] = time.time()
+    match_timeline["kills"] = []
+    match_timeline["rounds"] = [[1, 0.0, None]]
+
+def _match_t():
+    """Seconds since the match started, for the timeline."""
+    started = match_timeline["started_at"]
+    return round(time.time() - started, 1) if started else 0.0
 
 def _live_alive():
     """Alive fighters that are actually connected. A fighter inside its rejoin
@@ -777,6 +858,8 @@ def _check_round_end(label):
         return False
     global_is_round_over = True
     winner = next(iter(live)) if len(live) == 1 else 0
+    if match_timeline["rounds"]:
+        match_timeline["rounds"][-1][2] = winner   # close the round marker on the timeline
     if winner > 0:
         global_player_scores[winner] += 1
         if global_player_scores[winner] >= MATCH_SCORE_LIMIT:
@@ -828,6 +911,7 @@ def _next_round_later(label):
             for i in range(1, 5):
                 global_player_stocks[i] = 3
             last_death.clear()
+            match_timeline["rounds"].append([global_current_round, _match_t(), None])
             logger.info(f"[ROUND] round {global_current_round} starting with {present}")
             broadcast(json.dumps({"type": "new_round", "round": global_current_round}))
 
@@ -860,6 +944,7 @@ def _grace_expired(label, pid, seq, delay):
         if player_slots[pid - 1] is None:
             player_locked.pop(pid, None)
             player_names.pop(pid, None)
+            player_bots.pop(pid, None)
         logger.info(f"[LEAVE] P{pid} did not come back within {delay:g} s, out of the match")
         _idle_reset_if_empty(label)
         _check_round_end(label)
@@ -946,6 +1031,11 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
             try:
                 if mtype == "ping":
                     # Echo the client's timestamp (if any) so it can measure round-trip time.
+                    # v0.0.22: the client also tells us the round trip it measured last
+                    # time ("rtt", in ms), so the dashboard can show a ping per seat.
+                    rtt = _as_int(data.get("rtt"), -1)
+                    if 0 <= rtt < 60000:
+                        conn.rtt_ms = rtt
                     ws_send(sock, json.dumps({"type": "pong", "t": data.get("t")}))
                     continue
 
@@ -1050,6 +1140,13 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         pending = pending_names.pop(id(sock), None)
                         if pending:
                             player_names[assigned_id] = _unique_name(pending, assigned_id)
+                        # v0.0.22: a headless bot says so when it joins, so the dashboard
+                        # can show a bot badge before the first bot_status packet arrives.
+                        bot_card = _bot_from_join(data.get("bot"), assigned_id)
+                        if bot_card is not None:
+                            player_bots[assigned_id] = bot_card
+                        else:
+                            player_bots.pop(assigned_id, None)
                         # rejoined: this socket resumed its own seat in a RUNNING match (page
                         # reload inside the grace, or hot reclaim). The client keeps its ammo.
                         snapshot = _state_snapshot("assign_id", id=assigned_id,
@@ -1066,6 +1163,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     known_name = snapshot["player_names"].get(str(assigned_id))
                     logger.info(f"[JOIN] P{assigned_id} took seat {assigned_id} via {label} from {_ip(addr)}"
                                 + (f" as '{known_name}'" if known_name else "")
+                                + (f" (bot: {bot_card['persona']})" if bot_card else "")
                                 + (" (hot reclaim)" if hot_reclaim else "") + (" (rejoined mid-match)" if rejoin else ""))
                     ws_send(sock, json.dumps(snapshot))
                     if not hot_reclaim:
@@ -1091,6 +1189,23 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
 
                 if assigned_id is None:
                     continue  # spectators may only ping / request_join / set_name
+
+                if mtype == "bot_status":
+                    # v0.0.22: a bot brain's numbers (persona, actions, aim, and empty slots
+                    # for the future). Kept for status.json only, never sent to the players.
+                    if len(msg) > BOT_STATUS_MAX_BYTES:
+                        logger.debug(f"[NET] P{assigned_id} bot_status too big ({len(msg)} B), dropped")
+                        continue
+                    card = {k: v for k, v in data.items() if k not in ("type", "sender")}
+                    card["seat"] = assigned_id
+                    card["schema"] = _as_int(card.get("schema"), 1)
+                    persona = card.get("persona")
+                    card["persona"] = persona.strip()[:BOT_PERSONA_MAX] if isinstance(persona, str) else "?"
+                    card["kind"] = "protocol" if card.get("kind") == "protocol" else "brain"
+                    card["updated_at"] = time.time()
+                    with lobby_lock:
+                        player_bots[assigned_id] = card
+                    continue
 
                 if mtype in ("force_start", "match_started"):
                     # Transition guard: only the first start request sets the match up,
@@ -1123,9 +1238,12 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     # Observer-authoritative: whichever client sees the hit reports it (the
                     # victim's own client, the attacker's for melee and stomps, a spectator).
                     # The first report inside DEATH_DEDUPE_S counts, the rest are the same death.
-                    victim = int(data.get("victim", 0))
-                    killer = int(data.get("killer", 0))
+                    # _as_int (v0.0.22): a wrong type here used to raise and leave a
+                    # traceback in the log. Now a bad victim is simply not a seat, so it is dropped.
+                    victim = _as_int(data.get("victim"), 0)
+                    killer = _as_int(data.get("killer"), 0)
                     weapon = data.get("weapon", "Unknown")
+                    weapon = weapon if isinstance(weapon, str) else str(weapon)
                     if not 1 <= victim <= 4:
                         continue
                     with lobby_lock:
@@ -1142,10 +1260,16 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         left = global_player_stocks[victim] - 1
                         if killer == victim:
                             logger.info(f"[KILL] P{victim} ({victim_name}) fell to its own '{weapon}', "
-                                        f"{left} lives left (seen by P{assigned_id})")
+                                        f"{_lives_text(left)} (seen by P{assigned_id})")
                         else:
                             logger.info(f"[KILL] P{killer} ({killer_name}) killed P{victim} ({victim_name}) with '{weapon}', "
-                                        f"{left} lives left (seen by P{assigned_id})")
+                                        f"{_lives_text(left)} (seen by P{assigned_id})")
+                        # Fight telemetry (v0.0.22): count it and put it on the timeline.
+                        match_kd[victim]["deaths"] += 1
+                        if 1 <= killer <= 4 and killer != victim:
+                            match_kd[killer]["kills"] += 1
+                        if len(match_timeline["kills"]) < TIMELINE_MAX_KILLS:
+                            match_timeline["kills"].append([_match_t(), killer, victim, weapon[:16], global_current_round])
                         global_player_stocks[victim] -= 1
                         if global_player_stocks[victim] <= 0:
                             global_alive_players.discard(victim)
@@ -1205,6 +1329,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                 else:
                     player_locked.pop(assigned_id, None)
                     player_names.pop(assigned_id, None)
+                    player_bots.pop(assigned_id, None)
                     _remove_player(assigned_id)
                 freed = True
                 remaining = _present_players()

@@ -194,6 +194,132 @@ class Findings:
     def failed(self):
         return bool(self.counts)
 
+    def as_dict(self):
+        return {k: {"count": self.counts[k], "examples": self.examples[k]} for k in self.order}
+
+
+# ── Live state file (v0.0.22) ────────────────────────────────────────────────
+# The story: while the harness ran, the dashboard could only show the server.
+# Now the harness writes harness_state.json (next to status.json) whenever
+# something happens: a scenario starts, a step is announced, a finding lands, a
+# scenario ends. A tiny thread refreshes the heartbeat once a second so the
+# dashboard knows the run is still alive. The file is written under a temp name
+# and renamed, so a reader never sees half a file. Writing a few KB takes well
+# under a millisecond, next to bots already sending 30 packets a second.
+STATE_FILE = os.path.join(ROOT, "harness_state.json")
+SERVER_LOG = os.path.join(ROOT, "server.log")
+
+
+class StatePublisher:
+    def __init__(self, path=STATE_FILE, enabled=True):
+        self.path = path
+        self.enabled = enabled
+        self.lock = threading.Lock()
+        self.state = {"schema": 1, "state": "idle", "written_at": time.time(), "pid": os.getpid(),
+                      "started_at": time.time(), "version": "", "seed": 0, "command": "",
+                      "mode": "suite", "suite": None, "scenario": None, "results": [], "bots": [], "soak": None}
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if not self.enabled:
+            return
+        self._thread = threading.Thread(target=self._heartbeat, daemon=True, name="harness-state")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _heartbeat(self):
+        while not self._stop.wait(1.0):
+            self.write()
+
+    def update(self, **fields):
+        """Change some top-level fields and write the file."""
+        with self.lock:
+            self.state.update(fields)
+        self.write()
+
+    def scenario_update(self, **fields):
+        """Change fields inside the running scenario and write the file."""
+        with self.lock:
+            if self.state["scenario"] is not None:
+                self.state["scenario"].update(fields)
+        self.write()
+
+    def write(self):
+        if not self.enabled:
+            return
+        with self.lock:
+            self.state["written_at"] = time.time()
+            sc = self.state["scenario"]
+            if sc is not None and sc.get("started_at"):
+                sc["elapsed_s"] = round(time.time() - sc["started_at"], 1)
+            data = json.dumps(self.state, separators=(",", ":"), default=str)
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(data)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+
+STATE = StatePublisher()
+
+
+def server_log_size():
+    try:
+        return os.path.getsize(SERVER_LOG)
+    except OSError:
+        return 0
+
+
+def server_log_errors(since_offset):
+    """ERROR lines and tracebacks the server wrote after `since_offset` bytes.
+    The server survived (otherwise the scenario fails on its own), but a
+    traceback in the log is still worth a Minor mark."""
+    found = []
+    try:
+        with open(SERVER_LOG, encoding="utf-8", errors="replace") as f:
+            f.seek(since_offset)
+            for line in f:
+                s = line.rstrip()
+                if "| ERROR " in s or s.startswith("Traceback"):
+                    found.append(s[:160])
+    except OSError:
+        pass
+    return found
+
+
+def bot_card_from_stats(client):
+    """The bot telemetry card (same shape as the server's) from a Godot client's log."""
+    st = client.stats()
+    b = st["bot"]
+    if b is None:
+        return None
+    return {"schema": 1, "kind": "brain", "source": "harness", "client": client.name,
+            "seat": b["slot"], "persona": b["persona"], "seed": None, "difficulty": None,
+            "uptime_s": b["seconds"], "state": None, "target": None, "goal": None,
+            "actions": {k: b[k] for k in ("decisions", "moves", "jumps", "dashes", "attacks", "specials", "evades")},
+            "nav": {"wraps": b["wraps"], "drops": b["drops"], "seams": b["seams"],
+                    "land_avg_s": b["land_avg"], "max_loop": b["max_loop"]},
+            "aim": None, "combat": None, "learning": None,
+            "deaths_reported": st["deaths_reported"]}
+
+
+def nap(ctx, seconds, clients=()):
+    """Sleep `seconds`, but wake every 5 s to publish the bot cards of the
+    Godot clients to the state file. The scenario itself does not change."""
+    end = time.monotonic() + seconds
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            break
+        time.sleep(min(5.0, left))
+        if clients:
+            STATE.update(bots=[c for c in (bot_card_from_stats(cl) for cl in clients) if c])
+
 
 # ── Model (oracle) ───────────────────────────────────────────────────────────
 class Model:
@@ -524,8 +650,11 @@ class Bot:
 
     # -- client actions -------------------------------------------------------
     def join(self, version=None, reclaim=0):
+        # "bot": "protocol" (v0.0.22) tells the server this seat is a harness bot,
+        # so the dashboard can show a bot badge and count it.
         self.send({"type": "request_join", "reclaim_id": reclaim, "token": self.token,
-                   "version": version if version is not None else self.ctx.version})
+                   "version": version if version is not None else self.ctx.version,
+                   "bot": "protocol"})
 
     def report_death(self, victim, killer, weapon="Harness"):
         """Observer report: this bot saw `victim` die (need not be itself)."""
@@ -784,6 +913,7 @@ class Ctx:
         self.version = version
         self.seed = seed
         self.findings = Findings()
+        self.warnings = Findings()   # v0.0.22: soft findings; the scenario still passes, marked Minor
         self.bots = []
         self.t0 = time.monotonic()
         self.trace = None            # JSONL file for --trace (non-movement packets + model snapshots)
@@ -800,13 +930,25 @@ class Ctx:
 
     def fail(self, name, detail):
         self.findings.fail(name, detail)
+        STATE.scenario_update(findings=self.findings.as_dict())
+
+    def warn(self, name, detail):
+        """A soft finding: the scenario passes, but the report shows it as Minor."""
+        self.warnings.fail(name, detail)
+        STATE.scenario_update(warnings=self.warnings.as_dict())
 
     def say(self, msg):
         print(f"    {time.monotonic() - self.t0:5.1f}s  {msg}", flush=True)
+        STATE.scenario_update(step=msg)
 
     def note(self, msg):
         self.notes.append(msg)
         self.say("note: " + msg)
+        STATE.scenario_update(notes=list(self.notes))
+
+    def timed(self, seconds):
+        """Tell the dashboard how long this scenario plays, for its progress bar."""
+        STATE.scenario_update(duration_s=float(seconds))
 
 
 def lobby_join(ctx, bots, lock=True):
@@ -1292,6 +1434,15 @@ class GodotClient:
                 seen[s] = seen.get(s, 0) + 1
         return seen
 
+    def warnings(self):
+        """Godot WARNING: lines (push_warning). Not a failure, but worth a Minor mark."""
+        seen = collections.OrderedDict()
+        for line in self.text().splitlines():
+            s = line.strip()
+            if s.startswith("WARNING:"):
+                seen[s] = seen.get(s, 0) + 1
+        return seen
+
     BOT_LINE = re.compile(r"\[Bot (\w+) P(\d) (\d+)s\] .*?decisions=(\d+) moves=(\d+) jumps=(\d+) dashes=(\d+) "
                           r"attacks=(\d+) specials=(\d+) evades=(\d+) \| wraps=(\d+) drops=(\d+) seams=(\d+) "
                           r"land_avg=([\d.]+)s max_loop=(\d+)")
@@ -1373,13 +1524,16 @@ def sc_lag(ctx):
     laggy.latency, laggy.jitter, laggy.loss = 0.150, 0.050, 0.10
     for b in bots:
         b.die_rate = 0.4
-    time.sleep(30.0)
+    ctx.timed(30.0)
+    nap(ctx, 30.0, [observer] if observer is not None else ())
     if bots[0].count("round_end") == 0:
         ctx.fail("scenario.lag.no-round-end", "no round_end in 30 s with a lagging player in the match")
     ctx.note(f"laggy bot dropped {laggy.dropped} packets on purpose; rounds ended: {len(bots[0].model.round_ends)}")
     if observer is not None:
         for line, count in observer.errors().items():
             ctx.fail("scenario.lag.script-error", f"{observer.name}: {line} (x{count})")
+        for line, count in observer.warnings().items():
+            ctx.warn("scenario.lag.script-warning", f"{observer.name}: {line} (x{count})")
         st = observer.stats()
         pj = st["puppets"]
         if pj:
@@ -1705,7 +1859,8 @@ def sc_fleet(ctx):
             b.die_rate = 0.3
     dur = ctx.args.duration
     ctx.say(f"playing {dur:.0f} s" + (f" with personas {', '.join(personas)}" if ctx.args.ai else ""))
-    time.sleep(dur)
+    ctx.timed(dur)
+    nap(ctx, dur, clients)
     round_ends = 0
     deaths_seen = 0
     for c in clients:
@@ -1714,6 +1869,8 @@ def sc_fleet(ctx):
         errs = c.errors()
         for line, count in errs.items():
             ctx.fail("fleet.script-error", f"{c.name}: {line} (x{count})")
+        for line, count in c.warnings().items():
+            ctx.warn("fleet.script-warning", f"{c.name}: {line} (x{count})")
         st = c.stats()
         if not st["assigned"]:
             ctx.fail("fleet.not-assigned", f"{c.name} never got a player slot")
@@ -1763,12 +1920,14 @@ def sc_play(ctx):
         b.latency, b.jitter, b.loss = ctx.args.latency_ms / 1000.0, ctx.args.jitter_ms / 1000.0, ctx.args.loss
     ctx.say(f"playing {ctx.args.duration:.0f} s at {ctx.args.rate:g} Hz, die-rate {ctx.args.die_rate:g}/s"
             f", latency {ctx.args.latency_ms:g}+/-{ctx.args.jitter_ms:g} ms, loss {ctx.args.loss:g}")
-    time.sleep(ctx.args.duration)
+    ctx.timed(ctx.args.duration)
+    nap(ctx, ctx.args.duration)
 
 
 # ── Runner / report ──────────────────────────────────────────────────────────
 def restart_server():
     print("restarting towerbrawl.service ...", flush=True)
+    STATE.update(state="restarting")
     subprocess.run(["systemctl", "--user", "restart", "towerbrawl"], check=False)
     for _ in range(30):
         out = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
@@ -1828,11 +1987,17 @@ def run_scenario(name, args, version):
         ctx.trace.write(json.dumps({"scenario": name, "seed": args.seed, "version": version}) + "\n")
     print(f"\n▶ {name}: {desc}", flush=True)
     t0 = time.monotonic()
+    STATE.update(scenario={"name": name, "desc": desc, "started_at": time.time(), "elapsed_s": 0.0,
+                           "duration_s": None, "step": "", "findings": {}, "warnings": {}, "notes": []},
+                 bots=[])
+    log_mark = server_log_size()
     try:
         if args.restart_each:
             restart_server()
+            log_mark = server_log_size()
         elif not args.no_precheck:
             ensure_lobby(ctx)
+        STATE.update(state="running")
         fn(ctx)
     except Exception as e:
         ctx.fail("harness.exception", f"{type(e).__name__}: {e}")
@@ -1842,14 +2007,39 @@ def run_scenario(name, args, version):
             time.sleep(0.3)
             ctx.trace.close()
             ctx.trace = None
+    # The server survived, but did it complain? A traceback in its log is a Minor mark.
+    for line in server_log_errors(log_mark)[:3]:
+        ctx.warn("server.error-logged", line)
     elapsed = time.monotonic() - t0
     F = ctx.findings
-    res = {"scenario": name, "passed": not F.failed(), "elapsed_s": round(elapsed, 1),
-           "findings": {k: {"count": F.counts[k], "examples": F.examples[k]} for k in F.order},
+    W_ = ctx.warnings
+    res = {"scenario": name, "passed": not F.failed(), "minor": (not F.failed()) and W_.failed(),
+           "elapsed_s": round(elapsed, 1),
+           "findings": F.as_dict(), "warnings": W_.as_dict(),
            "notes": list(ctx.notes), "metrics": metrics(ctx, elapsed)}
-    print(f"  {'PASS' if res['passed'] else 'FAIL'}  ({elapsed:.1f} s, {len(F.order)} finding kinds)", flush=True)
+    print(f"  {result_word(res)}  ({elapsed:.1f} s, {len(F.order)} finding kinds, {len(W_.order)} warning kinds)", flush=True)
     time.sleep(0.5)
     return res
+
+
+def result_word(res):
+    """PASS, FAIL or MINOR (passed, but with warnings)."""
+    if not res["passed"]:
+        return "FAIL"
+    return "MINOR" if res.get("minor") else "PASS"
+
+
+def publish_result(res, names):
+    """Add one finished scenario to the state file and refresh the suite counters."""
+    with STATE.lock:
+        results = STATE.state["results"]
+    results = results + [{"scenario": res["scenario"], "result": result_word(res), "elapsed_s": res["elapsed_s"],
+                          "finding_kinds": len(res["findings"]), "warning_kinds": len(res.get("warnings", {}))}]
+    suite = {"names": list(names), "index": len(results), "total": len(names),
+             "passed": sum(1 for r in results if r["result"] == "PASS"),
+             "failed": sum(1 for r in results if r["result"] == "FAIL"),
+             "minor": sum(1 for r in results if r["result"] == "MINOR")}
+    STATE.update(results=results, suite=suite, scenario=None, bots=[])
 
 
 def soak_summary(samples):
@@ -1879,6 +2069,23 @@ def run(args):
             print("note: godot not on PATH, skipping the fleet scenario", flush=True)
     else:
         names = [args.scenario]
+    STATE.enabled = not args.no_state
+    STATE.update(state="running", started_at=time.time(), version=version, seed=args.seed,
+                 command="chaos_bots.py " + " ".join(sys.argv[1:]),
+                 mode="soak" if args.soak > 0 else ("suite" if args.scenario == "all" else "single"),
+                 suite={"names": names, "index": 0, "total": len(names), "passed": 0, "failed": 0, "minor": 0},
+                 scenario=None, results=[], bots=[], soak=None)
+    STATE.start()
+    try:
+        return _run(args, version, names)
+    except KeyboardInterrupt:
+        STATE.update(state="aborted", scenario=None, bots=[])
+        raise
+    finally:
+        STATE.stop()
+
+
+def _run(args, version, names):
     if args.restart_server:
         restart_server()
     print(f"Tower Brawl harness  server=ws://{args.host}:{args.port}  version={version}  seed={args.seed}  scenarios={names}", flush=True)
@@ -1900,9 +2107,12 @@ def run(args):
             for name in names:
                 if time.monotonic() >= deadline:
                     break
+                STATE.update(soak={"minutes": args.soak, "pass_no": pass_no,
+                                   "deadline_at": time.time() + (deadline - time.monotonic())})
                 res = run_scenario(name, args, version)
                 res["scenario"] = f"{name}#{pass_no}"
                 results.append(res)
+                publish_result(res, names)
                 st = server_proc_stats()
                 if st:
                     samples.append((round(time.monotonic() - started, 1), res["scenario"], st))
@@ -1917,9 +2127,12 @@ def run(args):
                         "findings": soak["findings"], "notes": [], "metrics": metrics(Ctx(args, version, args.seed), 1.0)})
     else:
         for name in names:
-            results.append(run_scenario(name, args, version))
+            res = run_scenario(name, args, version)
+            results.append(res)
+            publish_result(res, names)
             if args.json:
                 write_json_report(args.json, version, args.seed, results, complete=False)
+    STATE.update(state="done", scenario=None, bots=[])
 
     # ── report ──
     W = 78
@@ -1927,18 +2140,29 @@ def run(args):
     print("TOWER BRAWL HARNESS REPORT".center(W))
     print(f"server ws://{args.host}:{args.port}   version {version}   seed {args.seed}".center(W))
     print("=" * W)
-    print(f"{'scenario':<22}{'result':<7}{'time':>7}{'in pkts':>9}{'out pkts':>9}{'dups':>7}{'kinds':>7}")
+    print(f"{'scenario':<22}{'result':<7}{'time':>7}{'in pkts':>9}{'out pkts':>9}{'dups':>7}{'kinds':>7}{'warn':>6}")
     for r in results:
         m = r["metrics"]
-        print(f"{r['scenario']:<22}{'PASS' if r['passed'] else 'FAIL':<7}{r['elapsed_s']:>6.1f}s{m['in_pkts']:>9}{m['out_pkts']:>9}{m['duplicates']:>7}{len(r['findings']):>7}")
+        print(f"{r['scenario']:<22}{result_word(r):<7}{r['elapsed_s']:>6.1f}s{m['in_pkts']:>9}{m['out_pkts']:>9}{m['duplicates']:>7}{len(r['findings']):>7}{len(r.get('warnings', {})):>6}")
     all_findings = collections.OrderedDict()
+    all_warnings = collections.OrderedDict()
     for r in results:
         for k, v in r["findings"].items():
             all_findings.setdefault(k, []).append((r["scenario"], v))
+        for k, v in r.get("warnings", {}).items():
+            all_warnings.setdefault(k, []).append((r["scenario"], v))
     if all_findings:
         print("-" * W)
         print("FINDINGS (kind: total across scenarios, first example)")
         for k, lst in all_findings.items():
+            total = sum(v["count"] for _, v in lst)
+            scen = ",".join(s for s, _ in lst)
+            print(f"  {k:<36} x{total:<6} [{scen}]")
+            print(f"      e.g. {lst[0][1]['examples'][0]}")
+    if all_warnings:
+        print("-" * W)
+        print("WARNINGS (Minor: the scenario passed, but something complained)")
+        for k, lst in all_warnings.items():
             total = sum(v["count"] for _, v in lst)
             scen = ",".join(s for s, _ in lst)
             print(f"  {k:<36} x{total:<6} [{scen}]")
@@ -1965,8 +2189,11 @@ def run(args):
               f" | OUT {m['out_pps_per_bot']:5.1f} pkt/s {m['out_kbps_per_bot']:5.2f} KB/s"
               f" | sync_pos {m['sync_pos_avg_bytes']} B | {rtt_s}")
     failed = [r["scenario"] for r in results if not r["passed"]]
+    minor = [r["scenario"] for r in results if r["passed"] and r.get("minor")]
     print("=" * W)
-    print(f"{len(results) - len(failed)}/{len(results)} scenarios passed" + (f"   FAILED: {', '.join(failed)}" if failed else ""))
+    print(f"{len(results) - len(failed)}/{len(results)} scenarios passed"
+          + (f"   FAILED: {', '.join(failed)}" if failed else "")
+          + (f"   MINOR: {', '.join(minor)}" if minor else ""))
     if args.json:
         size = write_json_report(args.json, version, args.seed, results, complete=True, soak=soak)
         print(f"json report -> {args.json} ({size} bytes, {len(results)} scenarios)")
@@ -1996,6 +2223,7 @@ def main():
     ap.add_argument("--restart-server", action="store_true", help="systemctl --user restart towerbrawl before running")
     ap.add_argument("--restart-each", action="store_true", help="restart the server before EVERY scenario (isolates scenarios)")
     ap.add_argument("--no-precheck", action="store_true", help="skip the LOBBY precondition probe between scenarios")
+    ap.add_argument("--no-state", action="store_true", help="do not write harness_state.json for the dashboard")
     ap.add_argument("--verbose", action="store_true", help="per-bot event log")
     args = ap.parse_args()
     if args.list:

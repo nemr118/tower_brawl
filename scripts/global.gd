@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.21"
+const GAME_VERSION: String = "v0.0.22"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -432,7 +432,9 @@ func _process(_delta):
 func _send_ping() -> void:
 	# 1 Hz by construction. The old frame counter (% 60) gave 2.4 Hz on a 144 Hz
 	# display and 0.5 Hz on a phone running at 30 fps.
-	send_net_data({"type": "ping", "t": Time.get_ticks_msec()})
+	# v0.0.22: we also send the round trip we measured from the last pong ("rtt",
+	# in ms, -1 before the first one). The server shows it on the dashboard.
+	send_net_data({"type": "ping", "t": Time.get_ticks_msec(), "rtt": _ns_last_rtt_ms})
 
 func send_net_data(dict: Dictionary):
 	if ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
@@ -964,7 +966,12 @@ func _report_net_stats() -> void:
 # SESSION IDENTITY, REJOIN, SCENE CORRECTION, INPUT SAFETY (v0.0.6)
 # ==============================================================================
 func request_join(reclaim_id: int) -> void:
-	send_net_data({"type": "request_join", "reclaim_id": reclaim_id, "version": GAME_VERSION, "token": client_token})
+	var packet := {"type": "request_join", "reclaim_id": reclaim_id, "version": GAME_VERSION, "token": client_token}
+	# v0.0.22: a headless bot tells the server which persona it plays, so the
+	# dashboard can show a bot badge on the seat. A human client sends nothing here.
+	if ai_persona != "":
+		packet["bot"] = ai_persona
+	send_net_data(packet)
 
 func _should_auto_rejoin() -> bool:
 	if _had_slot > 0:

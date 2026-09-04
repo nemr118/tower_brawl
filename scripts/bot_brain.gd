@@ -965,3 +965,47 @@ func _print_status() -> void:
 	if _stats["aim_err_n"] > 60 and mean_err > 1.0 and not _aim_warned:
 		_aim_warned = true
 		push_warning("[BotBrain] synthetic mouse aim is not reaching player.gd (mean error %.1f°)" % mean_err)
+	_send_status(mean_err, land_avg)
+
+
+# The bot card for the server dashboard (v0.0.22). The same numbers as the
+# printed line, as a small packet the server keeps in status.json. The server
+# never sends it on to the other players. The "state", "target", "goal",
+# "combat" and "learning" slots are empty for now: they are the shape a future
+# smarter brain (or a learning brain) will fill in, and the dashboard already
+# knows how to draw them.
+func _send_status(mean_err: float, land_avg: float) -> void:
+	var state = null
+	if persona == "griefer":
+		state = _g_mood        # the griefer already has a mood, so it can show it
+	var goal = null
+	if _has_goal:
+		goal = [roundi(_goal.x), roundi(_goal.y)]
+	Global.send_net_data({
+		"type": "bot_status",
+		"schema": 1,
+		"kind": "brain",
+		"persona": persona,
+		"seed": seed_value,
+		"difficulty": snappedf(difficulty, 0.01),
+		"uptime_s": roundi(_clock),
+		"state": state,
+		"target": null,
+		"goal": goal,
+		"actions": {
+			"decisions": _stats["decisions"], "moves": _stats["moves"], "jumps": _stats["jumps"],
+			"dashes": _stats["dashes"], "attacks": _stats["attacks"], "specials": _stats["specials"],
+			"evades": _stats["evades"],
+		},
+		"nav": {
+			"wraps": _stats["wraps"], "drops": _stats["drops"], "seams": _stats["seams"],
+			"land_avg_s": snappedf(land_avg, 0.01), "max_loop": _stats["max_loop"],
+		},
+		"aim": {
+			"err_mean_deg": snappedf(mean_err, 0.1), "err_max_deg": snappedf(_stats["aim_err_max"], 0.1),
+			"frames": _stats["aim_err_n"],
+		},
+		"combat": {"kills": null, "deaths": null, "shots": null, "hits": null,
+			"accuracy": null, "air_time_pct": null, "damage_dealt": null},
+		"learning": {"episode": null, "reward": null, "weights": {}, "deltas": {}},
+	})
