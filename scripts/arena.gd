@@ -23,6 +23,13 @@ const HistoryRingScript = preload("res://scripts/history_ring.gd")
 # stamps and the freeze come from the server's signals.
 var tape = null
 var _tape_weapon_ids := {}   # projectile instance id -> weapon id, so a name lookup happens once per arrow
+# The replay (v0.0.26): plays the frozen tape back when the server's round_end says
+# "replay": true (the round ended on a kill). See replay_player.gd. Made in code.
+const ReplayPlayerScript = preload("res://scripts/replay_player.gd")
+var replay = null
+var _replay_due: bool = false    # round_end said replay: true and no replay has started or been skipped yet
+var _round_end_msec: int = 0     # when round_end arrived, for the late_ms number
+const REPLAY_WAIT_S := 1.5       # the tape must freeze this soon after round_end, or the replay is skipped
 
 # HUD textures resolved once at load. _update_panel used to call load() for every
 # icon on every HUD refresh (each a resource-cache lookup); these are plain constants.
@@ -213,6 +220,10 @@ func _ready():
 	# after the default 0 of every fighter).
 	tape = HistoryRingScript.new()
 	process_physics_priority = 10
+	replay = ReplayPlayerScript.new()
+	replay.name = "Replay"
+	add_child(replay)
+	replay.finished.connect(_on_replay_finished)
 	_start_new_match()
 
 
@@ -275,6 +286,8 @@ func _record_tape_frame() -> void:
 		pu[2] = 0.0
 	if tape.commit(Time.get_ticks_msec()):
 		_tape_report()   # the tail is recorded: the tape just froze
+		if _replay_due:
+			_start_replay()
 
 
 func _tape_weapon_id(node: Node) -> int:
@@ -297,11 +310,61 @@ func _tape_report() -> void:
 	print(tape.status_line())
 	Global.send_net_data(tape.status_card())
 
+
+# ------------------------------------------------------------------------------
+# THE REPLAY (v0.0.26)
+# The server's round_end carries "replay": true when the round ended on a kill.
+# The tape freezes about one second later; that is the moment the replay starts.
+# It ends by itself after about 5.1 s, or the next round cuts it.
+# ------------------------------------------------------------------------------
+func _start_replay() -> void:
+	_replay_due = false
+	var live: Array = []
+	for pid in player_instances:
+		if is_instance_valid(player_instances[pid]):
+			live.append(player_instances[pid])
+	for node in get_tree().get_nodes_in_group("projectiles"):
+		if is_instance_valid(node) and not node.is_queued_for_deletion():
+			live.append(node)
+	var why: String = replay.start(tape, platforms_node, live, _round_end_msec)
+	if why != "":
+		_skip_replay(why)
+		return
+	banner_label.visible = false   # the VHS caption takes the banner's place
+	Global.send_net_data(tape.status_card())   # the card says playing: true
+
+
+func _skip_replay(reason: String) -> void:
+	_replay_due = false
+	tape.replay = {"playing": false, "played": false, "round": tape.round_num, "frames": 0, "drawn": 0,
+		"dur_ms": 0, "late_ms": Time.get_ticks_msec() - _round_end_msec, "cut": false, "skipped": reason}
+	print(ReplayPlayerScript.status_line(tape, tape.replay))
+	Global.send_net_data(tape.status_card())
+
+
+func _on_replay_finished(result: Dictionary) -> void:
+	banner_label.visible = true
+	print(ReplayPlayerScript.status_line(tape, result))
+	Global.send_net_data(tape.status_card())
+
+
+func _stop_replay_now() -> void:
+	# A new round (or the lobby) arrived: whatever the replay was doing, it ends here.
+	# A replay that was due but never started (a slow screen whose tape did not
+	# freeze in time; its 1.5 s wait runs on process time, which crawls with the
+	# ticks) still gets its one line, so every screen reports every due replay.
+	if _replay_due and (replay == null or not replay.playing):
+		_skip_replay("cut-before-start")
+	_replay_due = false
+	if replay != null and replay.playing:
+		replay.stop(true)
+
 func _exit_tree():
 	# change_scene_to_file() removes this scene immediately but frees it at the end
 	# of the frame. Any packet handled in between used to reach a node with no tree
 	# and crash on get_tree() (the return_to_lobby null-tree crash). Drop the
 	# subscriptions the moment we leave the tree.
+	_stop_replay_now()
 	for sig_name in NET_SIGNAL_HANDLERS:
 		var sig := Signal(Global, sig_name)
 		var handler := Callable(self, NET_SIGNAL_HANDLERS[sig_name])
@@ -377,6 +440,7 @@ func _on_leave_match_pressed():
 
 func _start_round():
 	is_round_over = false
+	_stop_replay_now()   # v0.0.26: a replay still running is cut; its line is printed before the tape is cleared
 	_clear_projectiles()
 	_finish_spin_now()
 	if tape != null:
@@ -483,12 +547,14 @@ func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int, weapon:
 func _check_round_end():
 	pass
 
-func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int, match_over: bool = false):
+func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int, match_over: bool = false, replay_due: bool = false):
 	if is_round_over:
 		return # Ignore duplicate network triggers
 
 	is_round_over = true
 	current_round = round_num
+	_round_end_msec = Time.get_ticks_msec()
+	_replay_due = replay_due and tape != null
 	if tape != null:
 		tape.close_round()   # the newest stamp is the closing kill; one more second, then freeze
 
@@ -498,6 +564,18 @@ func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int, matc
 
 	_update_hud()
 	_display_round_winner(winner_id, match_over)
+
+	if _replay_due:
+		if tape.frozen:
+			_skip_replay("empty-tape")   # nothing was recorded this round
+			return
+		# The freeze normally lands 1.0 s from now. A screen whose ticks stalled
+		# (hidden tab) skips the replay instead of starting it late.
+		await get_tree().create_timer(REPLAY_WAIT_S).timeout
+		if not is_inside_tree():
+			return
+		if _replay_due and not replay.playing:
+			_skip_replay("not-frozen")
 
 func _display_round_winner(winner_id: int, match_over: bool = false):
 	if winner_id <= 0:

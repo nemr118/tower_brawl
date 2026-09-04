@@ -52,7 +52,7 @@ Versioning scheme: `v0.0.x` while building; `v0.1.0` is the target once the VHS 
 ### 5. The Test Harness (formerly the Chaos Bots)
 `tools/chaos_bots.py` is a protocol test harness: every bot behaves like the Godot client (join, name, lock in, 30 Hz `sync_pos` while alive, silence while dead, 1 s pings) and keeps a model of what the server state should be. Every packet is checked against a per-type schema, the model (oracle) and a duplicate-broadcast detector. Named scenarios end with a report and a non-zero exit code on any finding.
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                  # scenarios (20 since v0.0.25)
+./venv/bin/python tools/chaos_bots.py --list                  # scenarios (21 since v0.0.26)
 ./venv/bin/python tools/chaos_bots.py                         # run them all
 ./venv/bin/python tools/chaos_bots.py --restart-each          # restart the server before each one (isolates scenarios)
 ./venv/bin/python tools/chaos_bots.py --scenario smoke --trace /tmp/trace.jsonl   # packet capture with model snapshots
@@ -126,7 +126,7 @@ grep "\[GATE\]" server.log | tail                                           # wh
 ```
 
 ### 9. The tape: history ring and kill stamps (Phase 3c, v0.0.25)
-Every screen keeps a tape of the last six seconds of the fight, as that screen drew it (`scripts/history_ring.gd`, driven by `arena.gd`). One frame per physics tick (60 a second), 360 slots made once and reused: 5 s before a kill plus a 1 s tail after it. A frame holds the spin (`rot`, `flips`), every fighter (`[x, y, aim_x, aim_y, flags]`, the `sync_pos` flag bits plus `FLAG_BUBBLE` 64 and `FLAG_DEAD` 128), every projectile (`[weapon_id, x, y, rot, stuck, shooter]`) and the power-up. When the server's `player_died` arrives (it carries `weapon` since v0.0.25) the newest frame is stamped: `{seq, round, killer, victim, weapon, closing, fighters}`. On `round_end` the newest stamp becomes the closing kill, the tape records 60 more frames and freezes; `new_round` clears it. No playback yet: that is the v0.1.0 job.
+Every screen keeps a tape of the last six seconds of the fight, as that screen drew it (`scripts/history_ring.gd`, driven by `arena.gd`). One frame per physics tick (60 a second), 360 slots made once and reused: 5 s before a kill plus a 1 s tail after it. A frame holds the spin (`rot`, `flips`), every fighter (`[x, y, aim_x, aim_y, flags]`, the `sync_pos` flag bits plus `FLAG_BUBBLE` 64 and `FLAG_DEAD` 128), every projectile (`[weapon_id, x, y, rot, stuck, shooter]`) and the power-up. When the server's `player_died` arrives (it carries `weapon` since v0.0.25) the newest frame is stamped: `{seq, round, killer, victim, weapon, closing, fighters}`. On `round_end` the newest stamp becomes the closing kill, the tape records 60 more frames and freezes; `new_round` clears it. Since v0.0.26 the frozen tape is played back: section 10.
 
 How to see it:
 ```bash
@@ -136,7 +136,23 @@ grep "\[TAPE\]" server.log | tail                          # [TAPE] P3's screen 
 python3 -c "import json; [print(s['id'], s['tape']) for s in json.load(open('status.json'))['seats']]"   # the history_status card per seat
 ./venv/bin/python tools/chaos_bots.py --scenario tape      # the Phase 3c scenario (about 24 s)
 ```
-The browser console prints the same `📼 [Tape]` line. The card (`history_status`, client to server, never relayed, kept as `seats[].tape` in `status.json`): `frames, span_ms, fps, recording, frozen, round, stamps, closing_seq, last {seq, round, killer, victim, weapon, closing, before, after, fighters}`. On the deck: the `Tape` column in SEATS, the inspect line of a round-end column, and the `[TAPE]` events on key `0`. Good numbers: `before=300 after=60 fps=59.9`. The harness fails a tape under 280 frames before the closing kill, under 30 after, or outside 50 to 70 fps (`tape` scenario, and `tape_gate` on `fleet` and `lag`).
+The browser console prints the same `📼 [Tape]` line. The card (`history_status`, client to server, never relayed, kept as `seats[].tape` in `status.json`): `frames, span_ms, fps, recording, frozen, round, stamps, closing_seq, last {seq, round, killer, victim, weapon, closing, before, after, fighters}, replay` (the replay card, v0.0.26, section 10). On the deck: the `Tape` column in SEATS, the inspect line of a round-end column, and the `[TAPE]` events on key `0`. Good numbers: `before=300 after=60 fps=59.9`. The harness fails a tape under 280 frames before the closing kill, under 30 after, or outside 50 to 70 fps (`tape` scenario, and `tape_gate` on `fleet` and `lag`).
+
+### 10. The replay: playing the tape back (v0.0.26)
+When a round ends on a kill, the server puts `"replay": true` in `round_end` and waits `REPLAY_ROUND_DELAY = 6.5` s before `new_round` (a draw or a forfeit win keeps `NEXT_ROUND_DELAY = 2.6`; a won match waits `MATCH_END_DELAY = 7.0`, was 6.0). The rule in `_check_round_end`: a winner, and a death in `last_death` within `REPLAY_KILL_WINDOW = 1.5` s. Every screen (players and spectators alike) plays its own frozen tape with `scripts/replay_player.gd`, started by `arena.gd` the moment the tape freezes (about 1.0 s after `round_end`):
+- **What plays:** 211 frames around the closing kill `K`: `◄◄ REW` from K+60 back to K-150 at 10x (0.4 s), `► PLAY` K-150 to K-30 at 1x (2.0 s), `► SLOW` K-30 to K+30 at 0.5x with a white flash on K (2.0 s), `► PLAY` K+30 to K+60, the fall (0.5 s), `■ STOP` with a fade to black (0.2 s). 5.1 s in all; `new_round` at 6.5 s cuts anything still running.
+- **How:** the live fighters and projectiles are paused (`process_mode = DISABLED`, hidden); ghosts are real `player.tscn` and projectile scenes with `is_ghost = true` (no physics, no collision, not in the `players` / `projectiles` groups) moved to the frame's spots; the platforms turn to the frame's `rot`; a VHS overlay draws scanlines, a rolling tracking bar, a small shake, the label, a counter from the kill (`-2.5s` to `+1.0s`), `REPLAY` with a blinking dot, and the caption `Godot2 killed Andrew · Firebolt`. The banner hides while it plays. Nothing is put back by hand: the next round respawns everyone.
+- **Skipped when:** the tape is not frozen 1.5 s after `round_end` (`not-frozen`: a hidden tab whose ticks stalled), nothing was recorded (`empty-tape`), or there is no closing stamp (`no-closing-stamp`).
+
+How to see it:
+```bash
+grep "📼 \[Replay\]" .harness_logs/godot1.log | tail -3   # one line per replay, played, cut or skipped
+#   📼 [Replay] round=1 killer=4 victim=3 weapon=Firebolt from=869 to=1079 frames=211 drawn=211 dur_ms=5050 late_ms=987 cut=0 skipped=-
+grep "\[TAPE\].*replay" server.log | tail                 # [TAPE] P3's screen played the round 1 replay: 211 frames in 5.0 s, started 1.0 s after the round end
+python3 -c "import json; [print(s['id'], (s['tape'] or {}).get('replay')) for s in json.load(open('status.json'))['seats']]"
+./venv/bin/python tools/chaos_bots.py --scenario replay    # the v0.0.26 scenario (about 30 s)
+```
+The card: `history_status.replay = {playing, played, round, frames, drawn, dur_ms, late_ms, cut, skipped}`, sent once when the replay starts and once when it ends or is skipped. On the deck the `Tape` column reads `▶ R3` while playing, `■ R3 ✓ ▶5.1s` after, `■ R3 ✓ ✗` when skipped; the inspect line of a round-end column adds `· replay played on 2 screens (P3 P4), 5.1 s, started 1.0 s after the kill`. Good numbers: `frames=211 drawn=211 dur_ms≈5050 late_ms≈1000 cut=0`. The harness `replay` scenario wants `round_end.replay == true`, `new_round` 6.0 to 8.0 s after `round_end`, 200+ frames, 90 %+ drawn, 4 500 to 6 000 ms, started within 1 500 ms, not cut, not skipped, and a played card in `status.json`; `replay_gate` on `fleet` and `lag` wants every frozen tape with a closing kill (but the last) played back on time.
 
 ---
 

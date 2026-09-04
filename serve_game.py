@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.25"
+GAME_VERSION = "v0.0.26"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -427,8 +427,10 @@ global_transition_sent = False      # scene_transition already broadcast for thi
 global_round_player_count = 0       # players in the match when the round started (>=2 needed for a round to end)
 global_match_over = False           # someone reached MATCH_SCORE_LIMIT; next step is the lobby, never new_round
 MATCH_SCORE_LIMIT = 5               # crowns needed to win the match (client shows the same number)
-NEXT_ROUND_DELAY = 2.6              # seconds between round_end and new_round / return_to_lobby
-MATCH_END_DELAY = 6.0               # seconds the "wins the match" banner stays before return_to_lobby
+NEXT_ROUND_DELAY = 2.6              # seconds between round_end and new_round / return_to_lobby (draws, forfeits)
+REPLAY_ROUND_DELAY = 6.5            # v0.0.26: the gap after a round won on a kill, so every screen can play its tape back
+MATCH_END_DELAY = 7.0               # seconds the "wins the match" banner stays before return_to_lobby (was 6.0; the replay needs 6.1)
+REPLAY_KILL_WINDOW = 1.5            # a round that ended within this many seconds of a death ended on a kill
 spectator_sockets = []              # pure spectators only; a socket holding a slot is NOT in here
 
 # Playtest fixes (v0.0.6) ----------------------------------------------------
@@ -1031,6 +1033,10 @@ def _check_round_end(label):
             global_match_over = True
             match_timeline["ended_at"] = _match_t()   # v0.0.24: the deck draws the match end
             match_timeline["winner"] = winner
+    # v0.0.26: "replay": true tells every screen (and the harness) that a replay is due,
+    # and the server waits REPLAY_ROUND_DELAY instead of NEXT_ROUND_DELAY. A draw or a
+    # forfeit win has no closing kill to show, so the short gap stays.
+    replay = winner > 0 and bool(last_death) and time.time() - max(last_death.values()) < REPLAY_KILL_WINDOW
     if global_match_over:
         logger.info(f"[ROUND] round {global_current_round} over: P{winner} ({player_names.get(winner, 'Bot')}) "
                     f"wins the match with {global_player_scores[winner]} crowns, lobby in {MATCH_END_DELAY:g} s")
@@ -1045,17 +1051,19 @@ def _check_round_end(label):
         "scores": global_player_scores,
         "round": global_current_round,
         "match_over": global_match_over,
+        "replay": replay,
     }))
-    threading.Thread(target=_next_round_later, args=(label,), daemon=True, name="next_round").start()
+    threading.Thread(target=_next_round_later, args=(label, replay), daemon=True, name="next_round").start()
     return True
 
-def _next_round_later(label):
+def _next_round_later(label, replay=False):
     """The ONLY place a new round starts. Clients wait for new_round; they no longer
-    advance on their own timer."""
+    advance on their own timer. `replay` (v0.0.26) = the round ended on a kill, so the
+    screens are playing their tapes back and the gap is REPLAY_ROUND_DELAY."""
     global global_current_round, global_is_round_over, global_alive_players, global_round_player_count
     with lobby_lock:
         won = global_match_over
-    time.sleep(MATCH_END_DELAY if won else NEXT_ROUND_DELAY)
+    time.sleep(MATCH_END_DELAY if won else (REPLAY_ROUND_DELAY if replay else NEXT_ROUND_DELAY))
     with lobby_lock:
         if global_match_state != 'PLAYING':
             return  # idle reset already returned everyone to the lobby
@@ -1387,10 +1395,23 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     if not isinstance(last, dict):
                         last = None
                     card["last"] = last
+                    # v0.0.26: the replay card: {playing, played, round, frames, drawn, dur_ms, late_ms, cut, skipped}
+                    rp = card.get("replay")
+                    card["replay"] = rp if isinstance(rp, dict) else None
                     card["updated_at"] = time.time()
                     with lobby_lock:
                         player_tapes[assigned_id] = card
-                    if card["frozen"]:
+                    if rp is not None and card["replay"] is not None:
+                        if rp.get("skipped"):
+                            logger.info(f"[TAPE] P{assigned_id}'s screen skipped the round {_as_int(rp.get('round'), 0)} replay: {rp.get('skipped')}")
+                        elif rp.get("played"):
+                            logger.info(f"[TAPE] P{assigned_id}'s screen played the round {_as_int(rp.get('round'), 0)} replay: "
+                                        f"{_as_int(rp.get('frames'), 0)} frames in {_as_int(rp.get('dur_ms'), 0) / 1000.0:.1f} s, "
+                                        f"started {_as_int(rp.get('late_ms'), 0) / 1000.0:.1f} s after the round end"
+                                        + (", cut by the next round" if rp.get("cut") else ""))
+                        else:
+                            logger.debug(f"[TAPE] P{assigned_id}'s screen is playing the round {_as_int(rp.get('round'), 0)} replay")
+                    elif card["frozen"]:
                         if last and last.get("closing"):
                             k, v = _as_int(last.get("killer"), 0), _as_int(last.get("victim"), 0)
                             what = (f"P{v} fell to its own '{last.get('weapon')}'" if k == v

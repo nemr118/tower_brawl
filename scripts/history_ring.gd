@@ -42,6 +42,9 @@ var stamps: Array = []          # [{seq, round, killer, victim, weapon, closing,
 var stamps_total: int = 0       # stamps since clear(), dropped ones included
 var closing_seq: int = -1       # the frame of the kill that ended the round, -1 = none
 var _tail_left: int = -1        # frames still to record after round_end, -1 = no freeze pending
+# v0.0.26: what the replay did with this tape, filled by replay_player.gd and sent
+# in the card: {playing, played, round, frames, drawn, dur_ms, late_ms, cut, skipped}.
+var replay: Dictionary = {}
 
 
 func _init() -> void:
@@ -66,6 +69,7 @@ func clear(new_round: int) -> void:
 	stamps_total = 0
 	closing_seq = -1
 	_tail_left = -1
+	replay = {}
 
 
 # The slot for the next frame. The caller fills it in, then calls commit().
@@ -200,7 +204,8 @@ func status_card() -> Dictionary:
 	var last := last_stamp()
 	var card := {"type": "history_status", "schema": 1, "frames": count, "span_ms": span_ms(),
 		"fps": snappedf(fps(), 0.1), "recording": recording, "frozen": frozen, "round": round_num,
-		"stamps": stamps_total, "closing_seq": closing_seq, "last": null}
+		"stamps": stamps_total, "closing_seq": closing_seq, "last": null,
+		"replay": replay if not replay.is_empty() else null}
 	if not last.is_empty():
 		var s: int = last["seq"]
 		card["last"] = {"seq": s, "round": last["round"], "killer": last["killer"],

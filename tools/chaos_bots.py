@@ -57,8 +57,9 @@ DUP_WINDOW_EVENT = 0.150
 DUP_WINDOW_MOVEMENT = 0.020
 RESPAWN_DELAY = 1.2         # arena.gd respawn delay
 SPAWN_INVULN = 1.0          # player.gd spawn_invuln_timer: no death possible right after a respawn
-NEXT_ROUND_DELAY = 2.6      # serve_game.py NEXT_ROUND_DELAY
-MATCH_END_DELAY = 6.0       # serve_game.py MATCH_END_DELAY (banner time before return_to_lobby)
+NEXT_ROUND_DELAY = 2.6      # serve_game.py NEXT_ROUND_DELAY (a draw or a forfeit win)
+REPLAY_ROUND_DELAY = 6.5    # serve_game.py REPLAY_ROUND_DELAY (v0.0.26: the round ended on a kill, the screens play the tape)
+MATCH_END_DELAY = 7.0       # serve_game.py MATCH_END_DELAY (banner and replay time before return_to_lobby; 6.0 before v0.0.26)
 MATCH_SCORE_LIMIT = 5       # serve_game.py MATCH_SCORE_LIMIT
 REJOIN_GRACE = 8.0          # serve_game.py REJOIN_GRACE: a fighter's seat is held after a disconnect
 FORFEIT_GRACE = 1.5         # serve_game.py FORFEIT_GRACE: explicit leave, round decided after this
@@ -80,7 +81,7 @@ SCHEMA = {
     "force_start": {"sender": int},
     "scene_transition": {},
     "player_died": {"victim": int, "killer": int, "stock": int, "weapon": str},   # weapon since v0.0.25 (the tape)
-    "round_end": {"winner": int, "scores": dict, "round": int, "match_over": bool},
+    "round_end": {"winner": int, "scores": dict, "round": int, "match_over": bool, "replay": bool},   # replay since v0.0.26
     "new_round": {"round": int},
     "return_to_lobby": {},
     "version_error": {"server_version": str},
@@ -341,6 +342,7 @@ class Model:
         self.round_over = False
         self.match_over = False        # round_end carried match_over: only return_to_lobby may follow
         self.round_end_at = None       # watchdog: next_round / return_to_lobby expected
+        self.round_replay = False      # v0.0.26: the last round_end said replay: true (gap is REPLAY_ROUND_DELAY)
         self.alive_le1_since = None    # watchdog: round_end expected
         self.round_ends = []           # (round, winner)
         self.pending = {}              # pid -> deadline: seat held by the server after a disconnect/leave
@@ -460,6 +462,7 @@ class Model:
             if not flagged and top >= MATCH_SCORE_LIMIT:
                 F.fail("oracle.match-over-missing", f"{who}: P{w} has {top} crowns but round_end lacks match_over")
             self.match_over = flagged
+            self.round_replay = bool(pkt.get("replay", False))
             self.round_over = True
             self.round_end_at = now
             self.alive_le1_since = None
@@ -859,7 +862,7 @@ class Bot:
         if m.alive_le1_since is not None and now - m.alive_le1_since > 2.0:
             self.F.fail("timeout.round-end", f"{self.name}: alive={sorted(m.alive)} for >2 s with no round_end (round {m.round})")
             m.alive_le1_since = None
-        grace = (MATCH_END_DELAY if m.match_over else NEXT_ROUND_DELAY) + 2.0
+        grace = (MATCH_END_DELAY if m.match_over else (REPLAY_ROUND_DELAY if m.round_replay else NEXT_ROUND_DELAY)) + 2.0
         if m.round_end_at is not None and now - m.round_end_at > grace:
             self.F.fail("timeout.next-round", f"{self.name}: no new_round / return_to_lobby {grace:.1f} s after round_end (match_over={m.match_over})")
             m.round_end_at = None
@@ -1023,10 +1026,10 @@ def ensure_lobby(ctx):
     # that dies. Slots are assigned in request order, which need not match ours.
     first, second = sorted([probe, healer], key=lambda b: b.slot or 0)
     second.send({"type": "player_died", "victim": second.slot or 0, "killer": first.slot or 0, "weapon": "Heal"})
-    _, back = probe.wait_for("return_to_lobby", NEXT_ROUND_DELAY + 3.0, since=mark)
+    _, back = probe.wait_for("return_to_lobby", REPLAY_ROUND_DELAY + 3.0, since=mark)
     if back is None:
         first.send({"type": "player_died", "victim": first.slot or 0, "killer": second.slot or 0, "weapon": "Heal"})
-        _, back = probe.wait_for("return_to_lobby", NEXT_ROUND_DELAY + 3.0, since=mark)
+        _, back = probe.wait_for("return_to_lobby", REPLAY_ROUND_DELAY + 3.0, since=mark)
     if back is None:
         ctx.fail("precondition.heal-failed", "server did not return to LOBBY after workaround")
     probe.disconnect()
@@ -1057,10 +1060,10 @@ def sc_smoke(ctx):
     for b in bots:
         if b.count("round_end") == 0:
             ctx.fail("scenario.smoke.no-round-end", f"{b.name}: no round_end in 20 s of play with mortality")
-    # a round_end at the very end of the window is followed by new_round 2.6 s later
+    # a round_end at the very end of the window is followed by new_round 2.6 s later (6.5 s after a kill, v0.0.26)
     for b in bots:
         if b.count("round_end") > 0 and b.count("new_round") == 0 and b.count("return_to_lobby") == 0:
-            _, nr = b.wait_for("new_round", NEXT_ROUND_DELAY + 1.5)
+            _, nr = b.wait_for("new_round", REPLAY_ROUND_DELAY + 1.5)
             if nr is None and b.count("return_to_lobby") == 0:
                 ctx.fail("scenario.smoke.no-next-round", f"{b.name}: no new_round after round_end")
 
@@ -1072,12 +1075,12 @@ def sc_rounds(ctx):
     start_match(ctx, bots, bots[0])
     for b in bots:
         b.die_rate = 0.6
-    deadline = time.monotonic() + 45.0
+    deadline = time.monotonic() + 60.0   # v0.0.26: a round won on a kill is followed by a 6.5 s replay gap (was 45 s)
     while time.monotonic() < deadline and bots[0].count("round_end") < 3:
         time.sleep(0.25)
     ends = bots[0].model.round_ends
     if len(ends) < 3:
-        ctx.fail("scenario.rounds.too-few", f"only {len(ends)} round_end in 45 s: {ends}")
+        ctx.fail("scenario.rounds.too-few", f"only {len(ends)} round_end in 60 s: {ends}")
     rounds = [r for r, _ in ends]
     if rounds != list(range(1, len(rounds) + 1)):
         ctx.fail("scenario.rounds.numbering", f"round_end rounds={rounds}")
@@ -1139,7 +1142,7 @@ def sc_spectator(ctx):
     if end is None:
         ctx.fail("scenario.spectator.no-round-end", "round did not end in 25 s")
     else:
-        _, back = late.wait_for("return_to_lobby", NEXT_ROUND_DELAY + 2.0, since=m)
+        _, back = late.wait_for("return_to_lobby", REPLAY_ROUND_DELAY + 2.0, since=m)
         if back is None:
             ctx.fail("scenario.spectator.no-return-to-lobby", "waiting player present but no return_to_lobby after round_end")
 
@@ -1460,6 +1463,19 @@ class GodotClient:
     TAPE_LINE = re.compile(r"\[Tape\] round=(\d+) frozen=(\d) closing=(\d) killer=(-?\d+) victim=(-?\d+) weapon=(\S+) "
                            r"seq=(-?\d+) before=(\d+) after=(\d+) span_ms=(\d+) fps=([\d.]+) stamps=(\d+) frames=(\d+)")
 
+    # v0.0.26: one line per replay (played, cut or skipped), printed by arena.gd (replay_player.gd status_line)
+    REPLAY_LINE = re.compile(r"\[Replay\] round=(\d+) killer=(-?\d+) victim=(-?\d+) weapon=(\S+) from=(-?\d+) to=(-?\d+) "
+                             r"frames=(\d+) drawn=(\d+) dur_ms=(\d+) late_ms=(-?\d+) cut=(\d) skipped=(\S+)")
+
+    def replays(self):
+        """Every 📼 [Replay] line of this client, oldest first, as dicts. skipped is None when it played."""
+        out = []
+        for m in self.REPLAY_LINE.finditer(self.text()):
+            out.append({"round": int(m[1]), "killer": int(m[2]), "victim": int(m[3]), "weapon": m[4].replace("_", " "),
+                        "from": int(m[5]), "to": int(m[6]), "frames": int(m[7]), "drawn": int(m[8]), "dur_ms": int(m[9]),
+                        "late_ms": int(m[10]), "cut": m[11] == "1", "skipped": None if m[12] == "-" else m[12]})
+        return out
+
     def tapes(self):
         """Every 📼 [Tape] line of this client, oldest first, as dicts."""
         out = []
@@ -1535,6 +1551,37 @@ def tape_gate(ctx, client, scen):
                  f"before={t['before']} after={t['after']} fps={t['fps']:.1f} stamps={t['stamps']}")
 
 
+REPLAY_MIN_FRAMES = 200      # the replay covers K-150..K+60 = 211 frames when the tape is full
+REPLAY_MIN_DRAWN_RATIO = 0.9  # nearly every tape frame on the replay must be shown at least once
+REPLAY_MIN_MS, REPLAY_MAX_MS = 4500, 6000   # 0.4 rew + 2.0 play + 2.0 slow + 0.5 tail + 0.2 stop = 5.1 s
+REPLAY_MAX_LATE_MS = 1500     # the replay starts when the tape freezes, 1.0 s after round_end
+
+
+def replay_gate(ctx, client, scen):
+    """v0.0.26 gate: every frozen tape with a closing kill this client saw (except the
+    last, whose replay may still be running) must have been played back, on time."""
+    frozen = [t for t in client.tapes() if t["frozen"] and t["closing"]]
+    replays = {r["round"]: r for r in client.replays()}
+    for t in frozen[:-1]:
+        r = replays.get(t["round"])
+        if r is None:
+            ctx.fail(f"{scen}.replay-missing", f"{client.name}: round {t['round']} tape froze with a closing kill but no [Replay] line")
+        elif r["skipped"]:
+            ctx.fail(f"{scen}.replay-skipped", f"{client.name}: round {t['round']} replay skipped: {r['skipped']}")
+        else:
+            if r["late_ms"] > REPLAY_MAX_LATE_MS:
+                ctx.fail(f"{scen}.replay-late", f"{client.name}: round {t['round']} replay started {r['late_ms']} ms after round_end (want <= {REPLAY_MAX_LATE_MS})")
+            if r["frames"] > 0 and r["drawn"] < REPLAY_MIN_DRAWN_RATIO * r["frames"]:
+                ctx.fail(f"{scen}.replay-frames-dropped", f"{client.name}: round {t['round']} replay showed {r['drawn']} of {r['frames']} frames")
+            if not r["cut"] and not REPLAY_MIN_MS <= r["dur_ms"] <= REPLAY_MAX_MS:
+                ctx.fail(f"{scen}.replay-duration", f"{client.name}: round {t['round']} replay took {r['dur_ms']} ms (want {REPLAY_MIN_MS}-{REPLAY_MAX_MS})")
+    played = [r for r in client.replays() if not r["skipped"]]
+    if played:
+        r = played[-1]
+        ctx.note(f"{client.name} replay: {len(played)} played, last round {r['round']} {r['frames']} frames in {r['dur_ms']} ms, "
+                 f"started {r['late_ms']} ms after round_end{', cut' if r['cut'] else ''}")
+
+
 def puppet_gate(ctx, client, heavy, scen):
     """Phase 3b quality gate on one Godot client's view of its puppets."""
     st = client.stats()
@@ -1592,6 +1639,7 @@ def sc_lag(ctx):
                      f"snaps {pj['snaps']}, wraps {pj['wraps']}, stall {pj['stall_pct']:.1f}%, extrap {pj['extrap_pct']:.1f}% over {pj['frames']} puppet-frames")
         puppet_gate(ctx, observer, heavy=False, scen="scenario.lag")
         tape_gate(ctx, observer, scen="scenario.lag")
+        replay_gate(ctx, observer, scen="scenario.lag")
         observer.stop()
 
 
@@ -1683,7 +1731,7 @@ def sc_simultaneous_leave(ctx):
     time.sleep(0.3)
     b.send({"type": "leave_slot"})
     a.autoplay = b.autoplay = False
-    _, back = a.wait_for("return_to_lobby", FORFEIT_GRACE + NEXT_ROUND_DELAY + 3.0, since=m)
+    _, back = a.wait_for("return_to_lobby", FORFEIT_GRACE + REPLAY_ROUND_DELAY + 3.0, since=m)
     if back is None:
         ctx.fail("scenario.simultaneous-leave.no-lobby", "no return_to_lobby after both players left")
     for _, t, pkt in list(a.events[m:]):
@@ -1939,6 +1987,7 @@ def sc_fleet(ctx):
             # brains move like players, so their view of the others is the quality gate
             puppet_gate(ctx, c, heavy=ctx.args.jitter_ms > PUPPET_HEAVY_JITTER_MS, scen="fleet")
         tape_gate(ctx, c, scen="fleet")
+        replay_gate(ctx, c, scen="fleet")
         b = st["bot"]
         if c.ai and b is None:
             ctx.fail("fleet.bot-missing", f"{c.name}: --ai={c.ai} but no brain status line in its log")
@@ -2100,6 +2149,109 @@ def sc_tape(ctx):
                 ctx.fail("tape.no-card", f"{c.name} (P{slot}): status.json seats[].tape = {card}")
         ctx.note(f"{c.name} P{slot}: frozen round {t['round']}, P{t['killer']} killed P{t['victim']} with {t['weapon']}, "
                  f"{t['before']} frames before / {t['after']} after, {t['span_ms']} ms on tape, {t['fps']:.1f} fps, {t['stamps']} stamps")
+    for c in clients:
+        c.stop()
+
+
+@scenario("replay", "v0.0.26: the tape scenario's set-up (two standing Godot clients, two bots that fire nothing, three scripted Firebolt kills end round 1); round_end must say replay: true, new_round must come 6.0-8.0 s later, both screens must print a played [Replay] line for round 1 with that killer, victim and weapon (200+ frames, 90%+ drawn, 4.5-6.0 s, started within 1.5 s, not cut), and status.json must carry both played replay cards")
+def sc_replay(ctx):
+    if shutil.which("godot") is None:
+        ctx.fail("replay.no-godot", "godot binary not on PATH")
+        return
+    bots = [ctx.bot(1), ctx.bot(2)]
+    lobby_join(ctx, bots)
+    for b in bots:
+        b.shoot = False
+    clients = [GodotClient(ctx, i + 1, cls=1).start() for i in range(2)]
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline and (len(bots[0].model.active) < 4 or not all(c.slot() for c in clients)):
+        time.sleep(0.25)
+    g1, g2 = clients[0].slot(), clients[1].slot()
+    if len(bots[0].model.active) < 4 or not g1 or not g2:
+        ctx.fail("replay.clients-not-joined", f"active={sorted(bots[0].model.active)} Godot1={g1} Godot2={g2} after 20 s")
+        for c in clients:
+            c.stop()
+        return
+    start_match(ctx, bots, bots[0])
+    for b in bots:
+        b.die_rate = 0.0
+    ctx.timed(30.0)
+    ctx.say("7 s of play so both tapes fill")
+    nap(ctx, 7.0, clients)
+    ctx.say("the two bots burn their stocks")
+    for _ in range(3):
+        for b in bots:
+            b.die(killer=g2)
+        nap(ctx, 2.0, clients)
+    ctx.say(f"Bot1 reports Godot1 (P{g1}) killed by Godot2 (P{g2}) with a Firebolt, three times")
+    mark = bots[0].mark()
+    for i in range(3):
+        bots[0].report_death(g1, g2, "Firebolt")
+        if i < 2:
+            nap(ctx, 2.0, clients)
+    idx, end = bots[0].wait_for("round_end", 4.0, since=mark)
+    t_end = time.monotonic()
+    if end is None:
+        ctx.fail("replay.no-round-end", "no round_end within 4 s of the third Firebolt kill")
+        for c in clients:
+            c.stop()
+        return
+    if int(end.get("winner", 0)) != g2:
+        ctx.fail("replay.wrong-winner", f"round_end winner={end.get('winner')} (expected Godot2 = P{g2})")
+    if end.get("replay") is not True:
+        ctx.fail("replay.flag-missing", f"round_end.replay={end.get('replay')!r} (expected true: the round ended on a kill)")
+    ctx.say("the tapes freeze after 1 s, then every screen plays its tape back (5.1 s); new_round is due at 6.5 s")
+    _, nr = bots[0].wait_for("new_round", REPLAY_ROUND_DELAY + 2.5, since=idx + 1)
+    gap = time.monotonic() - t_end
+    if nr is None:
+        ctx.fail("replay.no-new-round", f"no new_round within {REPLAY_ROUND_DELAY + 2.5:.1f} s of round_end")
+    elif gap < REPLAY_ROUND_DELAY - 0.5:
+        ctx.fail("replay.gap-short", f"new_round came {gap:.2f} s after round_end (want >= {REPLAY_ROUND_DELAY - 0.5:.1f}: the replay needs 6.1 s)")
+    elif gap > REPLAY_ROUND_DELAY + 1.5:
+        ctx.fail("replay.gap-long", f"new_round came {gap:.2f} s after round_end (want <= {REPLAY_ROUND_DELAY + 1.5:.1f})")
+    else:
+        ctx.note(f"new_round came {gap:.2f} s after round_end")
+    nap(ctx, 1.5, clients)   # the logs and status.json catch up
+    status = None
+    try:
+        with open(os.path.join(ROOT, "status.json"), encoding="utf-8") as f:
+            status = json.load(f)
+    except (OSError, ValueError) as e:
+        ctx.fail("replay.no-status", f"status.json unreadable: {e}")
+    for c, slot in ((clients[0], g1), (clients[1], g2)):
+        for line, count in c.errors().items():
+            ctx.fail("replay.script-error", f"{c.name}: {line} (x{count})")
+        for line, count in c.warnings().items():
+            ctx.warn("replay.script-warning", f"{c.name}: {line} (x{count})")
+        lines = [r for r in c.replays() if r["round"] == 1]
+        if not lines:
+            ctx.fail("replay.missing", f"{c.name} (P{slot}): no [Replay] line for round 1 ({len(c.tapes())} tape lines in its log)")
+            continue
+        if len(lines) > 1:
+            ctx.fail("replay.double", f"{c.name}: {len(lines)} [Replay] lines for round 1 (want exactly one)")
+        r = lines[-1]
+        if r["skipped"]:
+            ctx.fail("replay.skipped", f"{c.name}: round 1 replay skipped: {r['skipped']}")
+            continue
+        if r["killer"] != g2 or r["victim"] != g1 or r["weapon"] != "Firebolt":
+            ctx.fail("replay.wrong-kill", f"{c.name}: killer={r['killer']} victim={r['victim']} weapon={r['weapon']!r} (expected P{g2} killed P{g1} with Firebolt)")
+        if r["frames"] < REPLAY_MIN_FRAMES:
+            ctx.fail("replay.short", f"{c.name}: {r['frames']} frames on the replay (want {REPLAY_MIN_FRAMES}+)")
+        if r["drawn"] < REPLAY_MIN_DRAWN_RATIO * r["frames"]:
+            ctx.fail("replay.frames-dropped", f"{c.name}: showed {r['drawn']} of {r['frames']} frames")
+        if not REPLAY_MIN_MS <= r["dur_ms"] <= REPLAY_MAX_MS:
+            ctx.fail("replay.duration", f"{c.name}: replay took {r['dur_ms']} ms (want {REPLAY_MIN_MS}-{REPLAY_MAX_MS})")
+        if r["late_ms"] > REPLAY_MAX_LATE_MS:
+            ctx.fail("replay.late", f"{c.name}: replay started {r['late_ms']} ms after round_end (want <= {REPLAY_MAX_LATE_MS})")
+        if r["cut"]:
+            ctx.fail("replay.cut", f"{c.name}: the next round cut the replay after {r['dur_ms']} ms")
+        if status is not None:
+            seat = next((x for x in status.get("seats", []) if x.get("id") == slot), None)
+            card = ((seat or {}).get("tape") or {}).get("replay")
+            if not card or not card.get("played"):
+                ctx.fail("replay.no-card", f"{c.name} (P{slot}): status.json seats[].tape.replay = {card}")
+        ctx.note(f"{c.name} P{slot}: replay of round 1, P{r['killer']} killed P{r['victim']} with {r['weapon']}, frames {r['from']}-{r['to']} "
+                 f"({r['frames']}, {r['drawn']} shown) in {r['dur_ms']} ms, started {r['late_ms']} ms after round_end")
     for c in clients:
         c.stop()
 

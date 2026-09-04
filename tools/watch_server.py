@@ -201,13 +201,23 @@ def kd_text(seat):
 def tape_text(seat):
     """The Tape column (v0.0.25): what this screen's tape holds.
     ● 5.0s ·2 = recording, 5 s on the tape, 2 kills stamped this round.
-    ■ R3 ✓ = frozen for round 3 with the closing kill stamped (■ R3 without it)."""
+    ■ R3 ✓ = frozen for round 3 with the closing kill stamped (■ R3 without it).
+    v0.0.26: ▶ R3 = the screen is playing the round 3 replay, ■ R3 ✓ ▶5.1s = it
+    played it (5.1 s), ■ R3 ✓ ✗ = it skipped it (the [TAPE] log line says why)."""
     card = seat.get("tape")
     if not card or not seat["connected"]:
         return "-"
     if card.get("frozen"):
         last = card.get("last") or {}
-        return f"■ R{card.get('round', '?')}" + (" ✓" if last.get("closing") else "")
+        rp = card.get("replay") or {}
+        if rp.get("playing"):
+            return f"▶ R{card.get('round', '?')}"
+        text = f"■ R{card.get('round', '?')}" + (" ✓" if last.get("closing") else "")
+        if rp.get("played"):
+            text += f" ▶{(rp.get('dur_ms') or 0) / 1000.0:.1f}s"
+        elif rp.get("skipped"):
+            text += " ✗"
+        return text
     span = (card.get("span_ms") or 0) / 1000.0
     return f"● {span:.1f}s ·{card.get('stamps', 0)}"
 
@@ -341,6 +351,30 @@ def tape_inspect(status, rnd):
         text += f", {before} frames before the kill / {after} after"
     else:
         text += ", no closing kill stamped"
+    # v0.0.26: the replay cards of those screens
+    played, playing, skipped = [], [], []
+    for seat in status["seats"]:
+        card = seat.get("tape") or {}
+        rp = card.get("replay") or {}
+        if not rp or card.get("round") != rnd:
+            continue
+        if rp.get("playing"):
+            playing.append(seat["id"])
+        elif rp.get("played"):
+            played.append((seat["id"], rp))
+        elif rp.get("skipped"):
+            skipped.append((seat["id"], rp.get("skipped")))
+    if played:
+        who = " ".join(f"P{pid}" for pid, _ in played)
+        dur = max(int(rp.get("dur_ms") or 0) for _, rp in played) / 1000.0
+        late = max(int(rp.get("late_ms") or 0) for _, rp in played) / 1000.0
+        text += f" · replay played on {len(played)} screen{'s' if len(played) != 1 else ''} ({who}), {dur:.1f} s, started {late:.1f} s after the kill"
+        if any(rp.get("cut") for _, rp in played):
+            text += ", cut by the next round"
+    if playing:
+        text += " · replay playing on " + " ".join(f"P{pid}" for pid in playing)
+    if skipped:
+        text += " · replay skipped on " + ", ".join(f"P{pid} ({why})" for pid, why in skipped)
     return text
 
 
@@ -406,7 +440,7 @@ def build_strip(status, view):
                 who = f"P{winner} {names.get(winner, '')} won" if winner else "no winner"
                 cells[j]["events"].append(f"round {rnd} ended, {who}")
             # The round's last kill is the winner's own kill, so the crown sits one
-            # column later (inside the 2.6 s gap before the next round), on the winner's lane.
+            # column later (inside the gap before the next round: 2.6 s, or 6.5 s after a kill since v0.0.26), on the winner's lane.
             jc = col(t_end + bin_s)
             if jc is not None and winner:
                 cells[jc]["crown"] = winner

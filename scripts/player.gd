@@ -69,6 +69,11 @@ var aim_direction: Vector2 = Vector2.RIGHT
 
 # Network state
 var is_local_player: bool = true
+# v0.0.26: a ghost is a fighter drawn from the tape by replay_player.gd. No physics,
+# no collision, not in the "players" group (arrows and bot brains never see it).
+# _draw() is shared with the live fighter; only the floor test and the ammo row differ.
+var is_ghost: bool = false
+var ghost_on_floor: bool = false
 var target_net_pos: Vector2 = Vector2.ZERO
 var sync_timer: float = 0.0
 var net_tick: int = 0                 # our 20 Hz sample counter (goes out in every sync_pos)
@@ -123,6 +128,16 @@ const ThornScene = preload("res://scenes/thorn.tscn")
 @onready var melee_area = $MeleeArea
 
 func _ready():
+	if is_ghost:
+		set_physics_process(false)
+		collision_layer = 0
+		collision_mask = 0
+		collision_shape.disabled = true
+		melee_area.monitoring = false
+		melee_area.monitorable = false
+		is_local_player = (player_id == Global.my_player_id)   # the pale yellow name tag stays yours
+		_apply_class_defaults()
+		return
 	add_to_group("players")
 	is_local_player = (player_id == Global.my_player_id)
 	
@@ -944,7 +959,8 @@ func _draw():
 	var base_col: Color = class_info["color"]
 
 	var facing_mul = 1.0 if is_facing_right else -1.0
-	var run_cycle = sin(anim_time) * 2.5 if abs(velocity.x) > 20.0 and is_on_floor() else 0.0
+	var on_floor := ghost_on_floor if is_ghost else is_on_floor()
+	var run_cycle = sin(anim_time) * 2.5 if abs(velocity.x) > 20.0 and on_floor else 0.0
 	var breath = sin(anim_time * 0.4) * 0.8
 	
 	if spawn_invuln_timer > 0.0:
@@ -1126,6 +1142,8 @@ func _draw():
 			draw_line(Vector2.ZERO, d1, Color(0.9, 0.95, 1.0), 2.0)
 			draw_line(Vector2.ZERO, d2, Color(0.9, 0.95, 1.0), 2.0)
 
+	if is_ghost:
+		return   # the tape holds no ammo counts, so a ghost wears no quiver row
 	if class_type == Global.ClassType.RANGER:
 		for i in range(max_arrows):
 			var ax = -8 + i * 8
