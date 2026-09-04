@@ -19,3 +19,6 @@ status.json.tmp
 # live harness state file written by tools/chaos_bots.py while a run is on
 harness_state.json
 harness_state.json.tmp
+
+# text snapshots saved from tools/watch_server.py with the s key
+deck_snapshot_*.txt

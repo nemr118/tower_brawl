@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Tower Brawl live operations deck (v0.0.21 dashboard, grown in v0.0.22).
+Tower Brawl live operations deck (v0.0.21 dashboard, deck since v0.0.22,
+interactive since v0.0.24).
 
-    ./venv/bin/python tools/watch_server.py             # live view, redraws every second
-    ./venv/bin/python tools/watch_server.py --plain     # no colours, one text block per second
-    ./venv/bin/python tools/watch_server.py --once      # print one picture and exit
-    ./venv/bin/python tools/watch_server.py --events 25 # show more event lines (plain mode)
+    ./venv/bin/python tools/watch_server.py             # live view, keys and mouse work
+    ./venv/bin/python tools/watch_server.py --plain     # plain text, one block per second
+    ./venv/bin/python tools/watch_server.py --once      # one picture and exit (colour, or --plain)
+    ./venv/bin/python tools/watch_server.py --no-mouse  # keyboard only
+    tbdash                                              # the shell alias for the first line
 
 The story: to watch a match from the terminal you had to read raw log lines.
 Now serve_game.py writes a small file, status.json, once a second, and the test
@@ -13,37 +15,64 @@ harness (tools/chaos_bots.py) writes harness_state.json while it runs. This
 tool only reads those two files and draws them. It never talks to the server.
 
 The picture is a stack of panels. A panel that has nothing to show is not drawn:
+  ALERT      a red line for 10 s after an ERROR, a stalled drop or a gate demotion
   HEADER     match state, players, bots, spectators, uptime
-  HARNESS    only while a harness run is alive: scenario, progress bar, checklist
-  SEATS      one row per seat: lives, crowns, kills/deaths, ping, health, link
-  FIGHT      only when the match has kills: a kill timeline with round marks
-  BOT ARENA  only when bots are in the match: persona, state, actions, learning
-  TRAFFIC    packets and bytes per second, in and out
-  EVENTS     the last tagged server log lines
+  HARNESS    only while a harness run is alive: scenario, progress bar, ETA, checklist
+  SEATS      one row per seat: lives, crowns, kills/deaths, ping + trend, health, link
+  FIGHT      from the first second of a match: a kill strip with a time axis
+  BOT ARENA  when bots are seated: kind, persona, state, actions, learning
+  TRAFFIC    packets and bytes per second, in and out, with a 60 s curve
+  EVENTS     the tagged server log lines, filtered with the number keys
+
+Keys:  ← →  pan the strip     + -  zoom (0.5 s .. 30 s per column)
+       Home  match start      End or f  back to live and follow
+       click a column  what happened that second      Esc  clear it
+       1-9  hide / show a log tag    p  pause    s  save a text snapshot    q  quit
+Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel
+over the events panel scrolls it. --no-mouse turns the mouse off.
 
 Colours come from the `rich` library (installed in the venv). Without it, or
-with --plain, the same picture is printed as plain text.
+with --plain, the same picture is printed as plain text (no keys in plain mode).
 """
 import argparse
+import glob
 import json
 import os
 import shutil
 import sys
 import time
+from collections import deque
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from deck_input import InputReader  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATUS_FILE = os.path.join(ROOT, "status.json")
 HARNESS_FILE = os.path.join(ROOT, "harness_state.json")
+REPORT_GLOB = os.path.join(ROOT, "docs", "harness_report_*.json")
 STALE_AFTER = 3.0      # seconds without a fresh status write = the server is probably down
 HARNESS_STALE = 5.0    # seconds without a harness heartbeat = the run stopped answering
 HARNESS_KEEP = 600.0   # a finished run stays as one summary line this long
-TIMELINE_BIN_S = 5.0   # one timeline column = this many seconds
-SPARK = " ▁▂▃▄▅▆▇█"    # kill counts per column, low to high
+ALERT_KEEP = 10.0      # an alert line stays this long
+MESSAGE_KEEP = 4.0     # "saved deck_snapshot_..." stays this long
+HISTORY = 60           # ping and traffic samples kept for the sparklines
+ZOOM_LADDER = (0.5, 1.0, 2.0, 5.0, 10.0, 30.0)   # seconds per strip column
+DEFAULT_ZOOM = 1                                   # index into ZOOM_LADDER: 1.0 s
+LABEL_W = 18           # the lane label: "P1 Tav ♛2 5/3"
+SPARK = " ▁▂▃▄▅▆▇█"    # counts per column, low to high
+SEAT_STYLE = {1: "bright_blue", 2: "bright_red", 3: "bright_green", 4: "bright_yellow"}
+BAND_BG = "grey11"     # every second round gets this background on the strip
+# The weapon names a kill carries (take_hit in player.gd and the projectiles).
+# ⬇ would be the natural stomp glyph, but emoji-aware terminals draw it two
+# cells wide and that breaks the columns, so the stomp is ▼.
+WEAPON_GLYPH = {"Arrow": "➶", "Firebolt": "✦", "Kunai": "✧", "Thorns": "❋", "Melee": "⚔", "Goomba Stomp": "▼"}
+LEGEND = "➶ arrow ✦ firebolt ✧ kunai ❋ thorns ⚔ melee ▼ stomp ✕ death ◈ both 2-9 stacked ┃ round ┫ end ♛ winner ║ match end"
+FILTER_TAGS = ("KILL", "ROUND", "MATCH", "JOIN", "LEAVE", "NAME", "LOCK", "CONN", "NET")   # keys 1..9
 
 # One colour per tag. The same names the server puts at the start of its lines.
 TAG_STYLE = {
     "JOIN": "green", "LEAVE": "yellow", "CONN": "dim", "NAME": "magenta", "LOCK": "blue",
-    "MATCH": "bold cyan", "ROUND": "cyan", "KILL": "red", "NET": "yellow",
+    "MATCH": "bold cyan", "ROUND": "cyan", "KILL": "red", "NET": "yellow", "GATE": "bold yellow",
 }
 RESULT_MARK = {"PASS": ("✔", "green"), "FAIL": ("✖", "bold red"), "MINOR": ("▲", "yellow")}
 HEALTH_STYLE = {"good": "green", "laggy": "yellow", "slow": "yellow", "quiet": "yellow",
@@ -61,6 +90,20 @@ def read_json(path):
         return None
 
 
+def load_expected():
+    """Scenario name -> seconds it took in the newest harness report, for the ETA."""
+    paths = glob.glob(REPORT_GLOB)
+    if not paths:
+        return {}
+    newest = max(paths, key=os.path.getmtime)
+    report = read_json(newest) or {}
+    out = {}
+    for r in report.get("results") or []:
+        if isinstance(r, dict) and r.get("scenario") and r.get("elapsed_s") is not None:
+            out[r["scenario"]] = float(r["elapsed_s"])
+    return out
+
+
 def fmt_uptime(seconds):
     seconds = int(seconds)
     h, rem = divmod(seconds, 3600)
@@ -72,6 +115,12 @@ def fmt_uptime(seconds):
     return f"{s}s"
 
 
+def fmt_clock(t):
+    """Match time as m:ss."""
+    t = max(0, int(t))
+    return f"{t // 60}:{t % 60:02d}"
+
+
 def dash(value, fmt="{}"):
     """A value as text, or '-' when it is missing."""
     if value is None or value == "":
@@ -80,6 +129,26 @@ def dash(value, fmt="{}"):
         return fmt.format(value)
     except (ValueError, TypeError):
         return str(value)
+
+
+def spark_line(values, width, relative=False):
+    """A tiny bar chart of the newest values, `width` characters wide. Older
+    samples are squeezed by taking the biggest of each group. The bars run from
+    zero to the peak; with relative=True from the lowest to the highest value
+    (a flat line for a steady ping, instead of a solid block)."""
+    vals = [v for v in values if v is not None]
+    if not vals or width <= 0:
+        return ""
+    if len(vals) > width:
+        per = -(-len(vals) // width)
+        vals = [max(vals[i:i + per]) for i in range(0, len(vals), per)]
+    if relative:
+        lo, hi = min(vals), max(vals)
+        if hi - lo < 1e-9:
+            return ("▄" * len(vals)).rjust(width)
+        return "".join(SPARK[1 + round((v - lo) / (hi - lo) * 7)] for v in vals).rjust(width)
+    peak = max(vals) or 1.0
+    return "".join(SPARK[max(1, min(8, round(v / peak * 8)))] if v > 0 else SPARK[0] for v in vals).rjust(width)
 
 
 # ── Seats ─────────────────────────────────────────────────────────────────────
@@ -127,7 +196,7 @@ def kd_text(seat):
     return f"{k}/{d} {ratio:.1f}"
 
 
-def seat_rows(status):
+def seat_rows(status, ping_hist=None):
     """The seat table as plain values: one dict per seat."""
     rows = []
     for seat in status["seats"]:
@@ -137,6 +206,7 @@ def seat_rows(status):
         name = seat["name"] or "-"
         if bot:
             name += " 🤖"
+        hist = (ping_hist or {}).get(seat["id"]) or []
         rows.append({
             "seat": f"P{seat['id']}", "name": name,
             "cls": seat["class_name"] or "-", "state": state, "colour": colour,
@@ -144,6 +214,7 @@ def seat_rows(status):
             "crowns": str(seat["crowns"]) if seat["crowns"] else "-",
             "kd": kd_text(seat),
             "ping": dash(seat.get("rtt_ms"), "{} ms") if seat["connected"] else "-",
+            "trend": spark_line(hist, 8, relative=True) if seat["connected"] and sum(v is not None for v in hist) >= 3 else "",
             "health": seat_health(seat),
             "link": f"{seat['transport']} {seat['ip']}" if seat["connected"] else "-",
             "pps": f"{seat['in_pps']:.0f}" if seat["connected"] else "-",
@@ -155,13 +226,13 @@ def seat_rows(status):
 
 SEAT_COLS = (("Seat", "left", "seat"), ("Name", "left", "name"), ("Class", "left", "cls"),
              ("State", "left", "state"), ("Lives", "left", "lives"), ("Crowns", "right", "crowns"),
-             ("K/D", "right", "kd"), ("Ping", "right", "ping"), ("Health", "left", "health"),
-             ("Link", "left", "link"), ("In/s", "right", "pps"), ("Q/drop", "right", "queue"),
-             ("Seen", "right", "seen"))
+             ("K/D", "right", "kd"), ("Ping", "right", "ping"), ("Trend", "left", "trend"),
+             ("Health", "left", "health"), ("Link", "left", "link"), ("In/s", "right", "pps"),
+             ("Q/drop", "right", "queue"), ("Seen", "right", "seen"))
 
 
 # ── Header and traffic ────────────────────────────────────────────────────────
-def header_text(status, age):
+def header_text(status, age, deck=None):
     m = status["match"]
     players = sum(1 for s in status["seats"] if s["connected"])
     bots = status.get("bots", 0)
@@ -178,18 +249,28 @@ def header_text(status, age):
         parts.append("SEATS LOCKED (harness)")   # v0.0.23: the server keeps the seats for bots
     parts.append(f"up {fmt_uptime(status['uptime_s'])}")
     parts.append(f"{age:.1f}s ago")
+    if deck is not None and deck.paused:
+        parts.append("PAUSED (p)")
+    if deck is not None and deck.message_text():
+        parts.append(deck.message_text())
     return " | ".join(parts)
 
 
-def traffic_lines(status):
-    """Two tidy lines: what comes in, what goes out."""
+def traffic_lines(status, hist=None):
+    """Two tidy lines: what comes in, what goes out. With a history, two more
+    lines with the 60 s curve of each."""
     t = status["traffic"]
     top = "   ".join(f"{k} {v:g}/s" for k, v in sorted(t["in_types_s"].items(), key=lambda kv: -kv[1])[:5])
     queued = sum(s.get("queue", 0) for s in status["seats"])
-    line_in = f"IN  {t['in_pps']:7.1f} pkt/s {t['in_kbps']:7.2f} KB/s     {top or '-'}"
-    line_out = (f"OUT {t['out_pps']:7.1f} pkt/s {t['out_kbps']:7.2f} KB/s     "
-                f"fail {t['fail_s']:g}/s   drop {t['drop_s']:g}/s   queued {queued}   threads {status['threads']}")
-    return [line_in, line_out]
+    lines = [f"IN  {t['in_pps']:7.1f} pkt/s {t['in_kbps']:7.2f} KB/s     {top or '-'}",
+             f"OUT {t['out_pps']:7.1f} pkt/s {t['out_kbps']:7.2f} KB/s     "
+             f"fail {t['fail_s']:g}/s   drop {t['drop_s']:g}/s   queued {queued}   threads {status['threads']}"]
+    if hist and (hist.get("in") or hist.get("out")):
+        for key, label in (("in", "in "), ("out", "out")):
+            vals = list(hist.get(key) or [])
+            if vals:
+                lines.append(f"{label} KB/s {spark_line(vals, HISTORY)}  peak {max(vals):.2f}  ({len(vals)} s)")
+    return lines
 
 
 def stale_text(status, age):
@@ -198,110 +279,254 @@ def stale_text(status, age):
     return f"no fresh status for {age:.0f} s. Is the server running?  systemctl --user status towerbrawl"
 
 
-# ── Fight timeline ────────────────────────────────────────────────────────────
-def timeline_cells(status, width):
-    """The kill timeline as columns. Returns (cells, seats) or (None, None) when
-    there is nothing to draw. Each cell is a dict: {"sep": round number} for a
-    round line, or {"bin": i, "kills": {pid: n}, "deaths": {pid: n}, "total": n,
-    "round_start": n or None}."""
+# ── Fight strip ───────────────────────────────────────────────────────────────
+def timeline_now(status):
+    """(now_t, timeline) for the current or last match, or (None, tl) with no match.
+    now_t is the newest match second the strip should reach."""
     tl = status["match"].get("timeline") or {}
+    started = tl.get("started_at")
+    if not started:
+        return None, tl
     kills = tl.get("kills") or []
     rounds = tl.get("rounds") or []
-    started = tl.get("started_at")
-    if not kills or not started:
-        return None, None
-    now_t = 0.0
+    last = [0.0] + [k[0] for k in kills] + [r[1] for r in rounds]
+    last += [r[3] for r in rounds if len(r) > 3 and r[3] is not None]
+    if tl.get("ended_at") is not None:
+        last.append(tl["ended_at"])
     if status["match"]["state"] == "PLAYING":
-        now_t = status["written_at"] - started
-    last_t = max([k[0] for k in kills] + [r[1] for r in rounds] + [now_t])
-    n_bins = int(last_t // TIMELINE_BIN_S) + 1
-    bins = [{"bin": i, "kills": {}, "deaths": {}, "total": 0, "round_start": None} for i in range(n_bins)]
-    for t, killer, victim, _weapon, _rnd in kills:
-        b = bins[min(int(t // TIMELINE_BIN_S), n_bins - 1)]
-        b["total"] += 1
-        b["deaths"][victim] = b["deaths"].get(victim, 0) + 1
-        if killer and killer != victim:
-            b["kills"][killer] = b["kills"].get(killer, 0) + 1
-    seps = {}
-    for rnd, t0, _winner in rounds:
-        i = min(int(t0 // TIMELINE_BIN_S), n_bins - 1)
-        if bins[i]["round_start"] is None:
-            bins[i]["round_start"] = rnd
-        if rnd > 1:
-            seps[i] = rnd
-    cells = []
-    for b in bins:
-        if b["bin"] in seps:
-            cells.append({"sep": seps[b["bin"]]})
-        cells.append(b)
-    if width > 0 and len(cells) > width:
-        cells = cells[-width:]
-    seats = sorted({pid for k in kills for pid in (k[1], k[2]) if 1 <= pid <= 4})
-    return cells, seats
+        last.append(status["written_at"] - started)
+    return max(last), tl
 
 
-def timeline_rows(status, width):
-    """Text rows of the timeline: [(label, [(char, style), ...]), ...]."""
-    cells, seats = timeline_cells(status, width)
-    if cells is None:
-        return []
+def axis_interval(bin_s):
+    """Seconds between axis labels: at least 8 columns apart."""
+    for cand in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800):
+        if cand / bin_s >= 8:
+            return cand
+    return 3600
+
+
+def build_strip(status, view):
+    """The fight strip as rows of cells, from the timeline and the deck's view.
+    view = {"cells": n, "bin_s": s, "follow": bool, "end_t": s or None, "selected_t": s or None}.
+    Returns None when there is no match to draw, else a dict with:
+      rows      [(label, label_style, [(ch, fg_style, band, selected), ...]), ...]
+      start_t, now_t, bin_s, cells, title, subtitle, inspect (text or None)."""
+    now_t, tl = timeline_now(status)
+    if now_t is None:
+        return None
+    kills = tl.get("kills") or []
+    rounds = tl.get("rounds") or []
+    n = view["cells"]
+    bin_s = view["bin_s"]
+    span = n * bin_s
+    end_t = now_t if view["follow"] or view["end_t"] is None else min(view["end_t"], now_t)
+    end_t = max(end_t, min(span, now_t))
+    start_t = max(0.0, end_t - span)
     names = {s["id"]: (s["name"] or f"P{s['id']}") for s in status["seats"]}
-    peak = max((c.get("total", 0) for c in cells), default=1) or 1
-    rows = []
-    spark = []
-    for c in cells:
-        if "sep" in c:
-            spark.append(("┃", "bold white"))
-        else:
-            level = 0 if c["total"] == 0 else max(1, round(c["total"] / peak * (len(SPARK) - 1)))
-            spark.append((SPARK[level], "red" if c["total"] else "dim"))
-    rows.append(("kills/5s", spark))
-    for pid in seats:
-        lane = []
-        for c in cells:
-            if "sep" in c:
-                lane.append(("┃", "bold white"))
-                continue
-            k, d = c["kills"].get(pid, 0), c["deaths"].get(pid, 0)
-            if k and d:
-                lane.append(("◈", "magenta"))
-            elif k:
-                lane.append(("◆", "green"))
-            elif d:
-                lane.append(("✕", "red"))
-            else:
-                lane.append(("·", "dim"))
-        label = f"P{pid} {names.get(pid, '')}"[:11]
-        rows.append((label, lane))
-    marks = []
-    i = 0
-    while i < len(cells):
+    # v0.0.24: the server stamps the names behind the seats on the timeline, so a
+    # seat that changed hands after the match keeps its fighter's name here.
+    for pid_txt, name in (tl.get("names") or {}).items():
+        try:
+            names[int(pid_txt)] = name
+        except (TypeError, ValueError):
+            pass
+    live = status["match"]["state"] == "PLAYING"
+
+    def col(t):
+        i = int((t - start_t) // bin_s)
+        return i if 0 <= i < n else None
+
+    cells = [{"t0": start_t + i * bin_s, "kills": {}, "deaths": {}, "total": 0, "events": [],
+              "round_start": None, "round_end": None, "match_end": None, "crown": None,
+              "future": start_t + i * bin_s > now_t}
+             for i in range(n)]
+    for k in kills:
+        t, killer, victim, weapon = k[0], k[1], k[2], k[3] if len(k) > 3 else ""
+        i = col(t)
+        if i is None:
+            continue
         c = cells[i]
-        if "sep" in c:
-            marks.append(("┃", "bold white"))
+        c["total"] += 1
+        c["deaths"].setdefault(victim, []).append(killer)
+        if killer and killer != victim:
+            c["kills"].setdefault(killer, []).append((victim, weapon))
+            c["events"].append(f"{names.get(killer, '?')} (P{killer}) killed {names.get(victim, '?')} (P{victim}) with {weapon or '?'}")
+        else:
+            c["events"].append(f"{names.get(victim, '?')} (P{victim}) died ({weapon or 'fall'})")
+    for r in rounds:
+        rnd, t0, winner = r[0], r[1], r[2]
+        t_end = r[3] if len(r) > 3 else None
+        i = col(t0)
+        if i is not None and rnd > 1:
+            cells[i]["round_start"] = rnd
+            cells[i]["events"].append(f"round {rnd} started")
+        if t_end is not None:
+            j = col(t_end)
+            if j is not None:
+                cells[j]["round_end"] = (rnd, winner)
+                who = f"P{winner} {names.get(winner, '')} won" if winner else "no winner"
+                cells[j]["events"].append(f"round {rnd} ended, {who}")
+            # The round's last kill is the winner's own kill, so the crown sits one
+            # column later (inside the 2.6 s gap before the next round), on the winner's lane.
+            jc = col(t_end + bin_s)
+            if jc is not None and winner:
+                cells[jc]["crown"] = winner
+    if tl.get("ended_at") is not None:
+        i = col(tl["ended_at"])
+        if i is not None:
+            cells[i]["match_end"] = tl.get("winner") or 0
+            cells[i]["events"].append(f"match over, P{tl.get('winner')} {names.get(tl.get('winner'), '')} won the match")
+    # which round a column belongs to, for the background bands
+    starts = sorted((r[1], r[0]) for r in rounds)
+    for c in cells:
+        rnd = 1
+        for t0, r_no in starts:
+            if t0 <= c["t0"] + bin_s * 0.999:
+                rnd = r_no
+        c["band"] = (rnd % 2 == 0) and not c["future"]
+
+    sel_i = None
+    if view.get("selected_t") is not None:
+        sel_i = col(view["selected_t"])
+
+    # lanes: everyone playing plus everyone on the timeline
+    lanes = set()
+    if live:
+        lanes |= {s["id"] for s in status["seats"] if s.get("playing")}
+    lanes |= {pid for k in kills for pid in (k[1], k[2]) if 1 <= pid <= 4}
+    lanes |= {r[2] for r in rounds if r[2]}
+    lanes = sorted(p for p in lanes if 1 <= p <= 4)
+    by_id = {s["id"]: s for s in status["seats"]}
+
+    def marker(c, pid=None):
+        """The mark of a column with no kill on this lane, or None."""
+        if c["match_end"] is not None:
+            return "║", "bold cyan"
+        if pid is not None and c["crown"] == pid:
+            return "♛", "bold yellow"
+        if c["round_end"] is not None:
+            return "┫", "bold white"
+        if c["round_start"] is not None:
+            return "┃", "bold white"
+        return None
+
+    rows = []
+    label_bin = f"{bin_s:g}s"
+    spark = []
+    for i, c in enumerate(cells):
+        sel = i == sel_i
+        if c["total"]:
+            spark.append((SPARK[min(c["total"], 8)], "red", c["band"], sel))
+        else:
+            mk = marker(c)
+            if mk:
+                spark.append((mk[0], mk[1], c["band"], sel))
+            else:
+                spark.append((" ", "dim", c["band"], sel))
+    rows.append((f"kills/{label_bin}", "bold", spark))
+    for pid in lanes:
+        lane = []
+        for i, c in enumerate(cells):
+            sel = i == sel_i
+            ks, ds = c["kills"].get(pid, []), c["deaths"].get(pid, [])
+            k, d = len(ks), len(ds)
+            if k + d >= 2 and not (k == 1 and d == 1):
+                ch = str(min(k + d, 9))
+                style = "bold green" if not d else ("bold red" if not k else "bold magenta")
+            elif k and d:
+                ch, style = "◈", "bold magenta"
+            elif k:
+                victim, weapon = ks[0]
+                ch, style = WEAPON_GLYPH.get(weapon, "◆"), "bold " + SEAT_STYLE.get(victim, "white")
+            elif d:
+                killer = ds[0]
+                ch = "✕"
+                style = ("bold " + SEAT_STYLE[killer]) if killer in SEAT_STYLE and killer != pid else "bold white"
+            else:
+                mk = marker(c, pid)
+                if mk:
+                    ch, style = mk
+                elif c["future"]:
+                    ch, style = " ", "dim"
+                else:
+                    ch, style = "·", "dim"
+            lane.append((ch, style, c["band"], sel))
+        seat = by_id.get(pid, {})
+        label = f"P{pid} {names.get(pid, '')[:8]}".rstrip()
+        if seat.get("crowns"):
+            label += f" ♛{seat['crowns']}"
+        label += f" {seat.get('kills', 0)}/{seat.get('deaths', 0)}"
+        rows.append((label[:LABEL_W], "bold " + SEAT_STYLE.get(pid, "white"), lane))
+    # round row: "R2 19s ♛P1" written from the round's first column, cut at the next round
+    round_cells = [("─" if not c["future"] else " ", "dim", c["band"], i == sel_i) for i, c in enumerate(cells)]
+    ordered = sorted(rounds, key=lambda r: r[1])
+    for idx, r in enumerate(ordered):
+        rnd, t0, winner = r[0], r[1], r[2]
+        t_end = r[3] if len(r) > 3 else None
+        i = col(t0) if t0 >= start_t else (0 if t0 < start_t <= (ordered[idx + 1][1] if idx + 1 < len(ordered) else now_t + 1) else None)
+        if i is None:
+            continue
+        limit = n
+        if idx + 1 < len(ordered):
+            j = col(ordered[idx + 1][1])
+            if j is not None:
+                limit = j
+        text = f"R{rnd}"
+        if t_end is not None:
+            text += f" {t_end - t0:.0f}s"
+            text += f" ♛ P{winner}" if winner else " no winner"
+        if len(text) > limit - i:
+            text = f"R{rnd}" + (f" {t_end - t0:.0f}s" if t_end is not None and len(f"R{rnd} {t_end - t0:.0f}s") <= limit - i else "")
+        for k, ch in enumerate(text[:max(0, limit - i)]):
+            if i + k < n:
+                round_cells[i + k] = (ch, "cyan", cells[i + k]["band"], (i + k) == sel_i)
+    rows.append(("round", "dim", round_cells))
+    # time axis
+    axis = [("─", "dim", False, i == sel_i) for i in range(n)]
+    step = axis_interval(bin_s)
+    i = 0
+    while i < n:
+        t0 = cells[i]["t0"]
+        tick = None
+        for m in range(int(t0 // step), int((t0 + bin_s) // step) + 1):
+            if t0 <= m * step < t0 + bin_s:
+                tick = m * step
+                break
+        if tick is None:
             i += 1
             continue
-        if c["round_start"] is not None:
-            label = f"R{c['round_start']}"
-            # The round label sits on the first cells of its round, one letter per cell.
-            for ch in label:
-                if i < len(cells) and "sep" not in cells[i]:
-                    marks.append((ch, "cyan"))
-                    i += 1
-            continue
-        marks.append(("─", "dim"))
-        i += 1
-    rows.append(("round", marks))
-    return rows
+        axis[i] = ("┴", "white", False, i == sel_i)
+        label = fmt_clock(tick)
+        for k, ch in enumerate(label):
+            if i + 1 + k < n:
+                axis[i + 1 + k] = (ch, "white", False, (i + 1 + k) == sel_i)
+        i += 1 + len(label) + 1
+    if sel_i is not None:
+        axis[sel_i] = ("▲", "bold yellow", False, False)
+    rows.append(("time", "dim", axis))
 
-
-def fight_title(status):
-    tl = status["match"].get("timeline") or {}
-    kills = tl.get("kills") or []
-    rounds = tl.get("rounds") or []
-    live = status["match"]["state"] == "PLAYING"
-    where = f"round {rounds[-1][0]}" if rounds else ""
-    return f"FIGHT  {len(kills)} kill{'s' if len(kills) != 1 else ''}  {where}" + ("" if live else "  (last match)")
+    inspect = None
+    if view.get("selected_t") is not None:
+        if sel_i is None:
+            inspect = f"selected {fmt_clock(view['selected_t'])} is off screen (End = live, or pan)"
+        else:
+            c = cells[sel_i]
+            inspect = f"{fmt_clock(c['t0'])}  " + (" · ".join(c["events"]) if c["events"] else f"nothing happened in this {label_bin}")
+    n_kills = len(kills)
+    title = f"FIGHT  {n_kills} kill{'s' if n_kills != 1 else ''}"
+    if rounds:
+        title += f"  round {rounds[-1][0]}"
+    title += f"  clock {fmt_clock(now_t)}"
+    if now_t >= 30 and n_kills:
+        title += f"  {n_kills / (now_t / 60):.1f} kills/min"
+    if not live:
+        title += f"  (last match, P{tl.get('winner')} won)" if tl.get("winner") else "  (last match)"
+    if not (view["follow"] or end_t >= now_t):
+        title += f"  view {fmt_clock(start_t)}-{fmt_clock(end_t)} (End = live)"
+    return {"rows": rows, "start_t": start_t, "now_t": now_t, "bin_s": bin_s, "cells": n, "end_t": end_t,
+            "following": view["follow"] or end_t >= now_t, "live": live, "title": title, "subtitle": LEGEND,
+            "inspect": inspect}
 
 
 # ── Bot arena ─────────────────────────────────────────────────────────────────
@@ -319,18 +544,33 @@ def merge_cards(server_card, harness_card):
 
 
 def bot_cards(status, harness):
-    """All bot cards by seat, brains only (protocol bots get a badge in the seat table)."""
+    """All bot cards by seat: brains, plain headless clients and protocol bots
+    (v0.0.24: every kind, before only brains). The seat's kill and death counts
+    fill the card's combat slots when the bot did not send them."""
     by_seat = {}
     for seat in status["seats"]:
         card = seat.get("bot")
-        if card and card.get("kind") == "brain":
+        if card:
             by_seat[seat["id"]] = merge_cards(card, None)
     if harness:
         for card in harness.get("bots") or []:
             pid = card.get("seat")
             if pid is None:
                 continue
-            by_seat[pid] = merge_cards(by_seat.get(pid), card)
+            merged = merge_cards(by_seat.get(pid), card)
+            if merged.get("updated_at") is None:
+                merged["updated_at"] = harness.get("written_at")
+            by_seat[pid] = merged
+    seats = {s["id"]: s for s in status["seats"]}
+    for pid, card in by_seat.items():
+        seat = seats.get(pid) or {}
+        card["name"] = seat.get("name")
+        combat = dict(card.get("combat") or {})
+        if combat.get("kills") is None:
+            combat["kills"] = seat.get("kills", 0)
+        if combat.get("deaths") is None:
+            combat["deaths"] = seat.get("deaths", 0)
+        card["combat"] = combat
     return [by_seat[k] for k in sorted(by_seat)]
 
 
@@ -360,22 +600,31 @@ def pct(value):
         return str(value)
 
 
-def bot_rows(cards):
+def bot_rows(cards, now):
     rows = []
     for c in cards:
         actions = c.get("actions") or {}
         nav = c.get("nav") or {}
         aim = c.get("aim") or {}
         combat = c.get("combat") or {}
-        goal = c.get("goal")
-        goal_txt = f"{goal[0]},{goal[1]}" if isinstance(goal, list) and len(goal) == 2 else "-"
+        kind = c.get("kind") or "?"
+        state = c.get("state")
+        if state is None and kind == "brain" and not actions:
+            state = "no card yet"          # the join card is here, the first bot_status (5 s) is not
+        age = None
+        if c.get("updated_at"):
+            age = max(0, int(now - c["updated_at"]))
+        k, d = combat.get("kills"), combat.get("deaths")
+        kd = f"{k}/{d}" if (k or d) else "-"
         rows.append({
             "seat": f"P{c.get('seat', '?')}",
-            "persona": dash(c.get("persona")),
+            "name": dash(c.get("name")),
+            "kind": kind,
+            "persona": dash(c.get("persona")) if kind == "brain" else "-",
             "diff": dash(c.get("difficulty"), "{:.2f}"),
-            "state": dash(c.get("state")),
+            "state": dash(state),
             "target": dash(c.get("target"), "P{}"),
-            "goal": goal_txt,
+            "kd": kd,
             "acc": pct(combat.get("accuracy")),
             "air": pct(combat.get("air_time_pct")),
             "decisions": dash(actions.get("decisions")),
@@ -385,26 +634,50 @@ def bot_rows(cards):
             "wraps": dash(nav.get("wraps")),
             "loop": dash(nav.get("max_loop")),
             "aim": dash(aim.get("err_mean_deg"), "{:.1f}°"),
-            "learn": learn_text(c),
+            "age": dash(age, "{}s"),
             "up": dash(c.get("uptime_s"), "{}s"),
+            "learn": learn_text(c),
         })
     return rows
 
 
-BOT_COLS = (("Seat", "left", "seat"), ("Persona", "left", "persona"), ("Diff", "right", "diff"),
-            ("State", "left", "state"), ("Target", "left", "target"),
-            ("Acc", "right", "acc"), ("Air", "right", "air"), ("Decis", "right", "decisions"),
-            ("Atk", "right", "attacks"), ("Spec", "right", "specials"), ("Evade", "right", "evades"),
-            ("Wraps", "right", "wraps"), ("Loop", "right", "loop"), ("Aim", "right", "aim"),
-            ("Up", "right", "up"), ("Learn Δ", "left", "learn"))
+BOT_COLS_BASE = (("Seat", "left", "seat"), ("Name", "left", "name"), ("Kind", "left", "kind"),
+                 ("Persona", "left", "persona"), ("Diff", "right", "diff"), ("State", "left", "state"),
+                 ("Target", "left", "target"), ("K/D", "right", "kd"))
+BOT_COLS_COMBAT = (("Acc", "right", "acc"), ("Air", "right", "air"))
+BOT_COLS_TAIL = (("Dec", "right", "decisions"), ("Atk", "right", "attacks"), ("Spc", "right", "specials"),
+                 ("Evd", "right", "evades"), ("Wrap", "right", "wraps"), ("Loop", "right", "loop"),
+                 ("Aim", "right", "aim"), ("Age", "right", "age"), ("Up", "right", "up"))
+BOT_COLS_LEARN = (("Learn Δ", "left", "learn"),)
+
+
+BOT_COLS_ALWAYS = ("seat", "name", "kind", "persona", "state", "kd", "age")
+
+
+def bot_columns(rows):
+    """The columns to draw. A column that is '-' on every row is left out (the
+    combat and learning slots, the target, the brain numbers for headless-only
+    runs), so the table stays narrow until a brain fills them."""
+    cols = list(BOT_COLS_BASE) + list(BOT_COLS_COMBAT) + list(BOT_COLS_TAIL) + list(BOT_COLS_LEARN)
+    return [c for c in cols if c[2] in BOT_COLS_ALWAYS or any(r[c[2]] != "-" for r in rows)]
+
+
+def bot_title(cards):
+    counts = {}
+    for c in cards:
+        counts[c.get("kind") or "?"] = counts.get(c.get("kind") or "?", 0) + 1
+    words = {"brain": "brain", "headless": "headless client", "protocol": "protocol bot"}
+    bits = [f"{n} {words.get(k, k)}{'s' if n != 1 else ''}" for k, n in sorted(counts.items())]
+    return "BOT ARENA  " + ", ".join(bits)
 
 
 # ── Harness deck ──────────────────────────────────────────────────────────────
-def harness_view(harness, now):
+def harness_view(harness, now, expected=None):
     """What to draw for the harness, or None. Returns a dict:
     {"mode": "live" | "summary", ...} with the pieces the renderers need."""
     if harness is None:
         return None
+    expected = expected or {}
     age = now - harness.get("written_at", 0)
     state = harness.get("state", "idle")
     suite = harness.get("suite") or {}
@@ -442,19 +715,35 @@ def harness_view(harness, now):
     else:
         title = f"HARNESS  {index}/{total}"
     checklist = []
+    eta = 0.0
+    known = 0
+    slow = False
+    running_elapsed = sc.get("elapsed_s", 0.0) if sc else 0.0
     for name in names:
+        exp = expected.get(name)
         if name in done:
-            checklist.append((name, done[name]["result"], done[name].get("elapsed_s")))
+            checklist.append((name, done[name]["result"], done[name].get("elapsed_s"), False))
         elif sc and name == sc.get("name"):
-            checklist.append((name, "RUNNING", sc.get("elapsed_s", 0.0)))
+            is_slow = bool(exp and running_elapsed > 2 * exp and running_elapsed > exp + 10)
+            slow = slow or is_slow
+            checklist.append((name, "RUNNING", running_elapsed, is_slow))
+            if exp:
+                eta += max(exp - running_elapsed, 0.0)
+                known += 1
         else:
-            checklist.append((name, "WAITING", None))
+            checklist.append((name, "WAITING", None, False))
+            if exp:
+                eta += exp
+                known += 1
+    eta_txt = ""
+    if known and state == "running":
+        eta_txt = f"ETA {fmt_uptime(eta)}"
     soak = harness.get("soak")
     soak_txt = ""
     if soak:
         left = max(soak.get("deadline_at", now) - now, 0)
         soak_txt = f"soak pass {soak.get('pass_no', 0) + 1}, {fmt_uptime(left)} left"
-    return {"mode": "live", "title": title, "progress": progress, "elapsed": elapsed,
+    return {"mode": "live", "title": title, "progress": progress, "elapsed": elapsed, "eta": eta_txt, "slow": slow,
             "desc": sc.get("desc", ""), "step": sc.get("step", ""), "checklist": checklist,
             "findings": sc.get("findings") or {}, "warnings": sc.get("warnings") or {},
             "suite": suite, "soak": soak_txt, "state": state, "command": harness.get("command", "")}
@@ -469,6 +758,7 @@ def harness_lines_plain(view):
     if view["mode"] == "summary":
         return [view["text"]]
     lines = [f"{view['title']}  [{progress_bar(view['progress'], 24)}] {view['progress'] * 100:3.0f}%  {fmt_uptime(view['elapsed'])}"
+             + (f"   {view['eta']}" if view["eta"] else "")
              + (f"   {view['soak']}" if view["soak"] else "")]
     if view["desc"]:
         lines.append(f"tests: {view['desc']}")
@@ -476,10 +766,10 @@ def harness_lines_plain(view):
         lines.append(f"step:  {view['step']}")
     marks = {"PASS": "✔", "FAIL": "✖", "MINOR": "▲", "RUNNING": "●", "WAITING": "○"}
     items = []
-    for name, result, elapsed in view["checklist"]:
+    for name, result, elapsed, slow in view["checklist"]:
         item = f"{marks[result]} {name}"
         if result == "RUNNING" and elapsed is not None:
-            item += f" {elapsed:.0f}s"
+            item += f" {elapsed:.0f}s" + (" SLOW" if slow else "")
         items.append(item)
     lines.append("  ".join(items))
     s = view["suite"]
@@ -492,11 +782,261 @@ def harness_lines_plain(view):
     return lines
 
 
+# ── The deck: what the viewer is looking at, and what it remembers ────────────
+class Deck:
+    """Everything that is not in the two files: the zoom and the pan, the
+    selection, pause, filters, the alert list, and 60 s of ping and traffic."""
+
+    def __init__(self, status_file=STATUS_FILE, harness_file=HARNESS_FILE, zoom=DEFAULT_ZOOM):
+        self.status_file = status_file
+        self.harness_file = harness_file
+        self.zoom = zoom
+        self.follow = True
+        self.end_t = None
+        self.selected_t = None
+        self.paused = False
+        self.quit = False
+        self.hidden_tags = set()
+        self.events_scroll = 0
+        self.alerts = []               # (arrived_at, text)
+        self.message = None            # (expires_at, text)
+        self.ping_hist = {pid: deque(maxlen=HISTORY) for pid in range(1, 5)}
+        self.traffic_hist = {"in": deque(maxlen=HISTORY), "out": deque(maxlen=HISTORY)}
+        self.event_ring = deque(maxlen=500)
+        self.seen = set()
+        self.seeded = False
+        self.expected = load_expected()
+        self.status = None
+        self.age = 0.0
+        self.harness = None
+        self.now = time.time()
+        self.strip_geom = None         # (y0, y1, x0, cells, start_t, bin_s) of the last drawn strip
+        self.events_geom = None        # (y0, y1) of the last drawn events panel
+        self.last_view = None          # the strip dict of the last draw
+
+    # -- reading --------------------------------------------------------------
+    def tick(self, now=None):
+        self.now = now if now is not None else time.time()
+        if self.paused:
+            return
+        status = read_json(self.status_file)
+        self.harness = read_json(self.harness_file)
+        if status is None:
+            self.status = None
+            self.age = 0.0
+            return
+        fresh = self.status is None or status.get("written_at") != self.status.get("written_at")
+        self.status = status
+        self.age = (self.now - status["written_at"]) if "written_at" in status else 0.0
+        if fresh:
+            self._remember(status)
+
+    def _remember(self, status):
+        for seat in status.get("seats") or []:
+            pid = seat.get("id")
+            if pid in self.ping_hist:
+                self.ping_hist[pid].append(seat.get("rtt_ms") if seat.get("connected") else None)
+        t = status.get("traffic") or {}
+        self.traffic_hist["in"].append(float(t.get("in_kbps", 0.0)))
+        self.traffic_hist["out"].append(float(t.get("out_kbps", 0.0)))
+        for ev in status.get("events") or []:
+            key = (ev.get("t"), ev.get("msg"))
+            if key in self.seen:
+                continue
+            self.seen.add(key)
+            self.event_ring.append(ev)
+            if self.seeded:
+                self._maybe_alert(ev)
+        if len(self.seen) > 2000:
+            self.seen = {(e.get("t"), e.get("msg")) for e in self.event_ring}
+        self.seeded = True
+
+    def _maybe_alert(self, ev):
+        msg = ev.get("msg", "")
+        text = None
+        if ev.get("level") == "ERROR":
+            text = f"ERROR  {msg}"
+        elif ev.get("tag") == "NET" and "stall" in msg.lower():
+            text = f"STALL  {msg}"
+        elif "harness gate" in msg or "join_locked" in msg:
+            text = f"GATE  {msg}"
+        if text:
+            self.alerts.append((self.now, text))
+
+    def alert_text(self):
+        self.alerts = [a for a in self.alerts if self.now - a[0] <= ALERT_KEEP]
+        if not self.alerts:
+            return None
+        text = self.alerts[-1][1]
+        if len(self.alerts) > 1:
+            text += f"   (+{len(self.alerts) - 1} more)"
+        return text
+
+    def message_text(self):
+        if self.message and self.now <= self.message[0]:
+            return self.message[1]
+        return None
+
+    def say(self, text):
+        self.message = (self.now + MESSAGE_KEEP, text)
+
+    # -- the view -------------------------------------------------------------
+    @property
+    def bin_s(self):
+        return ZOOM_LADDER[self.zoom]
+
+    def view(self, cells):
+        return {"cells": cells, "bin_s": self.bin_s, "follow": self.follow, "end_t": self.end_t,
+                "selected_t": self.selected_t}
+
+    def filtered_events(self):
+        return [e for e in self.event_ring if e.get("tag") not in self.hidden_tags]
+
+    def pan(self, steps):
+        """Move the window by `steps` columns; + is later, - is earlier."""
+        lv = self.last_view
+        if not lv:
+            return
+        span = lv["cells"] * lv["bin_s"]
+        end = lv["end_t"] + steps * lv["bin_s"]
+        end = max(end, min(span, lv["now_t"]))
+        if end >= lv["now_t"]:
+            self.follow = True
+            self.end_t = None
+        else:
+            self.follow = False
+            self.end_t = end
+
+    def zoom_to(self, index, at_col=None):
+        """Change the seconds per column, keeping the time under `at_col` where it is."""
+        index = max(0, min(len(ZOOM_LADDER) - 1, index))
+        lv = self.last_view
+        if index == self.zoom or not lv:
+            self.zoom = index
+            return
+        if at_col is None:
+            at_col = lv["cells"] // 2
+        t_at = lv["start_t"] + at_col * lv["bin_s"]
+        new_bin = ZOOM_LADDER[index]
+        start = max(0.0, t_at - at_col * new_bin)
+        end = start + lv["cells"] * new_bin
+        self.zoom = index
+        if end >= lv["now_t"]:
+            self.follow = True
+            self.end_t = None
+        else:
+            self.follow = False
+            self.end_t = end
+
+    def strip_col(self, x, y):
+        """The strip column under terminal cell (x, y), or None."""
+        g = self.strip_geom
+        if not g:
+            return None
+        y0, y1, x0, cells, _start, _bin = g
+        if y0 <= y <= y1 and x0 <= x < x0 + cells:
+            return x - x0
+        return None
+
+    def in_events(self, y):
+        g = self.events_geom
+        return bool(g and g[0] <= y <= g[1])
+
+    def snapshot(self, width):
+        name = time.strftime("deck_snapshot_%H-%M-%S.txt")
+        path = os.path.join(ROOT, name)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(render_plain(self, 40, width=width) + "\n")
+            self.say(f"saved {name}")
+        except OSError as e:
+            self.say(f"snapshot failed: {e}")
+
+    def handle(self, events, width):
+        """Apply keys and mouse events. Returns True when something changed."""
+        changed = False
+        for ev in events:
+            changed = True
+            if ev[0] == "key":
+                self._key(ev[1], width)
+            elif ev[0] == "wheel":
+                _, step, ctrl, shift, x, y = ev
+                if ctrl or shift:
+                    self.zoom_to(self.zoom + (1 if step > 0 else -1), self.strip_col(x, y))
+                elif self.in_events(y):
+                    n = len(self.filtered_events())
+                    self.events_scroll = max(0, min(n, self.events_scroll - step * 3))
+                else:
+                    lv = self.last_view
+                    cols = max(1, (lv["cells"] // 10) if lv else 5)
+                    self.pan(step * cols)
+            elif ev[0] == "click":
+                _, button, x, y = ev
+                c = self.strip_col(x, y)
+                if c is not None and self.last_view:
+                    self.selected_t = self.last_view["start_t"] + c * self.last_view["bin_s"]
+        return changed
+
+    def _key(self, key, width):
+        lv = self.last_view
+        cols = max(1, (lv["cells"] // 10) if lv else 5)
+        if key in ("q", "Q", "ctrl-c"):
+            self.quit = True
+        elif key == "p":
+            self.paused = not self.paused
+        elif key == "s":
+            self.snapshot(width)
+        elif key in ("f", "F", "end"):
+            self.follow = True
+            self.end_t = None
+            self.events_scroll = 0
+        elif key == "home":
+            if lv:
+                self.follow = False
+                self.end_t = lv["cells"] * lv["bin_s"]
+        elif key == "left":
+            self.pan(-cols)
+        elif key == "right":
+            self.pan(cols)
+        elif key in ("+", "="):
+            self.zoom_to(self.zoom - 1)
+        elif key in ("-", "_"):
+            self.zoom_to(self.zoom + 1)
+        elif key == "esc":
+            self.selected_t = None
+        elif key == "pgup":
+            self.events_scroll += 10
+        elif key == "pgdn":
+            self.events_scroll = max(0, self.events_scroll - 10)
+        elif key in "123456789" and len(key) == 1:
+            tag = FILTER_TAGS[int(key) - 1]
+            if tag in self.hidden_tags:
+                self.hidden_tags.discard(tag)
+            else:
+                self.hidden_tags.add(tag)
+            self.events_scroll = 0
+
+
+def filter_title(deck, n_shown, n_total):
+    """'events  1 KILL 2 ROUND ...' with hidden tags in brackets, plus the scroll place."""
+    bits = []
+    for i, tag in enumerate(FILTER_TAGS, start=1):
+        bits.append(f"{i} [{tag}]" if tag in deck.hidden_tags else f"{i} {tag}")
+    text = "events  " + "  ".join(bits)
+    if deck.events_scroll:
+        text += f"   ↑{deck.events_scroll} of {n_total}"
+    return text
+
+
 # ── Plain text picture ────────────────────────────────────────────────────────
-def render_plain(status, age, harness, n_events, width=100):
-    now = time.time()
+def render_plain(deck, n_events, width=100):
+    status, age, harness = deck.status, deck.age, deck.harness
+    now = deck.now
     lines = []
-    view = harness_view(harness, now)
+    view = harness_view(harness, now, deck.expected)
+    alert = deck.alert_text()
+    if alert:
+        lines.append("!! " + alert)
     if status is None or age > STALE_AFTER:
         if view and view["mode"] == "live" and view["state"] == "restarting":
             lines.append("!! server restarting for the next harness scenario")
@@ -507,53 +1047,98 @@ def render_plain(status, age, harness, n_events, width=100):
                 lines.append("-" * width)
                 lines.extend(harness_lines_plain(view))
             return "\n".join(lines)
-    lines.append(header_text(status, age))
+    lines.append(header_text(status, age, deck))
     if view:
         lines.append("-" * width)
         lines.extend(harness_lines_plain(view))
     lines.append("-" * width)
-    lines.append(f"{'Seat':<5}{'Name':<16}{'Class':<8}{'State':<11}{'Lives':<6}{'Crowns':>6} {'K/D':>8} {'Ping':>7} {'Health':<8}{'Link':<26}{'In/s':>5} {'Q/drop':>7} {'Seen':>5}")
-    for r in seat_rows(status):
+    lines.append(f"{'Seat':<5}{'Name':<16}{'Class':<8}{'State':<11}{'Lives':<6}{'Crowns':>6} {'K/D':>8} {'Ping':>7} {'Trend':<9}{'Health':<8}{'Link':<26}{'In/s':>5} {'Q/drop':>7} {'Seen':>5}")
+    for r in seat_rows(status, deck.ping_hist):
         lines.append(f"{r['seat']:<5}{r['name']:<16}{r['cls']:<8}{r['state']:<11}{r['lives']:<6}{r['crowns']:>6} {r['kd']:>8} {r['ping']:>7} "
-                     f"{r['health']:<8}{r['link']:<26}{r['pps']:>5} {r['queue']:>7} {r['seen']:>5}")
-    rows = timeline_rows(status, width - 13)
-    if rows:
+                     f"{r['trend']:<9}{r['health']:<8}{r['link']:<26}{r['pps']:>5} {r['queue']:>7} {r['seen']:>5}")
+    cells_w = max(10, width - LABEL_W - 7)
+    strip = build_strip(status, deck.view(cells_w))
+    deck.last_view = strip
+    if strip:
         lines.append("-" * width)
-        lines.append(fight_title(status) + "   (◆ kill  ✕ death  ◈ both  ┃ new round)")
-        for label, cells in rows:
-            lines.append(f"{label:<11} " + "".join(ch for ch, _ in cells))
+        lines.append(strip["title"] + (("  ▶ live" if strip["live"] else "  ▶ end") if strip["following"] else ""))
+        for label, _style, cells in strip["rows"]:
+            lines.append(f"{label:<{LABEL_W}} " + "".join(ch for ch, _s, _b, _sel in cells))
+        if strip["inspect"]:
+            lines.append(f"{'':<{LABEL_W}} {strip['inspect']}")
+        lines.append(f"{'':<{LABEL_W}} {strip['subtitle']}"[:width])
     cards = bot_cards(status, harness if view and view["mode"] == "live" else None)
     if cards:
+        rows = bot_rows(cards, now)
+        cols = bot_columns(rows)
         lines.append("-" * width)
-        lines.append(f"BOT ARENA  {len(cards)} brain{'s' if len(cards) != 1 else ''}")
-        head = "".join(f"{c[0]:<{9 if c[1] == 'left' else 7}}" for c in BOT_COLS)
-        lines.append(head)
-        for r in bot_rows(cards):
-            lines.append("".join(f"{str(r[c[2]]):<{9 if c[1] == 'left' else 7}}" for c in BOT_COLS))
+        lines.append(bot_title(cards))
+        lines.append("".join(f"{c[0]:<{12 if c[2] in ('state', 'name') else 9 if c[1] == 'left' else 6}}" for c in cols))
+        for r in rows:
+            lines.append("".join(f"{str(r[c[2]]):<{12 if c[2] in ('state', 'name') else 9 if c[1] == 'left' else 6}}" for c in cols))
     lines.append("-" * width)
-    lines.extend(traffic_lines(status))
+    lines.extend(traffic_lines(status, deck.traffic_hist))
     lines.append("-" * width)
-    for ev in status["events"][-n_events:]:
+    events = deck.filtered_events() or list(status["events"])
+    if deck.hidden_tags:
+        lines.append(f"events without {' '.join(sorted(deck.hidden_tags))}")
+    for ev in events[-n_events:]:
         lines.append(f"{ev['t']} {ev['msg']}")
     return "\n".join(lines)
 
 
 # ── Colour picture (rich) ─────────────────────────────────────────────────────
-def render_rich(status, age, harness, height, width):
+def strip_text(strip, selected_style="reverse"):
+    """The strip rows as one rich Text, and the number of lines it takes."""
+    from rich.text import Text
+    body = Text(no_wrap=True, overflow="crop")
+    rows = strip["rows"]
+    n_lines = len(rows)
+    for i, (label, label_style, cells) in enumerate(rows):
+        body.append(f"{label:<{LABEL_W}} ", style=label_style)
+        for ch, fg, band, sel in cells:
+            style = fg
+            if band:
+                style += f" on {BAND_BG}"
+            if sel:
+                style += " " + selected_style
+            body.append(ch, style=style)
+        if i == 0 and strip["following"]:
+            body.append(" ▶", style="bold green")
+        if i == len(rows) - 1 and strip["following"]:
+            body.append(" live" if strip["live"] else " end", style="bold green" if strip["live"] else "bold cyan")
+        if i < n_lines - 1:
+            body.append("\n")
+    if strip["inspect"]:
+        body.append("\n")
+        body.append(f"{'':<{LABEL_W}} ", style="dim")
+        body.append(strip["inspect"], style="bold yellow")
+        n_lines += 1
+    return body, n_lines
+
+
+def render_rich(deck, height, width):
     from rich.console import Group
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
 
-    now = time.time()
+    status, age, harness = deck.status, deck.age, deck.harness
+    now = deck.now
     parts = []
-    used = 0      # lines taken so far, so the events panel can take the rest
-    view = harness_view(harness, now)
+    used = 0      # lines taken so far: the height budget
+    view = harness_view(harness, now, deck.expected)
+    deck.strip_geom = None
+    deck.events_geom = None
 
     def add(renderable, lines):
         nonlocal used
         parts.append(renderable)
         used += lines
+
+    alert = deck.alert_text()
+    if alert:
+        add(Text(f" {alert} "[:width], style="bold white on red", no_wrap=True, overflow="crop"), 1)
 
     if status is None or age > STALE_AFTER:
         if view and view["mode"] == "live" and view["state"] == "restarting":
@@ -568,69 +1153,92 @@ def render_rich(status, age, harness, height, width):
 
     m = status["match"]
     head_style = "bold green" if m["state"] == "PLAYING" else "bold cyan"
-    add(Panel(Text(header_text(status, age), style=head_style), border_style="cyan"), 3)
+    if deck.paused:
+        head_style = "bold black on yellow"
+    add(Panel(Text(header_text(status, age, deck), no_wrap=True, overflow="ellipsis"), style=head_style,
+              border_style="cyan"), 3)
 
     if view:
         panel, lines = harness_panel(view, width, count=True)
         add(panel, lines)
 
+    rows = seat_rows(status, deck.ping_hist)
+    show_trend = width >= 120 and any(r["trend"] for r in rows)   # needs history and a wide terminal
     table = Table(expand=True, border_style="dim", header_style="bold")
-    for col, just, _key in SEAT_COLS:
+    for col, just, key in SEAT_COLS:
+        if key == "trend" and not show_trend:
+            continue
         table.add_column(col, justify=just, no_wrap=True)
-    for r in seat_rows(status):
-        table.add_row(r["seat"], r["name"], r["cls"], Text(r["state"], style=r["colour"]),
-                      Text(r["lives"], style="red"), r["crowns"], r["kd"], r["ping"],
-                      Text(r["health"], style=HEALTH_STYLE.get(r["health"], "white")),
-                      r["link"], r["pps"], r["queue"], r["seen"])
+    for r in rows:
+        cells = [r["seat"], r["name"], r["cls"], Text(r["state"], style=r["colour"]),
+                 Text(r["lives"], style="red"), r["crowns"], r["kd"], r["ping"],
+                 Text(r["trend"], style="cyan"),
+                 Text(r["health"], style=HEALTH_STYLE.get(r["health"], "white")),
+                 r["link"], r["pps"], r["queue"], r["seen"]]
+        if not show_trend:
+            del cells[8]
+        table.add_row(*cells)
     add(table, 4 + len(status["seats"]))
 
-    rows = timeline_rows(status, width - 18)
-    if rows:
-        body = Text()
-        for i, (label, cells) in enumerate(rows):
-            body.append(f"{label:<11} ", style="bold" if label != "round" else "dim")
-            for ch, style in cells:
-                body.append(ch, style=style)
-            if i < len(rows) - 1:
-                body.append("\n")
-        add(Panel(body, title=fight_title(status), subtitle="◆ kill  ✕ death  ◈ both  ┃ new round",
-                  title_align="left", subtitle_align="right", border_style="red"), len(rows) + 2)
+    cells_w = max(10, width - LABEL_W - 11)
+    strip = build_strip(status, deck.view(cells_w))
+    deck.last_view = strip
+    if strip:
+        body, n_lines = strip_text(strip)
+        # the strip's place on the screen, so the mouse can find a column:
+        # panel border (1) + padding (1) + label (LABEL_W + 1) -> first cell, 1-based
+        deck.strip_geom = (used + 2, used + 1 + len(strip["rows"]), LABEL_W + 4, strip["cells"],
+                           strip["start_t"], strip["bin_s"])
+        add(Panel(body, title=strip["title"], subtitle=strip["subtitle"][:max(0, width - 6)],
+                  title_align="left", subtitle_align="right", border_style="red"), n_lines + 2)
 
     cards = bot_cards(status, harness if view and view["mode"] == "live" else None)
     if cards:
-        bt = Table(expand=False, border_style="dim", header_style="bold",
-                   title=f"BOT ARENA  {len(cards)} brain{'s' if len(cards) != 1 else ''}", title_justify="left",
-                   title_style="bold magenta")
-        for col, just, key in BOT_COLS:
-            # The numbers keep their width; only the learning chips fold when the terminal is narrow.
+        rows = bot_rows(cards, now)
+        cols = bot_columns(rows)
+        bt = Table(expand=True, border_style="dim", header_style="bold", padding=(0, 1),
+                   title=bot_title(cards), title_justify="left", title_style="bold magenta")
+        for col, just, key in cols:
+            # Fits the terminal width; only the learning chips fold when the terminal is narrow.
             if key == "learn":
                 bt.add_column(col, justify=just, no_wrap=False, overflow="fold", max_width=36)
             else:
-                bt.add_column(col, justify=just, no_wrap=True, min_width=len(col))
-        for r in bot_rows(cards):
+                bt.add_column(col, justify=just, no_wrap=True)
+        for r in rows:
             bt.add_row(*[Text(str(r[key]), style="cyan" if key in ("state", "learn") and r[key] != "-" else "white")
-                         for _c, _j, key in BOT_COLS])
-        # A folded learning column adds lines: count them so the events panel still fits.
-        folded = sum(max(0, -(-len(r["learn"]) // 36) - 1) for r in bot_rows(cards))
-        add(bt, 5 + len(cards) + folded)
+                         for _c, _j, key in cols])
+        # A folded learning column adds lines: count them so the budget stays right.
+        folded = sum(max(0, -(-len(r["learn"]) // 36) - 1) for r in rows)
+        add(bt, 5 + len(rows) + folded)
 
-    tl = traffic_lines(status)
-    add(Panel(Text(tl[0] + "\n" + tl[1], style="white"), title="traffic (last second)",
-              title_align="left", border_style="dim"), 4)
+    # Optional panels: traffic, then the events feed take what is left. Nothing
+    # above them is ever cropped (v0.0.24 height budget).
+    tl = traffic_lines(status, deck.traffic_hist)
+    if used + len(tl) + 2 <= height:
+        add(Panel(Text("\n".join(tl), no_wrap=True, overflow="crop"), title="traffic (last second, 60 s curve)",
+                  title_align="left", border_style="dim"), len(tl) + 2)
 
-    n_events = max(height - used - 2, 3)
-    feed = Text()
-    events = status["events"][-n_events:]
-    for i, ev in enumerate(events):
-        style = TAG_STYLE.get(ev["tag"], "white")
-        if ev["level"] in ("WARNING", "ERROR"):
-            style = "bold yellow" if ev["level"] == "WARNING" else "bold red"
-        feed.append(f"{ev['t']} ", style="dim")
-        feed.append(ev["msg"], style=style)
-        if i < len(events) - 1:
-            feed.append("\n")
-    parts.append(Panel(feed if events else Text("no events yet", style="dim"),
-                       title="events", title_align="left", border_style="dim"))
+    n_events = height - used - 2
+    if n_events >= 1:
+        events_all = deck.filtered_events() or [e for e in status["events"] if e.get("tag") not in deck.hidden_tags]
+        deck.events_scroll = max(0, min(deck.events_scroll, max(0, len(events_all) - n_events)))
+        end = len(events_all) - deck.events_scroll
+        events = events_all[max(0, end - n_events):end]
+        feed = Text(no_wrap=True, overflow="ellipsis")
+        for i, ev in enumerate(events):
+            style = TAG_STYLE.get(ev["tag"], "white")
+            if ev["level"] in ("WARNING", "ERROR"):
+                style = "bold yellow" if ev["level"] == "WARNING" else "bold red"
+            feed.append(f"{ev['t']} ", style="dim")
+            feed.append(ev["msg"], style=style)
+            if i < len(events) - 1:
+                feed.append("\n")
+        title = Text(filter_title(deck, len(events), len(events_all)))
+        keys = "← → pan  + - zoom  Home  End/f live  click inspect  Esc  1-9 filter  p pause  s snapshot  q quit"
+        deck.events_geom = (used + 1, height)
+        parts.append(Panel(feed if events else Text("no events yet", style="dim"),
+                           title=title, title_align="left", subtitle=keys[:max(0, width - 6)],
+                           subtitle_align="right", border_style="dim"))
     return Group(*parts)
 
 
@@ -644,11 +1252,13 @@ def harness_panel(view, width, count=False):
                       border_style=view["style"].replace("bold ", ""))
         return (panel, 3) if count else panel
 
-    body = Text()
-    bar_w = max(min(width - 60, 40), 10)
+    body = Text(no_wrap=True, overflow="crop")
+    bar_w = max(min(width - 70, 40), 10)
     body.append(f"{view['title']}  ", style="bold")
     body.append(progress_bar(view["progress"], bar_w), style="green" if view["state"] == "running" else "yellow")
     body.append(f" {view['progress'] * 100:3.0f}%  {fmt_uptime(view['elapsed'])}", style="bold")
+    if view["eta"]:
+        body.append(f"  {view['eta']}", style="cyan")
     if view["soak"]:
         body.append(f"   {view['soak']}", style="cyan")
     lines = 1
@@ -662,9 +1272,9 @@ def harness_panel(view, width, count=False):
         lines += 1
     # The checklist: one chip per scenario, wrapped by hand so the height is known.
     chips = []
-    for name, result, elapsed in view["checklist"]:
+    for name, result, elapsed, slow in view["checklist"]:
         if result == "RUNNING":
-            chips.append((f"● {name} {elapsed:.0f}s", "bold cyan"))
+            chips.append((f"● {name} {elapsed:.0f}s" + (" SLOW" if slow else ""), "bold yellow" if slow else "bold cyan"))
         elif result == "WAITING":
             chips.append((f"○ {name}", "dim"))
         else:
@@ -691,7 +1301,7 @@ def harness_panel(view, width, count=False):
         body.append("   ✖ " + "  ".join(f"{k} ×{v['count']}" for k, v in view["findings"].items()), style="bold red")
     if view["warnings"]:
         body.append("   ▲ " + "  ".join(f"{k} ×{v['count']}" for k, v in view["warnings"].items()), style="yellow")
-    border = "red" if s.get("failed") or view["findings"] else ("yellow" if view["state"] == "restarting" else "green")
+    border = "red" if s.get("failed") or view["findings"] else ("yellow" if view["state"] == "restarting" or view["slow"] else "green")
     panel = Panel(body, title="harness", title_align="left", border_style=border)
     return (panel, lines + 2) if count else panel
 
@@ -703,8 +1313,10 @@ def main():
     ap.add_argument("--harness-file", default=HARNESS_FILE, help="harness state file (default: harness_state.json in the repo)")
     ap.add_argument("--interval", type=float, default=1.0, help="seconds between redraws (default 1)")
     ap.add_argument("--events", type=int, default=15, help="event lines to show in plain mode (default 15)")
-    ap.add_argument("--plain", action="store_true", help="plain text, no colours")
+    ap.add_argument("--zoom", type=float, default=1.0, help="seconds per strip column to start with (0.5, 1, 2, 5, 10, 30)")
+    ap.add_argument("--plain", action="store_true", help="plain text, no colours, no keys")
     ap.add_argument("--once", action="store_true", help="print one picture and exit")
+    ap.add_argument("--no-mouse", action="store_true", help="keyboard only, no mouse reporting")
     args = ap.parse_args()
 
     use_rich = not args.plain
@@ -716,30 +1328,44 @@ def main():
                   "(./venv/bin/pip install rich)", file=sys.stderr)
             use_rich = False
 
-    def picture():
-        status = read_json(args.file)
-        age = (time.time() - status["written_at"]) if status and "written_at" in status else 0.0
-        harness = read_json(args.harness_file)
-        return status, age, harness
+    zoom = min(range(len(ZOOM_LADDER)), key=lambda i: abs(ZOOM_LADDER[i] - args.zoom))
+    deck = Deck(args.file, args.harness_file, zoom=zoom)
 
     if args.once or not use_rich:
-        width = shutil.get_terminal_size((100, 24)).columns
+        size = shutil.get_terminal_size((100, 40))
+        width = max(size.columns, 80)
         while True:
-            status, age, harness = picture()
-            print(render_plain(status, age, harness, args.events, width=max(width, 80)))
+            deck.tick()
+            if use_rich:
+                from rich.console import Console
+                console = Console(width=size.columns, height=size.lines)
+                console.print(render_rich(deck, size.lines, size.columns))
+            else:
+                print(render_plain(deck, args.events, width=width))
             if args.once:
-                return 0 if status is not None and age <= STALE_AFTER else 1
+                return 0 if deck.status is not None and deck.age <= STALE_AFTER else 1
             print()
             time.sleep(args.interval)
 
     from rich.console import Console
     from rich.live import Live
     console = Console()
-    with Live(console=console, refresh_per_second=4, screen=True) as live:
-        while True:
-            status, age, harness = picture()
-            live.update(render_rich(status, age, harness, console.height, console.width))
-            time.sleep(args.interval)
+    reader = InputReader(mouse=not args.no_mouse).start()
+    try:
+        with Live(console=console, refresh_per_second=8, screen=True, auto_refresh=False) as live:
+            next_draw = 0.0
+            while not deck.quit:
+                events = reader.poll()
+                deck.tick()
+                if events:
+                    deck.handle(events, console.width)
+                if events or time.time() >= next_draw:
+                    live.update(render_rich(deck, console.height, console.width), refresh=True)
+                    next_draw = time.time() + args.interval
+                time.sleep(0.03)
+    finally:
+        reader.stop()
+    return 0
 
 
 if __name__ == "__main__":

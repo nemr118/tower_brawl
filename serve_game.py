@@ -143,7 +143,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.23"
+GAME_VERSION = "v0.0.24"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -338,6 +338,9 @@ def _build_status(prev_totals, prev_conns, dt):
                     "started_at": match_timeline["started_at"],
                     "kills": list(match_timeline["kills"]),
                     "rounds": [list(r) for r in match_timeline["rounds"]],
+                    "ended_at": match_timeline["ended_at"],
+                    "winner": match_timeline["winner"],
+                    "names": dict(match_timeline["names"]),
                 },
             },
             "seats": seats,
@@ -447,7 +450,9 @@ _grace_seq = 0
 # in _setup_match and stays readable after the match ends, until the next one.
 TIMELINE_MAX_KILLS = 300            # a match never has this many, it is only a safety cap
 match_kd = {i: {"kills": 0, "deaths": 0} for i in range(1, 5)}   # pid -> counts this match
-match_timeline = {"started_at": None, "kills": [], "rounds": []}
+match_timeline = {"started_at": None, "kills": [], "rounds": [], "ended_at": None, "winner": None, "names": {}}
+# rounds: [round, start_s, winner, end_s]. v0.0.24 added end_s (stamped when the
+# round closes) and ended_at / winner for the match, so the deck can draw them.
 # One kill is [seconds since match start, killer, victim, weapon, round].
 # One round is [round number, start seconds, winner or None while it runs].
 
@@ -974,7 +979,19 @@ def _setup_match():
         match_kd[i] = {"kills": 0, "deaths": 0}
     match_timeline["started_at"] = time.time()
     match_timeline["kills"] = []
-    match_timeline["rounds"] = [[1, 0.0, None]]
+    match_timeline["rounds"] = [[1, 0.0, None, None]]
+    match_timeline["ended_at"] = None
+    match_timeline["winner"] = None
+    match_timeline["names"] = {}
+    _stamp_names(present)
+
+def _stamp_names(pids):
+    """(lobby_lock held) Remember the names behind the seat numbers on the
+    timeline (v0.0.24), so the deck still says who killed whom after a seat
+    changed hands."""
+    for pid in pids:
+        if pid in player_names:
+            match_timeline["names"][str(pid)] = player_names[pid]
 
 def _match_t():
     """Seconds since the match started, for the timeline."""
@@ -1000,10 +1017,13 @@ def _check_round_end(label):
     winner = next(iter(live)) if len(live) == 1 else 0
     if match_timeline["rounds"]:
         match_timeline["rounds"][-1][2] = winner   # close the round marker on the timeline
+        match_timeline["rounds"][-1][3] = _match_t()
     if winner > 0:
         global_player_scores[winner] += 1
         if global_player_scores[winner] >= MATCH_SCORE_LIMIT:
             global_match_over = True
+            match_timeline["ended_at"] = _match_t()   # v0.0.24: the deck draws the match end
+            match_timeline["winner"] = winner
     if global_match_over:
         logger.info(f"[ROUND] round {global_current_round} over: P{winner} ({player_names.get(winner, 'Bot')}) "
                     f"wins the match with {global_player_scores[winner]} crowns, lobby in {MATCH_END_DELAY:g} s")
@@ -1051,7 +1071,8 @@ def _next_round_later(label):
             for i in range(1, 5):
                 global_player_stocks[i] = 3
             last_death.clear()
-            match_timeline["rounds"].append([global_current_round, _match_t(), None])
+            match_timeline["rounds"].append([global_current_round, _match_t(), None, None])
+            _stamp_names(present)
             logger.info(f"[ROUND] round {global_current_round} starting with {present}")
             broadcast(json.dumps({"type": "new_round", "round": global_current_round}))
 
@@ -1389,6 +1410,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         last_death[victim] = now
                         victim_name = player_names.get(victim, "Bot")
                         killer_name = player_names.get(killer, "Bot")
+                        _stamp_names((killer, victim))
                         left = global_player_stocks[victim] - 1
                         if killer == victim:
                             logger.info(f"[KILL] P{victim} ({victim_name}) fell to its own '{weapon}', "
