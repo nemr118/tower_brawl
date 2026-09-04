@@ -52,7 +52,7 @@ Versioning scheme: `v0.0.x` while building; `v0.1.0` is the target once the VHS 
 ### 5. The Test Harness (formerly the Chaos Bots)
 `tools/chaos_bots.py` is a protocol test harness: every bot behaves like the Godot client (join, name, lock in, 30 Hz `sync_pos` while alive, silence while dead, 1 s pings) and keeps a model of what the server state should be. Every packet is checked against a per-type schema, the model (oracle) and a duplicate-broadcast detector. Named scenarios end with a report and a non-zero exit code on any finding.
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                  # scenarios (19 since v0.0.23)
+./venv/bin/python tools/chaos_bots.py --list                  # scenarios (20 since v0.0.25)
 ./venv/bin/python tools/chaos_bots.py                         # run them all
 ./venv/bin/python tools/chaos_bots.py --restart-each          # restart the server before each one (isolates scenarios)
 ./venv/bin/python tools/chaos_bots.py --scenario smoke --trace /tmp/trace.jsonl   # packet capture with model snapshots
@@ -78,7 +78,7 @@ godot --headless --path . -- --autojoin --name=Headless --class=2
 ```
 Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type). The same line appears in the browser console of any real client. The server logs a `[STATS]` line every 10 s in `server.log`.
 
-### 7. The live operations deck (v0.0.21, grown in v0.0.22, keys and mouse since v0.0.24)
+### 7. The live operations deck (v0.0.21, grown in v0.0.22, keys and mouse since v0.0.24, tape column since v0.0.25)
 ```bash
 tbdash                                               # alias in ~/.bashrc for the line below, works from any folder
 ./venv/bin/python tools/watch_server.py              # live view, keys and mouse, q or Ctrl+C to stop
@@ -88,19 +88,19 @@ tbdash                                               # alias in ~/.bashrc for th
 ./venv/bin/python tools/watch_server.py --zoom 5     # start at 5 s per strip column
 python3 tools/deck_input.py                          # self-test of the key and mouse parser
 ```
-Keys: `←` `→` pan the fight strip, `+` `-` zoom (0.5, 1, 2, 5, 10, 30 s per column), `Home` match start, `End` or `f` back to live, click a column to read what happened in that second, `Esc` clears it, `1`-`9` hide or show a log tag (`KILL ROUND MATCH JOIN LEAVE NAME LOCK CONN NET`), `PgUp` `PgDn` scroll the log, `p` pause, `s` save `deck_snapshot_<HH-MM-SS>.txt` in the repo root, `q` quit. Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel over the events panel scrolls it. Works in `foot` and `ghostty`; inside `tmux` the mouse needs `set -g mouse on`.
+Keys: `←` `→` pan the fight strip, `+` `-` zoom (0.5, 1, 2, 5, 10, 30 s per column), `Home` match start, `End` or `f` back to live, click a column to read what happened in that second, `Esc` clears it, `1`-`9` and `0` hide or show a log tag (`KILL ROUND MATCH JOIN LEAVE NAME LOCK CONN NET`, `0` = `TAPE`), `PgUp` `PgDn` scroll the log, `p` pause, `s` save `deck_snapshot_<HH-MM-SS>.txt` in the repo root, `q` quit. Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel over the events panel scrolls it. Works in `foot` and `ghostty`; inside `tmux` the mouse needs `set -g mouse on`.
 The server writes `status.json` once a second (match state, one row per seat with kills, deaths and ping, the bot cards, the kill timeline with round end times, `ended_at`, `winner` and `names` since v0.0.24, traffic rates, the last 40 tagged log lines). The harness writes `harness_state.json` while it runs. The deck only reads those two files; it never talks to the server. A red bar means `status.json` is missing or older than 3 s, so the server is probably down (`systemctl --user status towerbrawl`). A yellow bar means the harness is restarting the server between scenarios.
 
 The picture is a stack of panels. A panel with nothing to show is not drawn:
 - `HEADER`: state, round, flips, players (with the bot count), spectators, uptime.
 - `HARNESS`: only while a harness run is alive. Scenario name and place in the suite, a progress bar, `ETA` from the newest `docs/harness_report_*.json`, what the scenario tests, the last step, the checklist (✔ PASS, ✖ FAIL, ▲ Minor, ● running, ○ waiting; `SLOW` in yellow when a scenario runs past twice its last time), findings and warnings. A finished run stays as one line for ten minutes.
 - `ALERT`: a red line at the very top for 10 s when an `ERROR` line, a `[NET]` stall or a harness-gate demotion lands.
-- `SEATS`: name (🤖 for a bot), class, state, lives, crowns, `K/D`, `Ping`, `Trend` (the ping over the last 60 s, lowest to highest, on terminals 120 columns or wider), `Health` (`good`, `laggy` over 150 ms, `slow` when the send queue backs up, `quiet` after 3 s of silence, `stalled` after 5 s, `held`, `empty`), link, packets in, queue and drops, seconds since the last packet.
-- `FIGHT`: from the first second of a match. One column is 1 s (zoom 0.5 to 30 s). `kills/1s` row = exact count per column. One lane per fighter, label `P2 Godot4 ♛4 42/24` (crowns, kills/deaths) in the seat colour (P1 blue, P2 red, P3 green, P4 yellow). A kill is the weapon glyph in the victim's colour (`➶` arrow, `✦` firebolt, `✧` kunai, `❋` thorns, `⚔` melee, `▼` stomp), a death is `✕` in the killer's colour, `◈` both, a digit when two or more events share a column. Every second round has a grey band. `┃` round start, `┫` round end, `♛` on the winner's lane one column after the closing kill, `║` match end, `round` row `R2 21s ♛ P2`, `time` axis in `m:ss`, `▶ live` on the right while following (`▶ end` for a finished match). Pan away and the title says `view 0:00-3:49 (End = live)`. Click a column: the line under the axis reads `1:00  Godot2 (P4) killed Andrew (P1) with Firebolt · round 1 ended, P4 Godot2 won`. Stays after the match ends (`last match, P2 won`) until the next one starts.
+- `SEATS`: name (🤖 for a bot), class, state, lives, crowns, `K/D`, `Ping`, `Trend` (the ping over the last 60 s, lowest to highest, on terminals 120 columns or wider), `Health` (`good`, `laggy` over 150 ms, `slow` when the send queue backs up, `quiet` after 3 s of silence, `stalled` after 5 s, `held`, `empty`), `Tape` (v0.0.25, only when a screen sent a card: `● 5.0s ·2` = recording, 5 s on the tape, 2 kills stamped this round; `■ R3 ✓` = frozen for round 3 with the closing kill; see section 9), link, packets in, queue and drops, seconds since the last packet.
+- `FIGHT`: from the first second of a match. One column is 1 s (zoom 0.5 to 30 s). `kills/1s` row = exact count per column. One lane per fighter, label `P2 Godot4 ♛4 42/24` (crowns, kills/deaths) in the seat colour (P1 blue, P2 red, P3 green, P4 yellow). A kill is the weapon glyph in the victim's colour (`➶` arrow, `✦` firebolt, `✧` kunai, `❋` thorns, `⚔` melee, `▼` stomp), a death is `✕` in the killer's colour, `◈` both, a digit when two or more events share a column. Every second round has a grey band. `┃` round start, `┫` round end, `♛` on the winner's lane one column after the closing kill, `║` match end, `round` row `R2 21s ♛ P2`, `time` axis in `m:ss`, `▶ live` on the right while following (`▶ end` for a finished match). Pan away and the title says `view 0:00-3:49 (End = live)`. Click a column: the line under the axis reads `1:00  Godot2 (P4) killed Andrew (P1) with Firebolt · round 1 ended, P4 Godot2 won · tape frozen on 2 screens (P1 P4), 300 frames before the kill / 60 after`. Stays after the match ends (`last match, P2 won`) until the next one starts.
 - `BOT ARENA`: whenever a bot is seated, brains and plain clients alike. `Kind` (`brain`, `headless`, `protocol`), persona, difficulty, state (`no card yet` before a brain's first card), `K/D` from the seat counts, actions, wraps, fall loop, aim error, `Age` of the card, uptime; accuracy, air time and learning appear once a brain sends them. A column that is `-` everywhere is left out.
 - `TRAFFIC`: IN and OUT lines plus two 60 s `KB/s` curves. `EVENTS`: the tagged log lines fill the rest, filtered with `1`-`9`. When the screen is short the events panel folds first, then traffic; the panels above are never cut (about 35 lines with a live harness and 4 brains).
 
-Every `server.log` line starts with a tag since v0.0.21: `[JOIN] [LEAVE] [CONN] [NAME] [LOCK] [MATCH] [ROUND] [KILL] [NET] [STATS]`. The packet dumps (`[MSG]`, `[SEND]`) are debug level and go to `debug.log` only. Colours show only on a real terminal; the files stay plain.
+Every `server.log` line starts with a tag since v0.0.21: `[JOIN] [LEAVE] [CONN] [NAME] [LOCK] [MATCH] [ROUND] [KILL] [NET] [STATS]`, plus `[GATE]` (v0.0.23) and `[TAPE]` (v0.0.25). The packet dumps (`[MSG]`, `[SEND]`) are debug level and go to `debug.log` only. Colours show only on a real terminal; the files stay plain.
 
 ### 8. The harness on the deck (v0.0.22)
 While `tools/chaos_bots.py` runs it writes `harness_state.json` in the repo root (gitignored): the run state, the suite checklist, the running scenario with its step, findings and warnings, and the bot cards of the Godot clients in a fleet run. A heartbeat thread refreshes it once a second. `--no-state` turns it off.
@@ -124,6 +124,19 @@ Bots tell the server who they are: `"bot": "<persona>"` in `request_join` (`"pro
 python3 -c "import json; print(json.load(open('status.json'))['harness'])"   # {'active': True, 'state': 'running', 'scenario': 'smoke', 'done': 0, 'total': 19, ...}
 grep "\[GATE\]" server.log | tail                                           # when the gate closed and opened
 ```
+
+### 9. The tape: history ring and kill stamps (Phase 3c, v0.0.25)
+Every screen keeps a tape of the last six seconds of the fight, as that screen drew it (`scripts/history_ring.gd`, driven by `arena.gd`). One frame per physics tick (60 a second), 360 slots made once and reused: 5 s before a kill plus a 1 s tail after it. A frame holds the spin (`rot`, `flips`), every fighter (`[x, y, aim_x, aim_y, flags]`, the `sync_pos` flag bits plus `FLAG_BUBBLE` 64 and `FLAG_DEAD` 128), every projectile (`[weapon_id, x, y, rot, stuck, shooter]`) and the power-up. When the server's `player_died` arrives (it carries `weapon` since v0.0.25) the newest frame is stamped: `{seq, round, killer, victim, weapon, closing, fighters}`. On `round_end` the newest stamp becomes the closing kill, the tape records 60 more frames and freezes; `new_round` clears it. No playback yet: that is the v0.1.0 job.
+
+How to see it:
+```bash
+grep "📼 \[Tape\]" .harness_logs/godot1.log | tail -3     # one line per stamp and per freeze on a headless client
+#   📼 [Tape] round=1 frozen=1 closing=1 killer=3 victim=4 weapon=Firebolt seq=695 before=300 after=60 span_ms=5989 fps=59.9 stamps=9 frames=360
+grep "\[TAPE\]" server.log | tail                          # [TAPE] P3's screen froze the round 1 tape: P3 killed P4 with 'Firebolt', 300 frames before, 60 after
+python3 -c "import json; [print(s['id'], s['tape']) for s in json.load(open('status.json'))['seats']]"   # the history_status card per seat
+./venv/bin/python tools/chaos_bots.py --scenario tape      # the Phase 3c scenario (about 24 s)
+```
+The browser console prints the same `📼 [Tape]` line. The card (`history_status`, client to server, never relayed, kept as `seats[].tape` in `status.json`): `frames, span_ms, fps, recording, frozen, round, stamps, closing_seq, last {seq, round, killer, victim, weapon, closing, before, after, fighters}`. On the deck: the `Tape` column in SEATS, the inspect line of a round-end column, and the `[TAPE]` events on key `0`. Good numbers: `before=300 after=60 fps=59.9`. The harness fails a tape under 280 frames before the closing kill, under 30 after, or outside 50 to 70 fps (`tape` scenario, and `tape_gate` on `fleet` and `lag`).
 
 ---
 

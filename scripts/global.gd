@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.24"
+const GAME_VERSION: String = "v0.0.25"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -172,7 +172,7 @@ signal net_opponent_locked_in(player_id, class_type)
 signal net_player_state_received(player_id, data)
 signal net_projectile_spawned(data)
 signal net_return_to_lobby
-signal net_player_died(killer_id, victim_id, stock)
+signal net_player_died(killer_id, victim_id, stock, weapon)   # weapon since v0.0.25 (the tape stamps it)
 signal net_round_end(winner_id, scores, round_num, match_over)
 signal net_new_round(round_num)
 signal net_version_error(server_version)
@@ -836,8 +836,9 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		var victim = int(data.get("victim", 0))
 		var killer = int(data.get("killer", 0))
 		var stock = int(data.get("stock", 0))
+		var weapon = str(data.get("weapon", "?"))
 		server_stocks[victim] = stock
-		emit_signal("net_player_died", killer, victim, stock)
+		emit_signal("net_player_died", killer, victim, stock, weapon)
 		
 	elif type == "round_end":
 		var winner = int(data.get("winner", 1))

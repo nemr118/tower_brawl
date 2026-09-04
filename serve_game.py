@@ -46,7 +46,8 @@ class _ColourFormatter(logging.Formatter):
     RESET = "\033[0m"
     BY_TAG = {"JOIN": "\033[32m", "LEAVE": "\033[33m", "CONN": "\033[2m", "NAME": "\033[35m",
               "LOCK": "\033[34m", "MATCH": "\033[1;36m", "ROUND": "\033[36m", "KILL": "\033[31m",
-              "NET": "\033[33m", "STATS": "\033[2m", "MSG": "\033[2m", "SEND": "\033[2m"}
+              "NET": "\033[33m", "STATS": "\033[2m", "MSG": "\033[2m", "SEND": "\033[2m",
+              "TAPE": "\033[95m"}
     BY_LEVEL = {"WARNING": "\033[33m", "ERROR": "\033[1;31m", "CRITICAL": "\033[1;31m", "DEBUG": "\033[2m"}
     def format(self, record):
         line = super().format(record)
@@ -143,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.24"
+GAME_VERSION = "v0.0.25"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -303,6 +304,8 @@ def _build_status(prev_totals, prev_conns, dt):
                 "deaths": match_kd[pid]["deaths"],
                 "rtt_ms": None,
                 "bot": player_bots.get(pid) if entry is not None or pend else None,
+                # v0.0.25: the screen's tape card (history_status), for the deck's Tape column.
+                "tape": player_tapes.get(pid) if entry is not None or pend else None,
             }
             if conn is not None:
                 seat["rtt_ms"] = conn.rtt_ms
@@ -462,6 +465,8 @@ match_timeline = {"started_at": None, "kills": [], "rounds": [], "ended_at": Non
 # per seat here and copies it into status.json. It is never sent to the players.
 player_bots = {}                    # pid -> the last bot telemetry dict for that seat
 BOT_STATUS_MAX_BYTES = 1024         # a bot_status packet bigger than this is dropped
+player_tapes = {}                   # pid -> the last history_status card of that screen (Phase 3c, v0.0.25)
+TAPE_STATUS_MAX_BYTES = 1024        # a history_status packet bigger than this is dropped
 BOT_PERSONA_MAX = 16
 
 def _bot_count():
@@ -900,6 +905,7 @@ def _release_seat(sock, addr, label, old_id, why):
         else:
             _remove_player(old_id)
         player_bots.pop(old_id, None)
+        player_tapes.pop(old_id, None)
         spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})  # pure spectator again
         logger.info(f"[LEAVE] P{old_id} {why}")
         broadcast(json.dumps({
@@ -978,6 +984,7 @@ def _setup_match():
     for i in range(1, 5):
         match_kd[i] = {"kills": 0, "deaths": 0}
     match_timeline["started_at"] = time.time()
+    player_tapes.clear()   # v0.0.25: no tape card from the last match
     match_timeline["kills"] = []
     match_timeline["rounds"] = [[1, 0.0, None, None]]
     match_timeline["ended_at"] = None
@@ -1106,6 +1113,7 @@ def _grace_expired(label, pid, seq, delay):
             player_locked.pop(pid, None)
             player_names.pop(pid, None)
             player_bots.pop(pid, None)
+            player_tapes.pop(pid, None)
         logger.info(f"[LEAVE] P{pid} did not come back within {delay:g} s, out of the match")
         _idle_reset_if_empty(label)
         _check_round_end(label)
@@ -1360,6 +1368,43 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         player_bots[assigned_id] = card
                     continue
 
+                if mtype == "history_status":
+                    # Phase 3c (v0.0.25): the screen's tape card: how many frames it holds,
+                    # the last kill it stamped, and whether it froze for the round. Kept for
+                    # status.json only (seats[].tape), never sent to the players.
+                    if len(msg) > TAPE_STATUS_MAX_BYTES:
+                        logger.debug(f"[NET] P{assigned_id} history_status too big ({len(msg)} B), dropped")
+                        continue
+                    card = {k: v for k, v in data.items() if k not in ("type", "sender")}
+                    card["seat"] = assigned_id
+                    card["schema"] = _as_int(card.get("schema"), 1)
+                    card["frames"] = _as_int(card.get("frames"), 0)
+                    card["round"] = _as_int(card.get("round"), 0)
+                    card["stamps"] = _as_int(card.get("stamps"), 0)
+                    card["frozen"] = bool(card.get("frozen"))
+                    card["recording"] = bool(card.get("recording"))
+                    last = card.get("last")
+                    if not isinstance(last, dict):
+                        last = None
+                    card["last"] = last
+                    card["updated_at"] = time.time()
+                    with lobby_lock:
+                        player_tapes[assigned_id] = card
+                    if card["frozen"]:
+                        if last and last.get("closing"):
+                            k, v = _as_int(last.get("killer"), 0), _as_int(last.get("victim"), 0)
+                            what = (f"P{v} fell to its own '{last.get('weapon')}'" if k == v
+                                    else f"P{k} killed P{v} with '{last.get('weapon')}'")
+                            logger.info(f"[TAPE] P{assigned_id}'s screen froze the round {card['round']} tape: "
+                                        f"{what}, {_as_int(last.get('before'), 0)} frames before, "
+                                        f"{_as_int(last.get('after'), 0)} after")
+                        else:
+                            logger.info(f"[TAPE] P{assigned_id}'s screen froze the round {card['round']} tape: "
+                                        f"no closing kill, {card['frames']} frames")
+                    else:
+                        logger.debug(f"[TAPE] P{assigned_id}'s screen stamped a kill: {last}")
+                    continue
+
                 if mtype in ("force_start", "match_started"):
                     # Transition guard: only the first start request sets the match up,
                     # only the first match_started broadcasts scene_transition. Every
@@ -1432,6 +1477,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                             "victim": victim,
                             "killer": killer,
                             "stock": global_player_stocks[victim],
+                            "weapon": weapon[:16],   # v0.0.25: every screen stamps the same weapon on its tape
                         }))
                         _check_round_end(label)
                     continue
@@ -1485,6 +1531,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     player_locked.pop(assigned_id, None)
                     player_names.pop(assigned_id, None)
                     player_bots.pop(assigned_id, None)
+                    player_tapes.pop(assigned_id, None)
                     _remove_player(assigned_id)
                 freed = True
                 remaining = _present_players()

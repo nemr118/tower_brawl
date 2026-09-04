@@ -15,6 +15,14 @@ var spin_tween: Tween = null   # the running arena spin, so a round start can fi
 
 const PlayerScene = preload("res://scenes/player.tscn")
 const BotBrainScript = preload("res://scripts/bot_brain.gd")
+const HistoryRingScript = preload("res://scripts/history_ring.gd")
+
+# The tape (Phase 3c, v0.0.25): the last six seconds of the fight as this screen
+# drew it, one frame per physics tick. See history_ring.gd. Made in code, so no
+# scene edit. _physics_process here is sim recording, not network polling: the
+# stamps and the freeze come from the server's signals.
+var tape = null
+var _tape_weapon_ids := {}   # projectile instance id -> weapon id, so a name lookup happens once per arrow
 
 # HUD textures resolved once at load. _update_panel used to call load() for every
 # icon on every HUD refresh (each a resource-cache lookup); these are plain constants.
@@ -201,7 +209,93 @@ func _ready():
 	# Platforms the right way up for a client arriving mid-match (spectator
 	# reconnect, late joiner): the server counts the flips for us.
 	platforms_node.rotation = Global.arena_flips * PI
+	# The tape records after the fighters have moved this tick (priority 10 runs
+	# after the default 0 of every fighter).
+	tape = HistoryRingScript.new()
+	process_physics_priority = 10
 	_start_new_match()
+
+
+# ------------------------------------------------------------------------------
+# THE TAPE (Phase 3c)
+# One frame per physics tick: where every fighter and projectile is drawn right
+# now, plus the arena spin. history_ring.gd keeps the last 360 frames.
+# ------------------------------------------------------------------------------
+func _physics_process(_delta: float) -> void:
+	if tape == null or not tape.recording:
+		return
+	_record_tape_frame()
+
+
+func _record_tape_frame() -> void:
+	var f: Dictionary = tape.next_frame()
+	f["rot"] = platforms_node.rotation
+	f["flips"] = Global.arena_flips
+	var present := 0
+	for pid in player_instances:
+		var p = player_instances[pid]
+		if not is_instance_valid(p) or pid < 1 or pid > 4:
+			continue
+		var a: PackedFloat32Array = f["fighters"][pid]
+		a[0] = p.global_position.x
+		a[1] = p.global_position.y
+		a[2] = p.aim_direction.x
+		a[3] = p.aim_direction.y
+		var flags := 0
+		if p.is_facing_right: flags |= Global.FLAG_FACING
+		if p.is_dashing: flags |= Global.FLAG_DASH
+		if p.is_shielding: flags |= Global.FLAG_SHIELD
+		if p.is_bear_form: flags |= Global.FLAG_BEAR
+		if p.is_egg: flags |= Global.FLAG_EGG
+		if p.is_on_floor(): flags |= Global.FLAG_FLOOR
+		if p.is_bubble: flags |= HistoryRingScript.FLAG_BUBBLE
+		if p.is_dead or not p.visible: flags |= HistoryRingScript.FLAG_DEAD
+		a[4] = float(flags)
+		present |= 1 << (pid - 1)
+	f["present"] = present
+	var n := 0
+	for node in get_tree().get_nodes_in_group("projectiles"):
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
+		var slot: PackedFloat32Array = tape.projectile_slot(f, n)
+		slot[0] = float(_tape_weapon_id(node))
+		slot[1] = node.global_position.x
+		slot[2] = node.global_position.y
+		slot[3] = node.rotation
+		slot[4] = 1.0 if node.get("is_stuck") == true else 0.0
+		slot[5] = float(node.get("shooter_id") if node.get("shooter_id") != null else 0)
+		n += 1
+	f["n_proj"] = n
+	var pu: PackedFloat32Array = f["powerup"]
+	if is_instance_valid(powerup_node):
+		pu[0] = powerup_node.global_position.x
+		pu[1] = powerup_node.global_position.y
+		pu[2] = 1.0
+	else:
+		pu[2] = 0.0
+	if tape.commit(Time.get_ticks_msec()):
+		_tape_report()   # the tail is recorded: the tape just froze
+
+
+func _tape_weapon_id(node: Node) -> int:
+	# arrow.gd -> 0, firebolt.gd -> 1, kunai.gd -> 2, thorn.gd -> 3 (Global.BIN_WEAPONS order)
+	var key := node.get_instance_id()
+	if key in _tape_weapon_ids:
+		return _tape_weapon_ids[key]
+	var wid := 0
+	var script = node.get_script()
+	if script != null:
+		wid = maxi(Global.BIN_WEAPONS.find(str(script.resource_path).get_file().get_basename()), 0)
+	if _tape_weapon_ids.size() > 256:
+		_tape_weapon_ids.clear()
+	_tape_weapon_ids[key] = wid
+	return wid
+
+
+func _tape_report() -> void:
+	# One 📼 [Tape] line for the harness and one history_status card for the deck.
+	print(tape.status_line())
+	Global.send_net_data(tape.status_card())
 
 func _exit_tree():
 	# change_scene_to_file() removes this scene immediately but frees it at the end
@@ -285,6 +379,8 @@ func _start_round():
 	is_round_over = false
 	_clear_projectiles()
 	_finish_spin_now()
+	if tape != null:
+		tape.clear(current_round)   # a fresh tape for every round
 	
 	if touch_controls:
 		touch_controls.my_input_prefix = "p" + str(Global.my_player_id) + "_"
@@ -357,8 +453,11 @@ func _clear_projectiles():
 	for p in get_tree().get_nodes_in_group("projectiles"):
 		p.queue_free()
 
-func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int):
+func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int, weapon: String = "?"):
 	player_stocks[victim_id] = new_stock
+	# Phase 3c: stamp the tape with this kill (the server's word, so every screen stamps the same).
+	if tape != null and not tape.stamp(killer_id, victim_id, weapon).is_empty():
+		_tape_report()
 	if victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
 		player_instances[victim_id].force_die()
 		
@@ -390,6 +489,8 @@ func _on_round_end_sync(winner_id: int, scores: Dictionary, round_num: int, matc
 
 	is_round_over = true
 	current_round = round_num
+	if tape != null:
+		tape.close_round()   # the newest stamp is the closing kill; one more second, then freeze
 
 	# Sync the scores from the server
 	for p_id in scores:

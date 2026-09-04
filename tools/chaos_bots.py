@@ -79,7 +79,7 @@ SCHEMA = {
     "lock_in": {"class": int, "sender": int},
     "force_start": {"sender": int},
     "scene_transition": {},
-    "player_died": {"victim": int, "killer": int, "stock": int},
+    "player_died": {"victim": int, "killer": int, "stock": int, "weapon": str},   # weapon since v0.0.25 (the tape)
     "round_end": {"winner": int, "scores": dict, "round": int, "match_over": bool},
     "new_round": {"round": int},
     "return_to_lobby": {},
@@ -530,6 +530,7 @@ class Bot:
         # behaviour
         self.autoplay = False
         self.die_rate = ctx.args.die_rate
+        self.shoot = True            # random spawn_projectile while alive (the tape scenario turns it off)
         self.dead = False
         self.dead_until = None
         self.invuln_until = 0.0
@@ -844,7 +845,7 @@ class Bot:
                         self._last_sync_body = body
                         self._last_sync_sent = now
                         self.send_binary(pkt)
-                    if self.rng.random() < 0.02:
+                    if self.shoot and self.rng.random() < 0.02:
                         self.send_binary(self._projectile_bytes())
                     if self.die_rate > 0 and now >= self.invuln_until and self.rng.random() < self.die_rate * period:
                         self.log(f"dying (stock before={self.model.stocks.get(self.slot)})")
@@ -1455,6 +1456,25 @@ class GodotClient:
                           r"attacks=(\d+) specials=(\d+) evades=(\d+) \| wraps=(\d+) drops=(\d+) seams=(\d+) "
                           r"land_avg=([\d.]+)s max_loop=(\d+)")
 
+    # v0.0.25: one line per kill stamp and one per freeze, printed by arena.gd (history_ring.gd status_line)
+    TAPE_LINE = re.compile(r"\[Tape\] round=(\d+) frozen=(\d) closing=(\d) killer=(-?\d+) victim=(-?\d+) weapon=(\S+) "
+                           r"seq=(-?\d+) before=(\d+) after=(\d+) span_ms=(\d+) fps=([\d.]+) stamps=(\d+) frames=(\d+)")
+
+    def tapes(self):
+        """Every 📼 [Tape] line of this client, oldest first, as dicts."""
+        out = []
+        for m in self.TAPE_LINE.finditer(self.text()):
+            out.append({"round": int(m[1]), "frozen": m[2] == "1", "closing": m[3] == "1", "killer": int(m[4]),
+                        "victim": int(m[5]), "weapon": m[6].replace("_", " "), "seq": int(m[7]), "before": int(m[8]),
+                        "after": int(m[9]), "span_ms": int(m[10]), "fps": float(m[11]), "stamps": int(m[12]),
+                        "frames": int(m[13])})
+        return out
+
+    def slot(self):
+        """The seat the server gave this client, from its log, or None."""
+        m = re.search(r"Assigned Player ID: (\d+)", self.text())
+        return int(m[1]) if m else None
+
     def stats(self):
         t = self.text()
         out_sync = sum(int(m) for m in re.findall(r"out: [^|\n]*?sync_pos=(\d+)", t))
@@ -1490,6 +1510,29 @@ class GodotClient:
                          "specials": int(b[8]), "evades": int(b[9]), "wraps": int(b[10]), "drops": int(b[11]),
                          "seams": int(b[12]), "land_avg": float(b[13]), "max_loop": int(b[14])}
         return st
+
+
+TAPE_MIN_FPS, TAPE_MAX_FPS = 50.0, 70.0   # a tape records one frame per physics tick (60 Hz)
+TAPE_MIN_BEFORE = 280                      # frames before the closing kill on a round longer than 6 s (ring: 300)
+TAPE_MIN_AFTER = 30                        # frames of tail after the closing kill (arena records 60)
+
+
+def tape_gate(ctx, client, scen):
+    """Phase 3c gate (v0.0.25): every round end this client saw must have frozen a tape,
+    and a tape must run at the physics rate."""
+    st = client.stats()
+    frozen = [t for t in client.tapes() if t["frozen"]]
+    # the last round_end can land in the final second of the run, before its tail is recorded
+    if st["round_ends"] > 0 and len(frozen) < st["round_ends"] - 1:
+        ctx.fail(f"{scen}.tape-missing", f"{client.name}: saw {st['round_ends']} round_end(s) but froze {len(frozen)} tape(s)")
+    bad = [t for t in frozen if t["frames"] >= 120 and not (TAPE_MIN_FPS <= t["fps"] <= TAPE_MAX_FPS)]
+    if bad:
+        fps_txt = ", ".join(f"{t['fps']:.1f}" for t in bad)
+        ctx.fail(f"{scen}.tape-fps", f"{client.name}: tape fps {fps_txt} (want {TAPE_MIN_FPS:g}-{TAPE_MAX_FPS:g})")
+    if frozen:
+        t = frozen[-1]
+        ctx.note(f"{client.name} tape: {len(frozen)} frozen, last round {t['round']} closing={int(t['closing'])} "
+                 f"before={t['before']} after={t['after']} fps={t['fps']:.1f} stamps={t['stamps']}")
 
 
 def puppet_gate(ctx, client, heavy, scen):
@@ -1548,6 +1591,7 @@ def sc_lag(ctx):
             ctx.note(f"{observer.name} puppets: jitter mean {pj['jitter_mean']:.1f} px/s, p95 median {pj['jitter_p95_med']:.1f}, "
                      f"snaps {pj['snaps']}, wraps {pj['wraps']}, stall {pj['stall_pct']:.1f}%, extrap {pj['extrap_pct']:.1f}% over {pj['frames']} puppet-frames")
         puppet_gate(ctx, observer, heavy=False, scen="scenario.lag")
+        tape_gate(ctx, observer, scen="scenario.lag")
         observer.stop()
 
 
@@ -1894,6 +1938,7 @@ def sc_fleet(ctx):
         if c.ai:
             # brains move like players, so their view of the others is the quality gate
             puppet_gate(ctx, c, heavy=ctx.args.jitter_ms > PUPPET_HEAVY_JITTER_MS, scen="fleet")
+        tape_gate(ctx, c, scen="fleet")
         b = st["bot"]
         if c.ai and b is None:
             ctx.fail("fleet.bot-missing", f"{c.name}: --ai={c.ai} but no brain status line in its log")
@@ -1972,6 +2017,91 @@ def sc_harness_gate(ctx):
     ctx.say("human refused, bot and headless seated, spectator still receiving")
     for b in (human, proto, headless):
         b.disconnect()
+
+
+@scenario("tape", "Phase 3c (v0.0.25): two headless Godot clients that stand still and two bots that fire nothing; the bots burn their stocks, then a bot reports three Firebolt kills of Godot1 by Godot2, so the round ends on a known kill; both screens must print a frozen [Tape] line for round 1 with that killer, victim and weapon, 280+ frames before the kill, 30+ after, 50-70 fps, 9 stamps, and status.json must carry both tape cards")
+def sc_tape(ctx):
+    if shutil.which("godot") is None:
+        ctx.fail("tape.no-godot", "godot binary not on PATH")
+        return
+    bots = [ctx.bot(1), ctx.bot(2)]
+    lobby_join(ctx, bots)
+    # Brainless clients stand still and the bots fire no projectiles, so the only
+    # kills are the ones this scenario scripts (a stray bot arrow once killed a
+    # wanderer and ended the round two reports early).
+    for b in bots:
+        b.shoot = False
+    clients = [GodotClient(ctx, i + 1, cls=1).start() for i in range(2)]
+    deadline = time.monotonic() + 20.0
+    # wait for all four seats, and for both Godot logs to carry their seat line (the log lags the packet)
+    while time.monotonic() < deadline and (len(bots[0].model.active) < 4 or not all(c.slot() for c in clients)):
+        time.sleep(0.25)
+    g1, g2 = clients[0].slot(), clients[1].slot()
+    if len(bots[0].model.active) < 4 or not g1 or not g2:
+        ctx.fail("tape.clients-not-joined", f"active={sorted(bots[0].model.active)} Godot1={g1} Godot2={g2} after 20 s")
+        for c in clients:
+            c.stop()
+        return
+    start_match(ctx, bots, bots[0])
+    for b in bots:
+        b.die_rate = 0.0
+    ctx.timed(22.0)
+    ctx.say("7 s of play so both tapes fill (5 s before + 1 s after)")
+    nap(ctx, 7.0, clients)
+    ctx.say("the two bots burn their stocks")
+    for _ in range(3):
+        for b in bots:
+            b.die(killer=g2)
+        nap(ctx, 2.0, clients)
+    ctx.say(f"Bot1 reports Godot1 (P{g1}) killed by Godot2 (P{g2}) with a Firebolt, three times")
+    mark = bots[0].mark()
+    for i in range(3):
+        bots[0].report_death(g1, g2, "Firebolt")
+        if i < 2:
+            nap(ctx, 2.0, clients)
+    _, end = bots[0].wait_for("round_end", 4.0, since=mark)
+    if end is None:
+        ctx.fail("tape.no-round-end", "no round_end within 4 s of the third Firebolt kill")
+    elif int(end.get("winner", 0)) != g2:
+        ctx.fail("tape.wrong-winner", f"round_end winner={end.get('winner')} (expected Godot2 = P{g2})")
+    ctx.say("round over: the tail records for 1 s, then the tapes freeze")
+    nap(ctx, 2.5, clients)
+    status = None
+    try:
+        with open(os.path.join(ROOT, "status.json"), encoding="utf-8") as f:
+            status = json.load(f)
+    except (OSError, ValueError) as e:
+        ctx.fail("tape.no-status", f"status.json unreadable: {e}")
+    for c, slot in ((clients[0], g1), (clients[1], g2)):
+        for line, count in c.errors().items():
+            ctx.fail("tape.script-error", f"{c.name}: {line} (x{count})")
+        for line, count in c.warnings().items():
+            ctx.warn("tape.script-warning", f"{c.name}: {line} (x{count})")
+        frozen = [t for t in c.tapes() if t["frozen"] and t["round"] == 1]
+        if not frozen:
+            ctx.fail("tape.missing", f"{c.name} (P{slot}): no frozen [Tape] line for round 1 ({len(c.tapes())} tape lines in its log)")
+            continue
+        t = frozen[-1]
+        if not t["closing"] or t["killer"] != g2 or t["victim"] != g1 or t["weapon"] != "Firebolt":
+            ctx.fail("tape.wrong-kill", f"{c.name}: closing={t['closing']} killer={t['killer']} victim={t['victim']} weapon={t['weapon']!r} "
+                                        f"(expected P{g2} killed P{g1} with Firebolt)")
+        if t["before"] < TAPE_MIN_BEFORE:
+            ctx.fail("tape.short", f"{c.name}: {t['before']} frames before the closing kill (want {TAPE_MIN_BEFORE}+)")
+        if t["after"] < TAPE_MIN_AFTER:
+            ctx.fail("tape.no-tail", f"{c.name}: {t['after']} frames after the closing kill (want {TAPE_MIN_AFTER}+)")
+        if not TAPE_MIN_FPS <= t["fps"] <= TAPE_MAX_FPS:
+            ctx.fail("tape.fps", f"{c.name}: tape ran at {t['fps']:.1f} fps (want {TAPE_MIN_FPS:g}-{TAPE_MAX_FPS:g})")
+        if t["stamps"] != 9:
+            ctx.fail("tape.stamp-count", f"{c.name}: {t['stamps']} stamps this round (expected 9: 6 bot deaths + 3 Firebolt kills)")
+        if status is not None:
+            seat = next((x for x in status.get("seats", []) if x.get("id") == slot), None)
+            card = (seat or {}).get("tape")
+            if not card or not card.get("frozen") or not (card.get("last") or {}).get("closing"):
+                ctx.fail("tape.no-card", f"{c.name} (P{slot}): status.json seats[].tape = {card}")
+        ctx.note(f"{c.name} P{slot}: frozen round {t['round']}, P{t['killer']} killed P{t['victim']} with {t['weapon']}, "
+                 f"{t['before']} frames before / {t['after']} after, {t['span_ms']} ms on tape, {t['fps']:.1f} fps, {t['stamps']} stamps")
+    for c in clients:
+        c.stop()
 
 
 @scenario("play", "free play for --duration seconds with --bots bots (bandwidth baseline; use --die-rate 0 for steady state)")

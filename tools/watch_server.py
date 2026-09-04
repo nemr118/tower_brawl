@@ -67,12 +67,14 @@ BAND_BG = "grey11"     # every second round gets this background on the strip
 # cells wide and that breaks the columns, so the stomp is ▼.
 WEAPON_GLYPH = {"Arrow": "➶", "Firebolt": "✦", "Kunai": "✧", "Thorns": "❋", "Melee": "⚔", "Goomba Stomp": "▼"}
 LEGEND = "➶ arrow ✦ firebolt ✧ kunai ❋ thorns ⚔ melee ▼ stomp ✕ death ◈ both 2-9 stacked ┃ round ┫ end ♛ winner ║ match end"
-FILTER_TAGS = ("KILL", "ROUND", "MATCH", "JOIN", "LEAVE", "NAME", "LOCK", "CONN", "NET")   # keys 1..9
+FILTER_TAGS = ("KILL", "ROUND", "MATCH", "JOIN", "LEAVE", "NAME", "LOCK", "CONN", "NET", "TAPE")   # keys 1..9, then 0
+FILTER_KEYS = "1234567890"   # the key that hides or shows each tag above
 
 # One colour per tag. The same names the server puts at the start of its lines.
 TAG_STYLE = {
     "JOIN": "green", "LEAVE": "yellow", "CONN": "dim", "NAME": "magenta", "LOCK": "blue",
     "MATCH": "bold cyan", "ROUND": "cyan", "KILL": "red", "NET": "yellow", "GATE": "bold yellow",
+    "TAPE": "bright_magenta",   # v0.0.25: a screen froze its tape
 }
 RESULT_MARK = {"PASS": ("✔", "green"), "FAIL": ("✖", "bold red"), "MINOR": ("▲", "yellow")}
 HEALTH_STYLE = {"good": "green", "laggy": "yellow", "slow": "yellow", "quiet": "yellow",
@@ -196,6 +198,20 @@ def kd_text(seat):
     return f"{k}/{d} {ratio:.1f}"
 
 
+def tape_text(seat):
+    """The Tape column (v0.0.25): what this screen's tape holds.
+    ● 5.0s ·2 = recording, 5 s on the tape, 2 kills stamped this round.
+    ■ R3 ✓ = frozen for round 3 with the closing kill stamped (■ R3 without it)."""
+    card = seat.get("tape")
+    if not card or not seat["connected"]:
+        return "-"
+    if card.get("frozen"):
+        last = card.get("last") or {}
+        return f"■ R{card.get('round', '?')}" + (" ✓" if last.get("closing") else "")
+    span = (card.get("span_ms") or 0) / 1000.0
+    return f"● {span:.1f}s ·{card.get('stamps', 0)}"
+
+
 def seat_rows(status, ping_hist=None):
     """The seat table as plain values: one dict per seat."""
     rows = []
@@ -216,6 +232,7 @@ def seat_rows(status, ping_hist=None):
             "ping": dash(seat.get("rtt_ms"), "{} ms") if seat["connected"] else "-",
             "trend": spark_line(hist, 8, relative=True) if seat["connected"] and sum(v is not None for v in hist) >= 3 else "",
             "health": seat_health(seat),
+            "tape": tape_text(seat),
             "link": f"{seat['transport']} {seat['ip']}" if seat["connected"] else "-",
             "pps": f"{seat['in_pps']:.0f}" if seat["connected"] else "-",
             "queue": f"{seat['queue']}/{seat['dropped']}" if seat["connected"] else "-",
@@ -227,7 +244,7 @@ def seat_rows(status, ping_hist=None):
 SEAT_COLS = (("Seat", "left", "seat"), ("Name", "left", "name"), ("Class", "left", "cls"),
              ("State", "left", "state"), ("Lives", "left", "lives"), ("Crowns", "right", "crowns"),
              ("K/D", "right", "kd"), ("Ping", "right", "ping"), ("Trend", "left", "trend"),
-             ("Health", "left", "health"), ("Link", "left", "link"), ("In/s", "right", "pps"),
+             ("Health", "left", "health"), ("Tape", "left", "tape"), ("Link", "left", "link"), ("In/s", "right", "pps"),
              ("Q/drop", "right", "queue"), ("Seen", "right", "seen"))
 
 
@@ -304,6 +321,27 @@ def axis_interval(bin_s):
         if cand / bin_s >= 8:
             return cand
     return 3600
+
+
+def tape_inspect(status, rnd):
+    """v0.0.25: which screens froze a tape for round `rnd`, from seats[].tape."""
+    frozen = []
+    for seat in status["seats"]:
+        card = seat.get("tape") or {}
+        if card.get("frozen") and card.get("round") == rnd:
+            frozen.append((seat["id"], card.get("last") or {}))
+    if not frozen:
+        return f"no screen has a frozen tape for round {rnd}"
+    who = " ".join(f"P{pid}" for pid, _ in frozen)
+    lasts = [last for _, last in frozen if last.get("closing")]
+    text = f"tape frozen on {len(frozen)} screen{'s' if len(frozen) != 1 else ''} ({who})"
+    if lasts:
+        before = min(int(l.get("before") or 0) for l in lasts)
+        after = min(int(l.get("after") or 0) for l in lasts)
+        text += f", {before} frames before the kill / {after} after"
+    else:
+        text += ", no closing kill stamped"
+    return text
 
 
 def build_strip(status, view):
@@ -513,6 +551,8 @@ def build_strip(status, view):
         else:
             c = cells[sel_i]
             inspect = f"{fmt_clock(c['t0'])}  " + (" · ".join(c["events"]) if c["events"] else f"nothing happened in this {label_bin}")
+            if c["round_end"] is not None:
+                inspect += " · " + tape_inspect(status, c["round_end"][0])
     n_kills = len(kills)
     title = f"FIGHT  {n_kills} kill{'s' if n_kills != 1 else ''}"
     if rounds:
@@ -1008,8 +1048,8 @@ class Deck:
             self.events_scroll += 10
         elif key == "pgdn":
             self.events_scroll = max(0, self.events_scroll - 10)
-        elif key in "123456789" and len(key) == 1:
-            tag = FILTER_TAGS[int(key) - 1]
+        elif key in FILTER_KEYS and len(key) == 1:
+            tag = FILTER_TAGS[FILTER_KEYS.index(key)]
             if tag in self.hidden_tags:
                 self.hidden_tags.discard(tag)
             else:
@@ -1020,8 +1060,8 @@ class Deck:
 def filter_title(deck, n_shown, n_total):
     """'events  1 KILL 2 ROUND ...' with hidden tags in brackets, plus the scroll place."""
     bits = []
-    for i, tag in enumerate(FILTER_TAGS, start=1):
-        bits.append(f"{i} [{tag}]" if tag in deck.hidden_tags else f"{i} {tag}")
+    for k, tag in zip(FILTER_KEYS, FILTER_TAGS):
+        bits.append(f"{k} [{tag}]" if tag in deck.hidden_tags else f"{k} {tag}")
     text = "events  " + "  ".join(bits)
     if deck.events_scroll:
         text += f"   ↑{deck.events_scroll} of {n_total}"
@@ -1052,10 +1092,14 @@ def render_plain(deck, n_events, width=100):
         lines.append("-" * width)
         lines.extend(harness_lines_plain(view))
     lines.append("-" * width)
-    lines.append(f"{'Seat':<5}{'Name':<16}{'Class':<8}{'State':<11}{'Lives':<6}{'Crowns':>6} {'K/D':>8} {'Ping':>7} {'Trend':<9}{'Health':<8}{'Link':<26}{'In/s':>5} {'Q/drop':>7} {'Seen':>5}")
-    for r in seat_rows(status, deck.ping_hist):
+    rows = seat_rows(status, deck.ping_hist)
+    show_tape = any(r["tape"] != "-" for r in rows)   # v0.0.25: only when a screen sent a tape card
+    tape_head = f"{'Tape':<12}" if show_tape else ""
+    lines.append(f"{'Seat':<5}{'Name':<16}{'Class':<8}{'State':<11}{'Lives':<6}{'Crowns':>6} {'K/D':>8} {'Ping':>7} {'Trend':<9}{'Health':<8}{tape_head}{'Link':<26}{'In/s':>5} {'Q/drop':>7} {'Seen':>5}")
+    for r in rows:
+        tape_cell = f"{r['tape']:<12}" if show_tape else ""
         lines.append(f"{r['seat']:<5}{r['name']:<16}{r['cls']:<8}{r['state']:<11}{r['lives']:<6}{r['crowns']:>6} {r['kd']:>8} {r['ping']:>7} "
-                     f"{r['trend']:<9}{r['health']:<8}{r['link']:<26}{r['pps']:>5} {r['queue']:>7} {r['seen']:>5}")
+                     f"{r['trend']:<9}{r['health']:<8}{tape_cell}{r['link']:<26}{r['pps']:>5} {r['queue']:>7} {r['seen']:>5}")
     cells_w = max(10, width - LABEL_W - 7)
     strip = build_strip(status, deck.view(cells_w))
     deck.last_view = strip
@@ -1164,9 +1208,12 @@ def render_rich(deck, height, width):
 
     rows = seat_rows(status, deck.ping_hist)
     show_trend = width >= 120 and any(r["trend"] for r in rows)   # needs history and a wide terminal
+    show_tape = any(r["tape"] != "-" for r in rows)   # v0.0.25: only when a screen sent a tape card
     table = Table(expand=True, border_style="dim", header_style="bold")
     for col, just, key in SEAT_COLS:
         if key == "trend" and not show_trend:
+            continue
+        if key == "tape" and not show_tape:
             continue
         table.add_column(col, justify=just, no_wrap=True)
     for r in rows:
@@ -1174,7 +1221,10 @@ def render_rich(deck, height, width):
                  Text(r["lives"], style="red"), r["crowns"], r["kd"], r["ping"],
                  Text(r["trend"], style="cyan"),
                  Text(r["health"], style=HEALTH_STYLE.get(r["health"], "white")),
+                 Text(r["tape"], style="bright_magenta" if r["tape"].startswith("■") else "magenta"),
                  r["link"], r["pps"], r["queue"], r["seen"]]
+        if not show_tape:
+            del cells[10]
         if not show_trend:
             del cells[8]
         table.add_row(*cells)
@@ -1234,7 +1284,7 @@ def render_rich(deck, height, width):
             if i < len(events) - 1:
                 feed.append("\n")
         title = Text(filter_title(deck, len(events), len(events_all)))
-        keys = "← → pan  + - zoom  Home  End/f live  click inspect  Esc  1-9 filter  p pause  s snapshot  q quit"
+        keys = "← → pan  + - zoom  Home  End/f live  click inspect  Esc  0-9 filter  p pause  s snapshot  q quit"
         deck.events_geom = (used + 1, height)
         parts.append(Panel(feed if events else Text("no events yet", style="dim"),
                            title=title, title_align="left", subtitle=keys[:max(0, width - 6)],
