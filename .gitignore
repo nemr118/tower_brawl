@@ -11,3 +11,7 @@ debug.log
 server.log
 *.log
 .harness_logs/
+
+# live status file written by serve_game.py once a second
+status.json
+status.json.tmp

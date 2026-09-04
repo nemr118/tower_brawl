@@ -78,6 +78,14 @@ godot --headless --path . -- --autojoin --name=Headless --class=2
 ```
 Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type). The same line appears in the browser console of any real client. The server logs a `[STATS]` line every 10 s in `server.log`.
 
+### 7. The live server dashboard (v0.0.21)
+```bash
+./venv/bin/python tools/watch_server.py              # live view, redraws every second, Ctrl+C to stop
+./venv/bin/python tools/watch_server.py --plain      # plain text, no colours
+./venv/bin/python tools/watch_server.py --once       # one picture, then exit (handy in a script)
+```
+The server writes `status.json` once a second (match state, one row per seat, traffic rates, the last 40 tagged log lines). The dashboard only reads that file; it never talks to the server. A red bar means the file is missing or older than 3 s, so the server is probably down (`systemctl --user status towerbrawl`). Every `server.log` line starts with a tag since v0.0.21: `[JOIN] [LEAVE] [CONN] [NAME] [LOCK] [MATCH] [ROUND] [KILL] [NET] [STATS]`. The packet dumps (`[MSG]`, `[SEND]`) are debug level and go to `debug.log` only. Colours show only on a real terminal; the files stay plain.
+
 ---
 
 ## 📝 Patch Notes

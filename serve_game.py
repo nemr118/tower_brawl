@@ -24,16 +24,65 @@ import os
 import re
 import time
 
-# Set up dedicated game server logging
+# Set up dedicated game server logging.
+# Phase 3c step 0 (v0.0.21): every line starts with a short tag in square
+# brackets, so you can see at a glance what kind of line it is:
+#   [JOIN] someone took a seat      [LEAVE] someone left a seat
+#   [CONN] a spectator socket came or went
+#   [NAME] a name was set           [LOCK]  a class was locked in
+#   [MATCH] the match started or ended   [ROUND] a round started or ended
+#   [KILL] a fighter died           [NET]   a bad packet or a network problem
+#   [STATS] the 10-second traffic line (unchanged since v0.0.1)
+#   [MSG] / [SEND] every event packet in and out (debug level: debug.log only)
+# The file format "HH:MM:SS | LEVEL | message" did not change.
 logger = logging.getLogger("TowerBrawl")
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
 
-# Console output (journalctl)
+class _ColourFormatter(logging.Formatter):
+    """Colours, but only on a real terminal. journalctl and the log files stay plain,
+    so nothing that reads the files has to know about colour codes."""
+    RESET = "\033[0m"
+    BY_TAG = {"JOIN": "\033[32m", "LEAVE": "\033[33m", "CONN": "\033[2m", "NAME": "\033[35m",
+              "LOCK": "\033[34m", "MATCH": "\033[1;36m", "ROUND": "\033[36m", "KILL": "\033[31m",
+              "NET": "\033[33m", "STATS": "\033[2m", "MSG": "\033[2m", "SEND": "\033[2m"}
+    BY_LEVEL = {"WARNING": "\033[33m", "ERROR": "\033[1;31m", "CRITICAL": "\033[1;31m", "DEBUG": "\033[2m"}
+    def format(self, record):
+        line = super().format(record)
+        m = re.match(r"\[([A-Z]+)", record.getMessage())
+        col = self.BY_LEVEL.get(record.levelname) or (self.BY_TAG.get(m.group(1), "") if m else "")
+        return f"{col}{line}{self.RESET}" if col else line
+
+class _RingHandler(logging.Handler):
+    """Keeps the last few tagged log lines in memory. status.json copies them out
+    once a second, so the dashboard can show a live event feed. [STATS] lines and
+    untagged lines (the start-up banner) are skipped."""
+    def __init__(self, size=40):
+        super().__init__(level=logging.INFO)
+        self.lines = collections.deque(maxlen=size)
+        self.ring_lock = threading.Lock()
+    def emit(self, record):
+        msg = record.getMessage()
+        m = re.match(r"\[([A-Z]+)\]", msg)
+        if m is None or m.group(1) == "STATS":
+            return
+        with self.ring_lock:
+            self.lines.append({"t": time.strftime("%H:%M:%S", time.localtime(record.created)),
+                               "level": record.levelname, "tag": m.group(1), "msg": msg})
+    def snapshot(self):
+        with self.ring_lock:
+            return list(self.lines)
+
+# Console output (journalctl, or a terminal when run by hand)
 ch = logging.StreamHandler(sys.stdout)
-ch.setFormatter(formatter)
+ch.setFormatter(_ColourFormatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%H:%M:%S')
+                if sys.stdout.isatty() else formatter)
 ch.setLevel(logging.DEBUG)
 logger.addHandler(ch)
+
+# The last few events, for status.json
+ring = _RingHandler()
+logger.addHandler(ring)
 
 # File output (server.log) - INFO level for the user
 fh = logging.FileHandler(os.path.join(os.path.dirname(__file__), "server.log"))
@@ -52,6 +101,17 @@ def print(*args, **kwargs):
     msg = " ".join(str(a) for a in args)
     logger.info(msg)
 
+def _who(pid):
+    """'P2' for a seat, 'spectator' for a socket without one. For log lines."""
+    return f"P{pid}" if pid else "spectator"
+
+def _ip(addr):
+    """The address as 'ip:port' text. addr is the tuple the socket gave us."""
+    try:
+        return f"{addr[0]}:{addr[1]}"
+    except Exception:
+        return str(addr)
+
 import hashlib
 import base64
 import struct
@@ -60,7 +120,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.20"
+GAME_VERSION = "v0.0.21"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -114,23 +174,33 @@ def get_game_version():
 net_stats_lock = threading.Lock()
 net_stats = {"in_pkts": 0, "in_bytes": 0, "out_pkts": 0, "out_bytes": 0,
              "out_fail": 0, "out_drop": 0, "in_types": {}}
+# The same counts, but never reset: status.json (v0.0.21) works out per-second
+# rates from the difference between two reads.
+net_totals = {"in_pkts": 0, "in_bytes": 0, "out_pkts": 0, "out_bytes": 0,
+              "out_fail": 0, "out_drop": 0, "in_types": {}}
 
 def _stat_in(nbytes):
     with net_stats_lock:
         net_stats["in_pkts"] += 1
         net_stats["in_bytes"] += nbytes
+        net_totals["in_pkts"] += 1
+        net_totals["in_bytes"] += nbytes
 
 def _stat_in_type(mtype):
     with net_stats_lock:
         net_stats["in_types"][mtype] = net_stats["in_types"].get(mtype, 0) + 1
+        net_totals["in_types"][mtype] = net_totals["in_types"].get(mtype, 0) + 1
 
 def _stat_out(nbytes, ok):
     with net_stats_lock:
         if ok:
             net_stats["out_pkts"] += 1
             net_stats["out_bytes"] += nbytes
+            net_totals["out_pkts"] += 1
+            net_totals["out_bytes"] += nbytes
         else:
             net_stats["out_fail"] += 1
+            net_totals["out_fail"] += 1
 
 def stats_loop():
     while True:
@@ -151,6 +221,121 @@ def stats_loop():
             f" (avg {s['in_bytes'] / max(s['in_pkts'], 1):.0f} B)"
             f" | OUT {s['out_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['out_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
             f" fail={s['out_fail']} drop={s['out_drop']} | in: {top or '-'}")
+
+# ── Live status file (Phase 3c step 0, v0.0.21) ──────────────────────────────
+# The story: to watch a match from the terminal you had to read raw log lines.
+# Now the server writes a small file, status.json, once a second: the match
+# state, every seat, the traffic and the last events. tools/watch_server.py
+# reads it and draws a live dashboard. The file is written under a temp name
+# and then renamed, so a reader never sees a half-written file. Standard
+# library only: the systemd service runs the system python3, not the venv.
+STATUS_INTERVAL = 1.0    # seconds between writes, 0 = off
+STATUS_FILE = os.path.join(BASE_DIR, "status.json")
+SERVER_STARTED = time.time()
+CLASS_NAMES = {0: "Ranger", 1: "Knight", 2: "Mage", 3: "Rogue", 4: "Druid"}   # Global.ClassType order
+
+def _build_status(prev_totals, prev_conns, dt):
+    """One picture of the server right now (a dict ready for JSON).
+    prev_totals / prev_conns are the counts from the last write, so we can
+    turn them into per-second rates over dt seconds."""
+    now = time.time()
+    dt = max(dt, 1e-3)
+    with net_stats_lock:
+        tot = dict(net_totals)
+        tot["in_types"] = dict(net_totals["in_types"])
+    rate = lambda k: (tot[k] - prev_totals.get(k, 0)) / dt
+    types_s = {k: round((v - prev_totals.get("in_types", {}).get(k, 0)) / dt, 1)
+               for k, v in tot["in_types"].items()
+               if v - prev_totals.get("in_types", {}).get(k, 0) > 0}
+    seats = []
+    new_conns = {}
+    with lobby_lock:
+        with conns_lock:
+            conn_by_sock = dict(conns)
+        for i in range(4):
+            pid = i + 1
+            entry = player_slots[i]
+            pend = pending_rejoin.get(pid)
+            conn = conn_by_sock.get(id(entry["sock"])) if entry else None
+            seat = {
+                "id": pid,
+                "name": player_names.get(pid),
+                "class": player_locked.get(pid),
+                "class_name": CLASS_NAMES.get(player_locked.get(pid)),
+                "locked": pid in player_locked,
+                "connected": entry is not None,
+                "transport": entry.get("label") if entry else None,
+                "ip": entry.get("ip") if entry else None,
+                "playing": pid in global_playing_players,
+                "waiting": pid in global_waiting_players,
+                "alive": pid in global_alive_players,
+                "stocks": global_player_stocks.get(pid, 0),
+                "crowns": global_player_scores.get(pid, 0),
+                "held_s": round(max(pend["until"] - now, 0.0), 1) if pend else None,
+                "in_pps": 0.0, "in_kbps": 0.0, "queue": 0, "dropped": 0, "seen_s": None, "age_s": None,
+            }
+            if conn is not None:
+                key = id(entry["sock"])
+                p_pkts, p_bytes = prev_conns.get(key, (conn.in_pkts, conn.in_bytes))
+                seat["in_pps"] = round((conn.in_pkts - p_pkts) / dt, 1)
+                seat["in_kbps"] = round((conn.in_bytes - p_bytes) / dt / 1024, 2)
+                seat["queue"] = len(conn.q)
+                seat["dropped"] = conn.dropped
+                seat["seen_s"] = round(now - conn.last_rx, 1)
+                seat["age_s"] = round(now - conn.opened_at, 1)
+                new_conns[key] = (conn.in_pkts, conn.in_bytes)
+            seats.append(seat)
+        status = {
+            "written_at": now,
+            "version": get_game_version(),
+            "started_at": SERVER_STARTED,
+            "uptime_s": round(now - SERVER_STARTED, 1),
+            "pid": os.getpid(),
+            "threads": threading.active_count(),
+            "match": {
+                "state": global_match_state,
+                "round": global_current_round,
+                "flips": global_arena_flips,
+                "round_over": global_is_round_over,
+                "match_over": global_match_over,
+                "score_limit": MATCH_SCORE_LIMIT,
+                "playing": list(global_playing_players),
+                "waiting": list(global_waiting_players),
+                "alive": sorted(global_alive_players),
+            },
+            "seats": seats,
+            "spectators": len(spectator_sockets),
+            "sockets": sum(1 for p in player_slots if p) + len(spectator_sockets),
+        }
+    status["traffic"] = {
+        "in_pps": round(rate("in_pkts"), 1),
+        "in_kbps": round(rate("in_bytes") / 1024, 2),
+        "out_pps": round(rate("out_pkts"), 1),
+        "out_kbps": round(rate("out_bytes") / 1024, 2),
+        "fail_s": round(rate("out_fail"), 1),
+        "drop_s": round(rate("out_drop"), 1),
+        "in_types_s": types_s,
+        "totals": tot,
+    }
+    status["events"] = ring.snapshot()
+    return status, tot, new_conns
+
+def status_loop():
+    prev_totals = {}
+    prev_conns = {}
+    last = time.time()
+    tmp = STATUS_FILE + ".tmp"
+    while True:
+        time.sleep(STATUS_INTERVAL)
+        try:
+            now = time.time()
+            status, prev_totals, prev_conns = _build_status(prev_totals, prev_conns, now - last)
+            last = now
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(status, f, separators=(",", ":"))
+            os.replace(tmp, STATUS_FILE)
+        except Exception as e:
+            logger.debug(f"[NET] status.json not written: {type(e).__name__}: {e}")
 
 # ── Shared lobby ──────────────────────────────────────────────────────────────
 # player_slots[i] = {"sock": socket, "addr": str}  or  None
@@ -268,7 +453,7 @@ def ws_read(sock):
             plen = struct.unpack(">Q", _recvall(sock, 8))[0]
         if plen > MAX_FRAME_BYTES:
             # Never wait for (or allocate) what the header claims: close immediately.
-            logger.warning(f"frame header claims {plen} bytes (cap {MAX_FRAME_BYTES}); closing connection")
+            logger.warning(f"[NET] frame header claims {plen} bytes (cap {MAX_FRAME_BYTES}); closing connection")
             return None
         mask = _recvall(sock, 4) if masked else b""
         data = bytearray(_recvall(sock, plen))
@@ -328,6 +513,11 @@ class ClientConn:
         self.cv = threading.Condition()
         self.alive = True
         self.dropped = 0
+        # v0.0.21: what came in on this socket, for the status file.
+        self.in_pkts = 0
+        self.in_bytes = 0
+        self.last_rx = time.time()
+        self.opened_at = time.time()
         self.stall_since = None
         self.last_outq = 0
         self.last_stall_check = time.time()
@@ -363,7 +553,7 @@ class ClientConn:
 
     def _stalled(self, why):
         if self.alive:
-            logger.warning(f"[{self.label}] client not reading ({why}); disconnecting")
+            logger.warning(f"[NET] {self.label} client not reading ({why}); disconnecting")
         self.close()
 
     def close(self):
@@ -438,6 +628,7 @@ conns_lock = threading.Lock()
 def _stat_drop():
     with net_stats_lock:
         net_stats["out_drop"] += 1
+        net_totals["out_drop"] += 1
 
 def ws_send(sock, msg, movement=False):
     """Queue msg for one socket (never blocks the caller)."""
@@ -475,7 +666,7 @@ def broadcast(msg, exclude=None, msg_type=None):
     stalls is closed and its own reader thread runs the normal disconnect
     cleanup (player_left broadcast, round-end / idle checks)."""
     if isinstance(msg, str) and (LOG_MOVEMENT or not _is_movement(msg, msg_type)):
-        logger.debug(f"BROADCAST: {msg}")
+        logger.debug(f"[SEND] {msg}")
     with lobby_lock:
         seen = set()
         targets = []
@@ -591,10 +782,13 @@ def _check_round_end(label):
         if global_player_scores[winner] >= MATCH_SCORE_LIMIT:
             global_match_over = True
     if global_match_over:
-        logger.info(f"[{label}] ROUND {global_current_round} OVER! P{winner} WINS THE MATCH "
-                    f"({global_player_scores[winner]} crowns) -> lobby in {MATCH_END_DELAY:g}s")
+        logger.info(f"[ROUND] round {global_current_round} over: P{winner} ({player_names.get(winner, 'Bot')}) "
+                    f"wins the match with {global_player_scores[winner]} crowns, lobby in {MATCH_END_DELAY:g} s")
+    elif winner > 0:
+        logger.info(f"[ROUND] round {global_current_round} over: P{winner} ({player_names.get(winner, 'Bot')}) wins, "
+                    f"crowns {dict(global_player_scores)}")
     else:
-        logger.info(f"[{label}] ROUND {global_current_round} OVER! Winner: P{winner}")
+        logger.info(f"[ROUND] round {global_current_round} over: no winner")
     broadcast(json.dumps({
         "type": "round_end",
         "winner": winner,
@@ -623,7 +817,7 @@ def _next_round_later(label):
                 reason = "waiting players want in"
             else:
                 reason = f"only {len(present)} player(s) left"
-            logger.info(f"[{label}] MATCH OVER -> LOBBY ({reason})")
+            logger.info(f"[MATCH] over, back to the lobby ({reason})")
             _reset_match_state()
             broadcast(json.dumps({"type": "return_to_lobby"}))
         else:
@@ -634,14 +828,14 @@ def _next_round_later(label):
             for i in range(1, 5):
                 global_player_stocks[i] = 3
             last_death.clear()
-            logger.info(f"[{label}] NEW ROUND STARTING: Round {global_current_round}")
+            logger.info(f"[ROUND] round {global_current_round} starting with {present}")
             broadcast(json.dumps({"type": "new_round", "round": global_current_round}))
 
 def _idle_reset_if_empty(label):
     """Last active player gone mid-match: back to a clean LOBBY. Spectators still
     watching the arena are sent back too."""
     if global_match_state == 'PLAYING' and not _present_players():
-        logger.info(f"[{label}] Last player left mid-match -> LOBBY (idle reset)")
+        logger.info(f"[MATCH] last player left mid-match, back to the lobby (idle reset)")
         _reset_match_state()
         broadcast(json.dumps({"type": "return_to_lobby"}))
 
@@ -666,7 +860,7 @@ def _grace_expired(label, pid, seq, delay):
         if player_slots[pid - 1] is None:
             player_locked.pop(pid, None)
             player_names.pop(pid, None)
-        logger.info(f"[{label}] P{pid} did not return within {delay:g} s: removed from the match")
+        logger.info(f"[LEAVE] P{pid} did not come back within {delay:g} s, out of the match")
         _idle_reset_if_empty(label)
         _check_round_end(label)
 
@@ -699,10 +893,10 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
         conns[id(sock)] = conn
     assigned_id = None
     with lobby_lock:
-        spectator_sockets.append({"sock": sock, "addr": str(addr)})
+        spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})
         snapshot = _state_snapshot("spectator_state")
 
-    print(f"[{label}] Spectator CONNECTED  addr={addr}")
+    logger.info(f"[CONN] spectator connected via {label} from {_ip(addr)}")
     ws_send(sock, json.dumps(snapshot))
 
     try:
@@ -711,6 +905,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
             if frame is None:
                 break
             opcode, payload = frame
+            conn.in_pkts += 1
+            conn.in_bytes += len(payload)
+            conn.last_rx = time.time()
             if opcode == 0:
                 continue
 
@@ -720,7 +917,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
                 spec = BIN_TYPES.get(payload[0]) if payload else None
                 if spec is None or len(payload) != spec[1]:
-                    logger.warning(f"[{label}] P{assigned_id} sent an invalid binary packet "
+                    logger.warning(f"[NET] P{assigned_id} sent an invalid binary packet "
                                    f"({len(payload)} B, type {payload[0] if payload else '-'}), dropped")
                     continue
                 _stat_in_type(spec[0])
@@ -731,15 +928,15 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
 
             msg = payload
             if len(msg) > MAX_RELAY_BYTES:
-                logger.warning(f"[{label}] P{assigned_id} sent a {len(msg)} B text message (cap {MAX_RELAY_BYTES}), dropped")
+                logger.warning(f"[NET] {_who(assigned_id)} sent a {len(msg)} B text message (cap {MAX_RELAY_BYTES}), dropped")
                 continue
             mtype = None
             if LOG_MOVEMENT or not _is_movement(msg):
-                print(f"DEBUG_PRINT: from P{assigned_id}: {msg}")
+                logger.debug(f"[MSG] {_who(assigned_id)} {msg}")
             try:
                 data = json.loads(msg)
             except ValueError:
-                logger.warning(f"[{label}] P{assigned_id} sent invalid JSON, dropped: {msg[:80]!r}")
+                logger.warning(f"[NET] {_who(assigned_id)} sent invalid JSON, dropped: {msg[:80]!r}")
                 continue
             if not isinstance(data, dict):
                 continue
@@ -753,7 +950,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
 
                 if mtype in SERVER_ONLY_TYPES:
-                    logger.warning(f"[{label}] P{assigned_id} sent server-only packet {mtype!r}, dropped")
+                    logger.warning(f"[NET] {_who(assigned_id)} sent server-only packet {mtype!r}, dropped")
                     continue
 
                 if mtype == "leave_slot":
@@ -771,8 +968,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                             else:
                                 _remove_player(old_id)
                             assigned_id = None
-                            spectator_sockets.append({"sock": sock, "addr": str(addr)})  # pure spectator again
-                            print(f"[{label}] P{old_id} became spectator.")
+                            spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})  # pure spectator again
+                            logger.info(f"[LEAVE] P{old_id} gave up its seat and is a spectator again")
                             broadcast(json.dumps({
                                 "type": "player_left",
                                 "id": old_id,
@@ -786,9 +983,10 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                 if mtype == "request_join":
                     client_version = data.get("version", "")
                     expected_version = get_game_version()
-                    logger.info(f"[{label}] request_join received! version='{client_version}', expected='{expected_version}'")
+                    logger.debug(f"[JOIN] request via {label} from {_ip(addr)}: client {client_version!r}, server {expected_version!r}")
                     if client_version != expected_version:
-                        logger.warning(f"[{label}] REJECTED join due to version mismatch! (stale cached .pck?)")
+                        logger.warning(f"[JOIN] rejected via {label} from {_ip(addr)}: client build {client_version!r}, "
+                                       f"server {expected_version!r} (old page in the browser cache?)")
                         ws_send(sock, json.dumps({"type": "version_error", "server_version": expected_version}))
                         continue
 
@@ -829,15 +1027,14 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                                     target = i + 1
                                     break
                         if target is None:
-                            print("DEBUG_JOIN: Server full")
+                            logger.warning(f"[JOIN] rejected via {label} from {_ip(addr)}: all 4 seats are taken")
                             ws_send(sock, json.dumps({"type": "server_full"}))
                             continue
-                        player_slots[target - 1] = {"sock": sock, "addr": str(addr)}
+                        player_slots[target - 1] = {"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)}
                         assigned_id = target
                         if token:
                             slot_tokens[assigned_id] = token
                             recent_slots.pop(token, None)
-                        print(f"DEBUG_JOIN: Assigned ID: {assigned_id}")
 
                         # A slot holder is no longer a pure spectator. Leaving it in both
                         # lists made every broadcast arrive twice.
@@ -866,8 +1063,10 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                             "player_names":    snapshot["player_names"],
                         }
 
-                    logger.info(f"[{label}] Player Status Update: Spectator became ACTIVE PLAYER (P{assigned_id})"
-                                + (" [hot reclaim]" if hot_reclaim else "") + (" [rejoined mid-match]" if rejoin else ""))
+                    known_name = snapshot["player_names"].get(str(assigned_id))
+                    logger.info(f"[JOIN] P{assigned_id} took seat {assigned_id} via {label} from {_ip(addr)}"
+                                + (f" as '{known_name}'" if known_name else "")
+                                + (" (hot reclaim)" if hot_reclaim else "") + (" (rejoined mid-match)" if rejoin else ""))
                     ws_send(sock, json.dumps(snapshot))
                     if not hot_reclaim:
                         broadcast(json.dumps(joined), exclude=sock)
@@ -884,7 +1083,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         player_names[assigned_id] = final
                         names = {str(k): v for k, v in player_names.items()}
                     if final != name:
-                        logger.info(f"[{label}] P{assigned_id} asked for the name '{name}', it was taken: now '{final}'")
+                        logger.info(f"[NAME] P{assigned_id} asked for '{name}', it was taken, now '{final}'")
+                    else:
+                        logger.info(f"[NAME] P{assigned_id} is now '{final}'")
                     broadcast(json.dumps({"type": "name_update", "player_names": names}))
                     continue
 
@@ -898,16 +1099,16 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     # each one reloaded the arena for everybody.
                     with lobby_lock:
                         if global_match_state == 'LOBBY':
-                            logger.info(f"[{label}] SCENE TRANSITION: Lobby -> Arena (Match Starting, {mtype} from P{assigned_id})")
+                            logger.info(f"[MATCH] starting, lobby -> arena ({mtype} from P{assigned_id}, players {_present_players()})")
                             _setup_match()
                             if mtype == "force_start":
                                 player_locked[assigned_id] = int(data.get("class", 0))
                         elif mtype == "force_start":
-                            logger.info(f"[{label}] force_start from P{assigned_id} ignored: match already {global_match_state}")
+                            logger.info(f"[MATCH] force_start from P{assigned_id} ignored, match already {global_match_state}")
                             continue
                         if mtype == "match_started":
                             if global_transition_sent:
-                                logger.debug(f"[{label}] match_started from P{assigned_id} ignored: transition already sent")
+                                logger.debug(f"[MATCH] match_started from P{assigned_id} ignored, transition already sent")
                                 continue
                             global_transition_sent = True
                     if mtype == "match_started":
@@ -930,18 +1131,21 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     with lobby_lock:
                         now = time.time()
                         if global_match_state != 'PLAYING' or victim not in global_alive_players or victim in pending_rejoin:
-                            logger.debug(f"[{label}] death of P{victim} reported by P{assigned_id} ignored (not a live fighter)")
+                            logger.debug(f"[KILL] death of P{victim} reported by P{assigned_id} ignored (not a live fighter)")
                             continue
                         if now - last_death.get(victim, 0.0) < DEATH_DEDUPE_S:
-                            logger.debug(f"[{label}] death of P{victim} reported by P{assigned_id} ignored (duplicate report)")
+                            logger.debug(f"[KILL] death of P{victim} reported by P{assigned_id} ignored (same death reported twice)")
                             continue
                         last_death[victim] = now
                         victim_name = player_names.get(victim, "Bot")
                         killer_name = player_names.get(killer, "Bot")
+                        left = global_player_stocks[victim] - 1
                         if killer == victim:
-                            logger.info(f"[{label}] P{victim} ({victim_name}) COMMITTED SUICIDE with '{weapon}' (reported by P{assigned_id})")
+                            logger.info(f"[KILL] P{victim} ({victim_name}) fell to its own '{weapon}', "
+                                        f"{left} lives left (seen by P{assigned_id})")
                         else:
-                            logger.info(f"[{label}] P{victim} ({victim_name}) was KILLED by P{killer} ({killer_name}) with '{weapon}' (reported by P{assigned_id})")
+                            logger.info(f"[KILL] P{killer} ({killer_name}) killed P{victim} ({victim_name}) with '{weapon}', "
+                                        f"{left} lives left (seen by P{assigned_id})")
                         global_player_stocks[victim] -= 1
                         if global_player_stocks[victim] <= 0:
                             global_alive_players.discard(victim)
@@ -955,7 +1159,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     continue
 
                 if mtype == "lock_in":
-                    logger.info(f"[{label}] P{assigned_id} LOCKED IN as class {data.get('class')}")
+                    logger.info(f"[LOCK] P{assigned_id} locked in as {CLASS_NAMES.get(data.get('class'), data.get('class'))}")
                     with lobby_lock:
                         player_locked[assigned_id] = int(data.get("class", 0))
 
@@ -971,7 +1175,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                 data["sender"] = assigned_id
                 broadcast(json.dumps(data, separators=(",", ":")), exclude=sock, msg_type=mtype)
             except Exception:
-                logger.exception(f"[{label}] error handling {mtype!r} from P{assigned_id}")
+                logger.exception(f"[NET] error handling {mtype!r} from {_who(assigned_id)}")
     except Exception:
         pass
 
@@ -1005,7 +1209,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                 freed = True
                 remaining = _present_players()
         if freed:
-            print(f"[{label}] P{assigned_id} LEFT    remaining={remaining}" + (f"  (seat held {REJOIN_GRACE:g} s)" if in_match else ""))
+            logger.info(f"[LEAVE] P{assigned_id} disconnected via {label}, remaining {remaining}"
+                        + (f" (seat held {REJOIN_GRACE:g} s)" if in_match else ""))
             broadcast(json.dumps({
                 "type":           "player_left",
                 "id":             assigned_id,
@@ -1017,9 +1222,9 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     _check_round_end(label)
         else:
             # Slot was taken over by a reclaim: the new socket owns it, say nothing.
-            logger.info(f"[{label}] P{assigned_id} old socket closed after hot reclaim (slot kept by the new connection)")
+            logger.info(f"[CONN] P{assigned_id} old socket closed after a hot reclaim (seat kept by the new connection)")
     else:
-        print(f"[{label}] Spectator LEFT")
+        logger.info(f"[CONN] spectator left via {label} from {_ip(addr)}")
 
     try: sock.close()
     except: pass
@@ -1029,7 +1234,7 @@ def start_ws():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", WS_PORT))
     srv.listen(8)
-    print(f"WS  relay → ws://0.0.0.0:{WS_PORT}")
+    logger.info(f"[NET] WS  relay -> ws://0.0.0.0:{WS_PORT}")
     while True:
         c, a = srv.accept()
         threading.Thread(target=ws_client_thread, args=(c, a, "WS"), daemon=True).start()
@@ -1042,7 +1247,7 @@ def start_wss():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
     srv = ctx.wrap_socket(raw, server_side=True)
-    print(f"WSS relay → wss://0.0.0.0:{WSS_PORT}")
+    logger.info(f"[NET] WSS relay -> wss://0.0.0.0:{WSS_PORT}")
     while True:
         try:
             c, a = srv.accept()
@@ -1158,6 +1363,7 @@ if __name__ == "__main__":
     print(f"  PC / browser      -> http://{ip}:{HTTP_PORT}")
     print("  WS + WSS share ONE lobby. Everyone sees everyone.")
     print(f"  Movement logging  -> {'ON' if LOG_MOVEMENT else 'off'}   Stats every {STATS_INTERVAL:g}s")
+    print(f"  Live status       -> status.json every {STATUS_INTERVAL:g}s   (./venv/bin/python tools/watch_server.py)")
     print("="*60 + "\n")
 
     threading.Thread(target=start_ws,   daemon=True).start()
@@ -1165,6 +1371,8 @@ if __name__ == "__main__":
     threading.Thread(target=start_http, daemon=True).start()
     if STATS_INTERVAL > 0:
         threading.Thread(target=stats_loop, daemon=True, name="stats").start()
+    if STATUS_INTERVAL > 0:
+        threading.Thread(target=status_loop, daemon=True, name="status").start()
 
     try:
         start_https()
