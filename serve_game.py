@@ -60,7 +60,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.18"
+GAME_VERSION = "v0.0.19"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -156,7 +156,29 @@ def stats_loop():
 # player_slots[i] = {"sock": socket, "addr": str}  or  None
 player_slots  = [None, None, None, None]
 player_locked = {}
-player_names  = {}          # {player_id(int): class_int}
+player_names  = {}          # {player_id(int): name(str)}
+
+def _unique_name(raw, pid):
+    """Make sure no two seats share a name (v0.0.19).
+
+    The story: two brothers both typed "Tav" and nobody knew who was who.
+    Now the server owns the names. If another seat already has this name
+    (big or small letters do not matter), we add a number: Tav-2, then
+    Tav-3. The name stays 12 letters at most, so a long name is trimmed
+    to make room for the number. An empty name becomes "Player".
+    Call this with lobby_lock held.
+    """
+    base = str(raw).strip()[:12] or "Player"
+    taken = {str(v).lower() for k, v in player_names.items() if k != pid}
+    if base.lower() not in taken:
+        return base
+    n = 2
+    while True:
+        tail = f"-{n}"
+        cand = base[:12 - len(tail)] + tail
+        if cand.lower() not in taken:
+            return cand
+        n += 1
 lobby_lock    = threading.RLock()
 
 global_match_state = 'LOBBY'
@@ -830,7 +852,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                                 global_playing_players.append(assigned_id)
                         pending = pending_names.pop(id(sock), None)
                         if pending:
-                            player_names[assigned_id] = pending
+                            player_names[assigned_id] = _unique_name(pending, assigned_id)
                         # rejoined: this socket resumed its own seat in a RUNNING match (page
                         # reload inside the grace, or hot reclaim). The client keeps its ammo.
                         snapshot = _state_snapshot("assign_id", id=assigned_id,
@@ -858,8 +880,11 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         pending_names[id(sock)] = name
                         continue
                     with lobby_lock:
-                        player_names[assigned_id] = name
+                        final = _unique_name(name, assigned_id)
+                        player_names[assigned_id] = final
                         names = {str(k): v for k, v in player_names.items()}
+                    if final != name:
+                        logger.info(f"[{label}] P{assigned_id} asked for the name '{name}', it was taken: now '{final}'")
                     broadcast(json.dumps({"type": "name_update", "player_names": names}))
                     continue
 

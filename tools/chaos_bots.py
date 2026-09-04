@@ -1065,6 +1065,55 @@ def sc_full(ctx):
         ctx.fail("scenario.server-full.spectator-not-receiving", "fifth client did not receive a broadcast as spectator")
 
 
+@scenario("dup_names", "three clients ask for the same name: the server hands out Tav, Tav-2 and Tav-3 (a name sent before the seat is claimed is numbered too); a 12-letter clash is trimmed to make room")
+def sc_dup_names(ctx):
+    bots = [ctx.bot(i) for i in range(1, 4)]
+    # Bot 3 says its name before it has a seat. The server keeps it waiting.
+    pend = bots[2]
+    pend.connect()
+    pend.wait_for("spectator_state", 3.0)
+    pend.set_name("Tav")
+    lobby_join(ctx, bots[:2], lock=False)
+    first, second = bots[0], bots[1]
+
+    def named(b, want, tag):
+        # Wait for the update that changes THIS bot's name (an older update for
+        # another bot may still be on its way).
+        before = b.model.names.get(b.slot)
+        m = b.mark()
+        b.set_name(want)
+        _, upd = b.wait_for("name_update", 2.0, since=m,
+                            pred=lambda p: p["player_names"].get(str(b.slot)) not in (None, before))
+        if upd is None:
+            ctx.fail("timeout.name-update", f"{b.name}: no name_update after set_name")
+            return None
+        return upd["player_names"].get(str(b.slot))
+
+    got1 = named(first, "Tav", "first")
+    if got1 != "Tav":
+        ctx.fail("scenario.dup-names.first-changed", f"first 'Tav' came back as {got1!r}")
+    got2 = named(second, "tav", "second")   # big or small letters do not matter
+    if got2 != "tav-2":   # the letters you typed are kept, the number is added
+        ctx.fail("scenario.dup-names.not-numbered", f"second 'tav' came back as {got2!r}, want 'tav-2'")
+
+    # Now bot 3 claims a seat: its waiting name must come out numbered.
+    m = pend.mark()
+    pend.join()
+    _, a = pend.wait_for("assign_id", 3.0, since=m)
+    if a is None:
+        ctx.fail("timeout.assign-id", f"{pend.name}: no assign_id")
+    else:
+        got3 = a["player_names"].get(str(pend.slot))
+        if got3 != "Tav-3":
+            ctx.fail("scenario.dup-names.pending-not-numbered", f"pending 'Tav' came back as {got3!r}, want 'Tav-3'")
+
+    # A 12-letter name that clashes is trimmed so the number still fits.
+    named(first, "Abcdefghijkl", "long")
+    got_long = named(second, "ABCDEFGHIJKL", "long2")
+    if got_long != "ABCDEFGHIJ-2":   # the letters you typed are kept, only trimmed for the number
+        ctx.fail("scenario.dup-names.too-long", f"12-letter clash came back as {got_long!r}, want 'ABCDEFGHIJ-2'")
+
+
 @scenario("version_mismatch", "a stale build is refused with version_error; the right version then joins")
 def sc_version(ctx):
     b = ctx.bot(1).connect()

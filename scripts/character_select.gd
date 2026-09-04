@@ -167,6 +167,18 @@ func _ready():
 	spectate_btn.connect("pressed", Callable(self, "_on_spectate_pressed"))
 	spectate_btn.z_index = 100
 	add_child(spectate_btn)
+
+	# v0.0.19: change your name without reloading the page.
+	var name_btn = Button.new()
+	name_btn.name = "ChangeNameBtn"
+	name_btn.text = "CHANGE NAME"
+	name_btn.add_theme_font_size_override("font_size", 14)
+	name_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	name_btn.position = Vector2(0, 64)
+	name_btn.custom_minimum_size = Vector2(130, 30)
+	name_btn.connect("pressed", Callable(self, "_on_change_name_pressed"))
+	name_btn.z_index = 100
+	add_child(name_btn)
 	
 	if Global.my_player_id > 0 and Global.my_player_id in Global.active_players:
 		join_btn.visible = false
@@ -313,8 +325,11 @@ func _update_roster():
 func _update_player_card(card: Control, p_id: int):
 	var is_active = (p_id in Global.active_players)
 	
+	# The server owns the names (v0.0.19): if your name was taken it comes back
+	# as "Tav-2", and you should see that too. Your typed name is only the
+	# fallback until the server has answered.
 	var display_name = Global.player_names.get(p_id, "Player " + str(p_id))
-	if p_id == local_player_id and Global.my_player_name != "":
+	if p_id == local_player_id and Global.my_player_name != "" and not Global.player_names.has(p_id):
 		display_name = Global.my_player_name
 		
 	var name_lbl = card.get_node("Name")
@@ -437,7 +452,15 @@ func _setup_name_input_ui():
 	if saved_name != "":
 		_confirm_name(saved_name)
 		return
+	_open_name_sheet("", false)
 
+func _open_name_sheet(prefill: String, can_cancel: bool):
+	# The name sheet. On the first visit it is the only thing on the screen.
+	# v0.0.19: the CHANGE NAME button opens the same sheet again, with your
+	# current name filled in and a CANCEL button. While the sheet is open the
+	# class-cycling keys are paused (is_name_set is false).
+	if name_input_ui:
+		return
 	is_name_set = false
 	name_input_ui = ColorRect.new()
 	name_input_ui.color = Color(0, 0, 0, 0.85)
@@ -460,16 +483,35 @@ func _setup_name_input_ui():
 	edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	edit.custom_minimum_size = Vector2(240, 40)
 	edit.max_length = 12
+	edit.text = prefill
 	vbox.add_child(edit)
 	edit.grab_focus()
+	edit.caret_column = prefill.length()
 
 	var btn = Button.new()
-	btn.text = "JOIN BRAWL"
+	btn.text = "SAVE NAME" if can_cancel else "JOIN BRAWL"
 	btn.custom_minimum_size = Vector2(240, 50)
 	vbox.add_child(btn)
 
 	btn.connect("pressed", Callable(self, "_on_name_submit").bind(edit))
 	edit.connect("text_submitted", Callable(self, "_on_name_submit_text"))
+
+	if can_cancel:
+		var cancel = Button.new()
+		cancel.text = "CANCEL"
+		cancel.custom_minimum_size = Vector2(240, 40)
+		vbox.add_child(cancel)
+		cancel.connect("pressed", Callable(self, "_on_name_cancel"))
+
+func _on_change_name_pressed():
+	_open_name_sheet(Global.my_player_name, true)
+
+func _on_name_cancel():
+	# Keep the old name. The keys work again.
+	is_name_set = true
+	if name_input_ui:
+		name_input_ui.queue_free()
+		name_input_ui = null
 
 func _on_name_submit_text(t: String):
 	_confirm_name_and_close(t)

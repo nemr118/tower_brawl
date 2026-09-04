@@ -36,13 +36,72 @@ const CLASS_ICON_TEX = {
 # flips), so every screen picks the same spot without a new network packet.
 const SPAWN_MIN_X = 160.0
 const SPAWN_MAX_X = 480.0
-const SPAWN_Y = 70.0
+const SPAWN_Y = 40.0   # v0.0.19: was 70. Higher up, so the bubble floats in above the top plank.
 
 func _spawn_spot(p_id: int) -> Vector2:
 	var lives = int(player_stocks.get(p_id, Global.max_stocks))
 	var rng = RandomNumberGenerator.new()
 	rng.seed = current_round * 100000 + p_id * 10000 + lives * 100 + Global.arena_flips
 	return Vector2(rng.randf_range(SPAWN_MIN_X, SPAWN_MAX_X), SPAWN_Y)
+
+# Round-start spots (v0.0.19). The story: the air bubble is right for coming
+# back after a death, but at the start of a round everyone should stand on a
+# platform, spread out. We keep no list of spots. We look at the platforms as
+# they are right now, flips and all, find every top edge that is on the screen,
+# and pick spots that are far apart. Every screen has the same platforms, so
+# every screen picks the same spots without a new network packet.
+const FEET_OFFSET = 8.0     # the fighter's feet sit 8 px below its middle point
+const SPOT_MIN_Y = 30.0     # a top edge above this line is out of view
+const SPOT_MAX_Y = 340.0    # a top edge below this line is too close to the bottom
+
+func _platform_tops() -> Array:
+	# One point per platform: the middle of its top edge, where a fighter stands.
+	# A half turn of the arena moves a platform to the mirror spot around the
+	# middle. We use the count of half turns, not the live angle, so a spin that
+	# is still going does not change the answer.
+	var tops: Array = []
+	var flipped := (int(round(platforms_node.rotation / PI)) % 2) != 0
+	for plat in platforms_node.get_children():
+		if not plat is StaticBody2D:
+			continue
+		var shape_node = plat.get_node_or_null("CollisionShape2D")
+		if shape_node == null or not shape_node.shape is RectangleShape2D:
+			continue
+		var half_h: float = shape_node.shape.size.y / 2.0
+		var local: Vector2 = plat.position
+		if flipped:
+			local = -local
+		var center: Vector2 = platforms_node.position + local
+		var top_y := center.y - half_h
+		if top_y < SPOT_MIN_Y or top_y > SPOT_MAX_Y:
+			continue
+		tops.append(Vector2(center.x, top_y - FEET_OFFSET))
+	return tops
+
+func _ground_spawn_spots(count: int) -> Array:
+	# Pick "count" spots that are far apart. Start with the leftmost top edge.
+	# Then, again and again, take the spot whose nearest picked spot is the
+	# farthest away. Ties go to the leftmost, so every screen agrees.
+	var tops := _platform_tops()
+	tops.sort_custom(func(a, b): return a.x < b.x or (a.x == b.x and a.y < b.y))
+	var picked: Array = []
+	if tops.is_empty():
+		return picked
+	picked.append(tops[0])
+	while picked.size() < count and picked.size() < tops.size():
+		var best := Vector2.ZERO
+		var best_d := -1.0
+		for t in tops:
+			if t in picked:
+				continue
+			var d := INF
+			for pk in picked:
+				d = min(d, t.distance_to(pk))
+			if d > best_d:
+				best_d = d
+				best = t
+		picked.append(best)
+	return picked
 
 var player_stocks = {}
 var player_instances = {}
@@ -187,6 +246,11 @@ func _start_round():
 	var roster: Array[int] = Global.playing_players.duplicate()
 	if roster.is_empty():
 		roster = Global.active_players.duplicate()
+	roster.sort()   # the same order on every screen, so spot 1 goes to the same player everywhere
+	# v0.0.19: at round start every fighter stands on its own platform spot.
+	var ground_spots := _ground_spawn_spots(roster.size())
+	var spot_index := 0
+	print("🧭 [Spawn] round ", current_round, " flips=", Global.arena_flips, " roster=", roster, " spots=", ground_spots)
 	for p_id in Global.player_configs:
 		Global.player_configs[p_id]["active"] = p_id in roster
 	for p_id in player_instances.keys():
@@ -200,15 +264,21 @@ func _start_round():
 		# Stocks come from the server (snapshot / player_died / new_round), so a client
 		# that rejoins mid-round shows the real count instead of a fresh 3.
 		player_stocks[p_id] = Global.server_stocks.get(p_id, Global.max_stocks)
-		var spawn_pos = _spawn_spot(p_id)
+		var on_ground := spot_index < ground_spots.size()
+		var spawn_pos: Vector2
+		if on_ground:
+			spawn_pos = ground_spots[spot_index]
+		else:
+			spawn_pos = _spawn_spot(p_id)   # no platform top in view: fall back to the air bubble
+		spot_index += 1
 		if p_id in player_instances and is_instance_valid(player_instances[p_id]):
-			player_instances[p_id].respawn(spawn_pos)
+			player_instances[p_id].respawn(spawn_pos, on_ground)
 		else:
 			var p = PlayerScene.instantiate()
 			p.player_id = p_id
 			p.class_type = Global.player_configs[p_id]["class"]
 			add_child(p)
-			p.respawn(spawn_pos)
+			p.respawn(spawn_pos, on_ground)
 			player_instances[p_id] = p
 			if p_id == Global.my_player_id and Global.ai_persona != "":
 				# Headless --ai client: the brain drives this fighter through the

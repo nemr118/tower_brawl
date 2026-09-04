@@ -1,0 +1,501 @@
+{
+  "version": "v0.0.19",
+  "seed": 42,
+  "complete": true,
+  "written_at": "2026-09-03 20:40:35",
+  "results": [
+    {
+      "scenario": "smoke",
+      "passed": true,
+      "elapsed_s": 23.5,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 4,
+        "elapsed_s": 23.5,
+        "in_pkts": 3250,
+        "in_bytes": 45060,
+        "out_pkts": 1132,
+        "out_bytes": 16592,
+        "in_pps_per_bot": 34.5,
+        "in_kbps_per_bot": 0.47,
+        "out_pps_per_bot": 12.0,
+        "out_kbps_per_bot": 0.17,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.13,
+          "avg": 0.33,
+          "max": 0.78
+        }
+      }
+    },
+    {
+      "scenario": "rounds",
+      "passed": true,
+      "elapsed_s": 39.3,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 39.3,
+        "in_pkts": 3135,
+        "in_bytes": 44532,
+        "out_pkts": 1601,
+        "out_bytes": 23246,
+        "in_pps_per_bot": 26.6,
+        "in_kbps_per_bot": 0.37,
+        "out_pps_per_bot": 13.6,
+        "out_kbps_per_bot": 0.19,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.15,
+          "avg": 0.32,
+          "max": 0.8
+        }
+      }
+    },
+    {
+      "scenario": "disconnect_mid_round",
+      "passed": true,
+      "elapsed_s": 18.3,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 18.3,
+        "in_pkts": 864,
+        "in_bytes": 13967,
+        "out_pkts": 622,
+        "out_bytes": 8919,
+        "in_pps_per_bot": 15.7,
+        "in_kbps_per_bot": 0.25,
+        "out_pps_per_bot": 11.3,
+        "out_kbps_per_bot": 0.16,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.15,
+          "avg": 0.32,
+          "max": 0.67
+        }
+      }
+    },
+    {
+      "scenario": "spectator_mid_match",
+      "passed": true,
+      "elapsed_s": 13.5,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 13.5,
+        "in_pkts": 543,
+        "in_bytes": 10161,
+        "out_pkts": 323,
+        "out_bytes": 5326,
+        "in_pps_per_bot": 13.4,
+        "in_kbps_per_bot": 0.25,
+        "out_pps_per_bot": 8.0,
+        "out_kbps_per_bot": 0.13,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.16,
+          "avg": 0.32,
+          "max": 0.52
+        }
+      }
+    },
+    {
+      "scenario": "reclaim",
+      "passed": true,
+      "elapsed_s": 4.1,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 5,
+        "elapsed_s": 4.1,
+        "in_pkts": 21,
+        "in_bytes": 3450,
+        "out_pkts": 13,
+        "out_bytes": 835,
+        "in_pps_per_bot": 1.0,
+        "in_kbps_per_bot": 0.16,
+        "out_pps_per_bot": 0.6,
+        "out_kbps_per_bot": 0.04,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.13,
+          "avg": 0.21,
+          "max": 0.32
+        }
+      }
+    },
+    {
+      "scenario": "server_full",
+      "passed": true,
+      "elapsed_s": 3.1,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 5,
+        "elapsed_s": 3.1,
+        "in_pkts": 36,
+        "in_bytes": 5093,
+        "out_pkts": 15,
+        "out_bytes": 933,
+        "in_pps_per_bot": 2.3,
+        "in_kbps_per_bot": 0.32,
+        "out_pps_per_bot": 1.0,
+        "out_kbps_per_bot": 0.06,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.17,
+          "avg": 0.23,
+          "max": 0.35
+        }
+      }
+    },
+    {
+      "scenario": "dup_names",
+      "passed": true,
+      "elapsed_s": 2.8,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 2.8,
+        "in_pkts": 33,
+        "in_bytes": 3870,
+        "out_pkts": 13,
+        "out_bytes": 746,
+        "in_pps_per_bot": 3.9,
+        "in_kbps_per_bot": 0.45,
+        "out_pps_per_bot": 1.5,
+        "out_kbps_per_bot": 0.09,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.17,
+          "avg": 0.23,
+          "max": 0.35
+        }
+      }
+    },
+    {
+      "scenario": "version_mismatch",
+      "passed": true,
+      "elapsed_s": 2.5,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 1,
+        "elapsed_s": 2.5,
+        "in_pkts": 4,
+        "in_bytes": 643,
+        "out_pkts": 3,
+        "out_bytes": 238,
+        "in_pps_per_bot": 1.6,
+        "in_kbps_per_bot": 0.25,
+        "out_pps_per_bot": 1.2,
+        "out_kbps_per_bot": 0.09,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.31,
+          "avg": 0.31,
+          "max": 0.31
+        }
+      }
+    },
+    {
+      "scenario": "double_force_start",
+      "passed": true,
+      "elapsed_s": 5.5,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 4,
+        "elapsed_s": 5.5,
+        "in_pkts": 47,
+        "in_bytes": 5006,
+        "out_pkts": 26,
+        "out_bytes": 1329,
+        "in_pps_per_bot": 2.1,
+        "in_kbps_per_bot": 0.22,
+        "out_pps_per_bot": 1.2,
+        "out_kbps_per_bot": 0.06,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.17,
+          "avg": 0.35,
+          "max": 0.5
+        }
+      }
+    },
+    {
+      "scenario": "match_end",
+      "passed": true,
+      "elapsed_s": 48.2,
+      "findings": {},
+      "notes": [],
+      "metrics": {
+        "bots": 2,
+        "elapsed_s": 48.2,
+        "in_pkts": 1413,
+        "in_bytes": 22015,
+        "out_pkts": 1373,
+        "out_bytes": 19362,
+        "in_pps_per_bot": 14.7,
+        "in_kbps_per_bot": 0.22,
+        "out_pps_per_bot": 14.2,
+        "out_kbps_per_bot": 0.2,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.14,
+          "avg": 0.3,
+          "max": 0.63
+        }
+      }
+    },
+    {
+      "scenario": "lag",
+      "passed": true,
+      "elapsed_s": 33.5,
+      "findings": {},
+      "notes": [
+        "laggy bot dropped 24 packets on purpose; rounds ended: 2",
+        "Godot1 puppets: jitter mean 13.2 px/s, p95 median 65.8, snaps 19, wraps 7, stall 2.6%, extrap 4.3% over 2850 puppet-frames"
+      ],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 33.5,
+        "in_pkts": 3765,
+        "in_bytes": 51071,
+        "out_pkts": 1038,
+        "out_bytes": 15721,
+        "in_pps_per_bot": 37.4,
+        "in_kbps_per_bot": 0.5,
+        "out_pps_per_bot": 10.3,
+        "out_kbps_per_bot": 0.15,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.14,
+          "avg": 46.36,
+          "max": 198.62
+        }
+      }
+    },
+    {
+      "scenario": "silent_client",
+      "passed": true,
+      "elapsed_s": 25.3,
+      "findings": {},
+      "notes": [
+        "silent client kept its seat for 20 s and resumed"
+      ],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 25.3,
+        "in_pkts": 1946,
+        "in_bytes": 25183,
+        "out_pkts": 997,
+        "out_bytes": 13055,
+        "in_pps_per_bot": 25.7,
+        "in_kbps_per_bot": 0.32,
+        "out_pps_per_bot": 13.1,
+        "out_kbps_per_bot": 0.17,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.19,
+          "avg": 0.38,
+          "max": 0.89
+        }
+      }
+    },
+    {
+      "scenario": "reload_mid_match",
+      "passed": true,
+      "elapsed_s": 17.0,
+      "findings": {},
+      "notes": [
+        "reload mid-match: same seat, still fighting, no forfeit"
+      ],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 17.0,
+        "in_pkts": 507,
+        "in_bytes": 8557,
+        "out_pkts": 539,
+        "out_bytes": 7313,
+        "in_pps_per_bot": 9.9,
+        "in_kbps_per_bot": 0.16,
+        "out_pps_per_bot": 10.5,
+        "out_kbps_per_bot": 0.14,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.17,
+          "avg": 0.36,
+          "max": 0.62
+        }
+      }
+    },
+    {
+      "scenario": "simultaneous_leave",
+      "passed": true,
+      "elapsed_s": 6.5,
+      "findings": {},
+      "notes": [
+        "both left: no winner awarded, lobby reached"
+      ],
+      "metrics": {
+        "bots": 2,
+        "elapsed_s": 6.5,
+        "in_pkts": 112,
+        "in_bytes": 3045,
+        "out_pkts": 104,
+        "out_bytes": 1761,
+        "in_pps_per_bot": 8.6,
+        "in_kbps_per_bot": 0.23,
+        "out_pps_per_bot": 8.0,
+        "out_kbps_per_bot": 0.13,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.13,
+          "avg": 0.32,
+          "max": 0.57
+        }
+      }
+    },
+    {
+      "scenario": "observer_death",
+      "passed": true,
+      "elapsed_s": 8.0,
+      "findings": {},
+      "notes": [
+        "observer-reported deaths: counted once, deduped, stocks 3 -> 2 -> 1"
+      ],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 8.0,
+        "in_pkts": 562,
+        "in_bytes": 9499,
+        "out_pkts": 289,
+        "out_bytes": 4400,
+        "in_pps_per_bot": 23.5,
+        "in_kbps_per_bot": 0.39,
+        "out_pps_per_bot": 12.1,
+        "out_kbps_per_bot": 0.18,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.15,
+          "avg": 0.27,
+          "max": 0.39
+        }
+      }
+    },
+    {
+      "scenario": "slow_reader",
+      "passed": true,
+      "elapsed_s": 26.3,
+      "findings": {},
+      "notes": [
+        "max sync_pos gap seen by the other players during the stall: 0.05 s",
+        "server Send-Q towards the stalled client at 5/10/15/20 s: 0 KB, 0 KB, 3 KB (0.2 KB/s)",
+        "slow reader dropped after 20.0 s (server stall detection)"
+      ],
+      "metrics": {
+        "bots": 3,
+        "elapsed_s": 26.3,
+        "in_pkts": 1994,
+        "in_bytes": 25871,
+        "out_pkts": 1447,
+        "out_bytes": 18642,
+        "in_pps_per_bot": 25.3,
+        "in_kbps_per_bot": 0.32,
+        "out_pps_per_bot": 18.3,
+        "out_kbps_per_bot": 0.23,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.13,
+          "avg": 0.32,
+          "max": 0.74
+        }
+      }
+    },
+    {
+      "scenario": "fuzz",
+      "passed": true,
+      "elapsed_s": 10.3,
+      "findings": {},
+      "notes": [
+        "3000-packet burst drained in 0.11 s (pong after the burst)",
+        "5 KB frame: connection closed in 0.05 s",
+        "oversized frame header rejected in 0.07 s, server RSS 29 -> 29 MB"
+      ],
+      "metrics": {
+        "bots": 4,
+        "elapsed_s": 10.3,
+        "in_pkts": 6587,
+        "in_bytes": 76353,
+        "out_pkts": 333,
+        "out_bytes": 5305,
+        "in_pps_per_bot": 159.4,
+        "in_kbps_per_bot": 1.8,
+        "out_pps_per_bot": 8.1,
+        "out_kbps_per_bot": 0.13,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.14,
+          "avg": 0.33,
+          "max": 1.02
+        }
+      }
+    },
+    {
+      "scenario": "fleet",
+      "passed": true,
+      "elapsed_s": 63.3,
+      "findings": {},
+      "notes": [
+        "Godot1: 12 NetStats lines, 227 sync_pos sent, 0 error kinds, log .harness_logs/godot1.log",
+        "Godot1 puppets: jitter mean 3.5 px/s, p95 median 0.0 max 40.4, snaps 6, wraps 7, stall 0.0%, extrap 49.1% over 5375 puppet-frames",
+        "Godot2: 12 NetStats lines, 225 sync_pos sent, 0 error kinds, log .harness_logs/godot2.log",
+        "Godot2 puppets: jitter mean 3.7 px/s, p95 median 0.0 max 40.5, snaps 6, wraps 7, stall 0.0%, extrap 48.3% over 5375 puppet-frames",
+        "kills seen by a Godot client: 6, rounds ended: 0"
+      ],
+      "metrics": {
+        "bots": 2,
+        "elapsed_s": 63.3,
+        "in_pkts": 1667,
+        "in_bytes": 24576,
+        "out_pkts": 735,
+        "out_bytes": 12812,
+        "in_pps_per_bot": 13.2,
+        "in_kbps_per_bot": 0.19,
+        "out_pps_per_bot": 5.8,
+        "out_kbps_per_bot": 0.1,
+        "sync_pos_avg_bytes": 11,
+        "duplicates": 0,
+        "rtt_ms": {
+          "min": 0.15,
+          "avg": 0.35,
+          "max": 0.73
+        }
+      }
+    }
+  ]
+}

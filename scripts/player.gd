@@ -46,6 +46,11 @@ var shield_timer: float = 0.0
 var is_bubble: bool = false
 var bubble_timer: float = 0.0
 const BUBBLE_TIME = 5.0          # seconds the bubble lasts at most
+# Round-start bubble (v0.0.19). At the start of a round the fighter stands
+# still on a platform inside the bubble. Gravity is off. The first key press
+# from that player pops it, or it pops by itself after BUBBLE_GROUND_TIME.
+var bubble_on_ground: bool = false
+const BUBBLE_GROUND_TIME = 1.5   # seconds the round-start bubble lasts at most
 const BUBBLE_FALL_SLOW = 45.0    # px/s, the slow float down
 const BUBBLE_FALL_FAST = 260.0   # px/s, when Down is held
 const BUBBLE_SIDE_SPEED = 160.0  # px/s, left and right while floating
@@ -217,7 +222,26 @@ func _physics_process(delta: float):
 		var wants_action = Input.is_action_just_pressed(bprefix + "attack") \
 			or Input.is_action_just_pressed(bprefix + "special") \
 			or Input.is_action_just_pressed(bprefix + "dash")
-		if wants_action or bubble_timer <= 0.0:
+		if bubble_on_ground:
+			# The round-start bubble: stand still until the first key press.
+			var any_press = wants_action \
+				or Input.is_action_just_pressed(bprefix + "left") \
+				or Input.is_action_just_pressed(bprefix + "right") \
+				or Input.is_action_just_pressed(bprefix + "jump") \
+				or Input.is_action_just_pressed(bprefix + "down")
+			if any_press or bubble_timer <= 0.0:
+				_pop_bubble()   # pop and keep going: the key press still counts below
+			else:
+				# A tiny push down keeps the feet touching the platform, so
+				# is_on_floor() stays true and the "feet on the ground" bit in
+				# our packets is right. The fighter does not visibly move.
+				velocity = Vector2(0.0, 10.0)
+				move_and_slide()
+				velocity = Vector2.ZERO
+				_sync_network_state(delta)
+				queue_redraw()
+				return
+		elif wants_action or bubble_timer <= 0.0:
 			# Pop now and keep going: the normal code below runs in this same
 			# frame, so the attack or dash the player pressed still happens.
 			_pop_bubble()
@@ -811,11 +835,14 @@ func force_die() -> void:
 	is_dashing = false
 	is_shielding = false
 	is_bubble = false
+	bubble_on_ground = false
 	is_egg = false
 	collision_shape.set_deferred("disabled", true)
 	melee_area.monitoring = false
 
-func respawn(spawn_pos: Vector2):
+func respawn(spawn_pos: Vector2, on_ground: bool = false):
+	# on_ground = true at round start: stand on a platform in a still bubble.
+	# on_ground = false after a death: float down from the sky in the glide bubble.
 	global_position = spawn_pos
 	target_net_pos = spawn_pos
 	_last_rx_tick = -1
@@ -835,7 +862,12 @@ func respawn(spawn_pos: Vector2):
 	# out in every movement packet, so every screen draws the bubble and every
 	# weapon bounces off it, just like a knight's shield.
 	is_bubble = true
-	bubble_timer = BUBBLE_TIME
+	bubble_on_ground = on_ground
+	bubble_timer = BUBBLE_GROUND_TIME if on_ground else BUBBLE_TIME
+	if on_ground:
+		# Look at the middle of the arena, so the fight is in front of you.
+		is_facing_right = spawn_pos.x < 320.0
+		aim_direction = Vector2.RIGHT if is_facing_right else Vector2.LEFT
 	is_shielding = true
 	shield_timer = 0.0
 	spawn_invuln_timer = 0.0
@@ -846,6 +878,7 @@ func respawn(spawn_pos: Vector2):
 func _pop_bubble() -> void:
 	# The bubble is gone. From now on hits count.
 	is_bubble = false
+	bubble_on_ground = false
 	is_shielding = false
 	shield_timer = 0.0
 	_squash_and_stretch(1.3, 0.7)
@@ -863,6 +896,25 @@ func catch_arrow():
 func play_parry_effect():
 	_squash_and_stretch(1.4, 0.6)
 
+const NAME_TAG_Y = -40.0       # the text baseline sits this far above the fighter's middle
+const NAME_TAG_SIZE = 10       # font size in px
+
+func _draw_name_tag() -> void:
+	# Name tag (v0.0.19). The story: in the playtest nobody knew which fighter
+	# was theirs. Now the name floats above every head. Your own tag is pale
+	# yellow, the others are white. The squash animation scales the whole
+	# fighter, so we scale the text back the other way and it never stretches.
+	var tag: String = str(Global.player_names.get(player_id, "P" + str(player_id)))
+	var font: Font = ThemeDB.fallback_font
+	var tag_col := Color(1.0, 0.95, 0.6) if is_local_player else Color(1.0, 1.0, 1.0)
+	var inv := Vector2(1.0 / max(scale.x, 0.05), 1.0 / max(scale.y, 0.05))
+	var w: float = font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_TAG_SIZE).x
+	draw_set_transform(Vector2(0.0, NAME_TAG_Y * inv.y), 0.0, inv)
+	draw_string_outline(font, Vector2(-w / 2.0, 0.0), tag, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		NAME_TAG_SIZE, 3, Color(0.0, 0.0, 0.0, 0.9))
+	draw_string(font, Vector2(-w / 2.0, 0.0), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_TAG_SIZE, tag_col)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 func _squash_and_stretch(sx: float, sy: float):
 	var tween = create_tween()
 	scale = Vector2(sx, sy)
@@ -877,6 +929,8 @@ func _squash_and_stretch(sx: float, sy: float):
 func _draw():
 	if is_dead:
 		return
+
+	_draw_name_tag()
 
 	var class_info = Global.CLASS_INFO[class_type]
 	var base_col: Color = class_info["color"]
