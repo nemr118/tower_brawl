@@ -238,6 +238,9 @@ func _physics_process(delta: float):
 				velocity = Vector2(0.0, 10.0)
 				move_and_slide()
 				velocity = Vector2.ZERO
+				# v0.0.20: the fighter still turns and aims inside the bubble.
+				_update_aim(Input.get_axis(bprefix + "left", bprefix + "right"),
+					Input.get_axis(bprefix + "up", bprefix + "down"))
 				_sync_network_state(delta)
 				queue_redraw()
 				return
@@ -249,10 +252,8 @@ func _physics_process(delta: float):
 			# Float down slowly. Left and right still work. Down drops faster.
 			var bx = Input.get_axis(bprefix + "left", bprefix + "right")
 			velocity.x = move_toward(velocity.x, bx * BUBBLE_SIDE_SPEED, ACCEL * delta)
-			if bx > 0.15:
-				is_facing_right = true
-			elif bx < -0.15:
-				is_facing_right = false
+			# v0.0.20: the fighter still turns and aims inside the bubble.
+			_update_aim(bx, Input.get_axis(bprefix + "up", bprefix + "down"))
 			var fast = Input.get_action_strength(bprefix + "down") > 0.5
 			velocity.y = BUBBLE_FALL_FAST if fast else BUBBLE_FALL_SLOW
 			move_and_slide()
@@ -286,22 +287,7 @@ func _physics_process(delta: float):
 	var input_x = Input.get_axis(prefix + "left", prefix + "right")
 	var input_y = Input.get_axis(prefix + "up", prefix + "down")
 	
-	var raw_aim = Vector2.ZERO
-	if is_local_player and not Global.is_mobile:
-		raw_aim = get_global_mouse_position() - global_position
-		if raw_aim.length_squared() > 0.08:
-			aim_direction = raw_aim.normalized()
-			is_facing_right = raw_aim.x > 0
-	else:
-		raw_aim = Vector2(input_x, input_y)
-		if raw_aim.length_squared() > 0.08:
-			aim_direction = raw_aim.normalized()
-			if input_x > 0.15:
-				is_facing_right = true
-			elif input_x < -0.15:
-				is_facing_right = false
-		else:
-			aim_direction = Vector2.RIGHT if is_facing_right else Vector2.LEFT
+	_update_aim(input_x, input_y)
 
 	if abs(input_x) > 0.1:
 		velocity.x = move_toward(velocity.x, sign(input_x) * SPEED, ACCEL * delta)
@@ -365,6 +351,28 @@ func _physics_process(delta: float):
 	_check_head_stomp()
 	_sync_network_state(delta)
 	queue_redraw()
+
+func _update_aim(input_x: float, input_y: float) -> void:
+	# "Where am I looking?" (v0.0.20). The story: inside the spawn bubble the
+	# fighter stood like a statue. The aim line and the face were stuck, because
+	# the bubble code returned before this block ran. Now this block is its own
+	# little function, so the bubble code can call it too. On a PC we look at
+	# the mouse. On a phone, or for a bot, we look where the stick points.
+	if is_local_player and not Global.is_mobile:
+		var raw_aim = get_global_mouse_position() - global_position
+		if raw_aim.length_squared() > 0.08:
+			aim_direction = raw_aim.normalized()
+			is_facing_right = raw_aim.x > 0
+	else:
+		var raw_aim = Vector2(input_x, input_y)
+		if raw_aim.length_squared() > 0.08:
+			aim_direction = raw_aim.normalized()
+			if input_x > 0.15:
+				is_facing_right = true
+			elif input_x < -0.15:
+				is_facing_right = false
+		else:
+			aim_direction = Vector2.RIGHT if is_facing_right else Vector2.LEFT
 
 func _sync_network_state(delta: float):
 	sync_timer += delta

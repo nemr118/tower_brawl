@@ -11,6 +11,7 @@ extends Node2D
 @onready var platforms_node = $Platforms
 var powerup_node: Area2D = null
 var is_arena_rotating: bool = false
+var spin_tween: Tween = null   # the running arena spin, so a round start can finish it at once
 
 const PlayerScene = preload("res://scenes/player.tscn")
 const BotBrainScript = preload("res://scripts/bot_brain.gd")
@@ -57,10 +58,11 @@ const SPOT_MAX_Y = 340.0    # a top edge below this line is too close to the bot
 func _platform_tops() -> Array:
 	# One point per platform: the middle of its top edge, where a fighter stands.
 	# A half turn of the arena moves a platform to the mirror spot around the
-	# middle. We use the count of half turns, not the live angle, so a spin that
-	# is still going does not change the answer.
+	# middle. We use the server's count of half turns, not the live angle
+	# (v0.0.20: the live angle switched its answer halfway through a spin, and
+	# two screens could disagree). The count is the same on every screen.
 	var tops: Array = []
-	var flipped := (int(round(platforms_node.rotation / PI)) % 2) != 0
+	var flipped := (Global.arena_flips % 2) != 0
 	for plat in platforms_node.get_children():
 		if not plat is StaticBody2D:
 			continue
@@ -236,6 +238,7 @@ func _on_leave_match_pressed():
 func _start_round():
 	is_round_over = false
 	_clear_projectiles()
+	_finish_spin_now()
 	
 	if touch_controls:
 		touch_controls.my_input_prefix = "p" + str(Global.my_player_id) + "_"
@@ -519,10 +522,24 @@ func _activate_rotation():
 	tween.set_trans(Tween.TRANS_SINE)
 	tween.set_ease(Tween.EASE_IN_OUT)
 	tween.tween_property(platforms_node, "rotation", platforms_node.rotation + PI, 2.5)
+	spin_tween = tween
 
 	await get_tree().create_timer(2.5).timeout
 	if not is_inside_tree():
 		return
+	if spin_tween == tween:   # still our spin: a round start may have finished it already
+		spin_tween = null
+		is_arena_rotating = false
+
+func _finish_spin_now() -> void:
+	# v0.0.20. The story: a round could start while the arena was still turning
+	# (the spin takes 2.5 s, the next round comes 2.6 s after the last kill).
+	# Fighters were then put on platforms that had not arrived yet. Now a round
+	# start jumps the platforms to where the spin was going and stops the spin.
+	if spin_tween != null and spin_tween.is_valid():
+		spin_tween.kill()
+	spin_tween = null
+	platforms_node.rotation = Global.arena_flips * PI
 	is_arena_rotating = false
 
 func _on_arena_join_pressed():
