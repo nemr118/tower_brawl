@@ -76,7 +76,7 @@ Step 2 scenarios (added after Phase 1):
 ```bash
 godot --headless --path . -- --autojoin --name=Headless --class=2
 ```
-Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type). The same line appears in the browser console of any real client. The server logs a `[STATS]` line every 10 s in `server.log`.
+Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type, the puppet jitter numbers, and since v0.0.27 the frame rate: `fps draw=59.8 phys=60.0 worst=21ms hitches=0` = pictures drawn a second, physics ticks a second, the slowest single frame, frames over 50 ms). The same line appears in the browser console of any real client, so a phone playtest shows where the frames drop. The server logs a `[STATS]` line every 10 s in `server.log`.
 
 ### 7. The live operations deck (v0.0.21, grown in v0.0.22, keys and mouse since v0.0.24, tape column since v0.0.25)
 ```bash

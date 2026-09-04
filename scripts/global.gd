@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.26"
+const GAME_VERSION: String = "v0.0.27"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -83,6 +83,40 @@ var _pj_extrap_frames: int = 0       # frames rendered past the newest sample (e
 var _pj_dips: int = 0                 # frames a puppet was drawn below its own floor sample
 var _pj_frames: int = 0
 var _pj_puppets: Dictionary = {}     # player_id -> true, seen this interval
+
+# --- FRAME TIME TELEMETRY (v0.0.27) ------------------------------------------
+# How fast this screen runs. Counted here because Global is an autoload that
+# runs in every scene: _process = one drawn picture, _physics_process = one
+# physics tick. Reported in the NetStats line as
+#   fps draw=59.8 phys=60.0 worst=21ms hitches=0
+# so a phone playtest says where the frames drop (the replay draws 211 tape
+# frames in about 5 s; drawn < frames in the Replay line means a slow screen).
+const FRAME_HITCH_MS := 50.0         # a drawn frame slower than this counts as a hitch
+var _ft_draw_frames: int = 0
+var _ft_phys_frames: int = 0
+var _ft_worst_ms: float = 0.0
+var _ft_hitches: int = 0
+
+func _ft_sample(delta: float) -> void:
+	_ft_draw_frames += 1
+	var ms := delta * 1000.0
+	if ms > _ft_worst_ms:
+		_ft_worst_ms = ms
+	if ms > FRAME_HITCH_MS:
+		_ft_hitches += 1
+
+func _ft_summary(secs: float) -> Dictionary:
+	return {"draw": _ft_draw_frames / secs, "phys": _ft_phys_frames / secs,
+		"worst_ms": _ft_worst_ms, "hitches": _ft_hitches}
+
+func _ft_reset() -> void:
+	_ft_draw_frames = 0
+	_ft_phys_frames = 0
+	_ft_worst_ms = 0.0
+	_ft_hitches = 0
+
+func _physics_process(_delta: float) -> void:
+	_ft_phys_frames += 1
 
 # dipped = this frame the puppet was drawn below its newest "feet on the ground"
 # sample, so it looked like it sank into the floor (v0.0.17 hotfix check).
@@ -396,6 +430,7 @@ func _load_saved_player_id() -> int:
 	return 0  # 0 = no saved ID
 
 func _process(_delta):
+	_ft_sample(_delta)
 	if _no_net:
 		return
 	# WebSocketPeer has no signals: poll() is what drives the socket, so this is
@@ -970,17 +1005,21 @@ func _report_net_stats() -> void:
 		"uptime": (Time.get_ticks_msec() - _ns_connected_at) / 1000.0,
 		"rtt_ms": _ns_last_rtt_ms,
 		"puppets": _pj_summary(),
+		"fps": _ft_summary(secs),
 	}
 	var pj: Dictionary = stats["puppets"]
-	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d" % [
+	var ft: Dictionary = stats["fps"]
+	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d | fps draw=%.1f phys=%.1f worst=%.0fms hitches=%d" % [
 		secs, my_player_id, get_tree().current_scene.name if get_tree().current_scene else "?",
 		stats["in_pps"], stats["in_bps"] / 1024.0, stats["in_avg"],
 		stats["out_pps"], stats["out_bps"] / 1024.0, stats["out_avg"],
 		_ns_format_types(_ns_types_in), _ns_format_types(_ns_types_out),
 		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms,
-		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["dips"], pj["frames"]])
+		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["dips"], pj["frames"],
+		ft["draw"], ft["phys"], ft["worst_ms"], ft["hitches"]])
 	emit_signal("net_stats_updated", stats)
 	_pj_reset()
+	_ft_reset()
 	_ns_bytes_in = 0
 	_ns_bytes_out = 0
 	_ns_pkts_in = 0
