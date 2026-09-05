@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.27"
+const GAME_VERSION: String = "v0.0.28"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -38,7 +38,7 @@ var _ns_connected_at: int = 0        # msec tick
 var _ns_last_rtt_ms: int = -1        # from the last pong (server echoes our ping timestamp)
 
 # --- HEADLESS TEST HOOKS (non-web builds only) --------------------------------
-# godot --headless --path . -- --autojoin [--name=X] [--class=N] [--server=ws://host:port] [--no-netstats] [--no-net]
+# godot --headless --path . -- --autojoin [--name=X] [--class=N] [--reclaim=N] [--server=ws://host:port] [--no-netstats] [--no-net]
 #                                [--ai=<persona>] [--ai-seed=N] [--ai-difficulty=0..1] [--latency-ms=N] [--jitter-ms=N]
 # --autojoin makes this instance join the lobby and lock in with no UI, so a
 # headless Godot process can act as a real client for bandwidth measurements.
@@ -49,6 +49,7 @@ var _ns_last_rtt_ms: int = -1        # from the last pong (server echoes our pin
 # otherwise see 0 ms; the harness fault knobs only cover the protocol bots).
 var _autojoin: bool = false
 var _autojoin_name: String = "Headless"
+var _autojoin_reclaim: int = 0      # --reclaim=N: ask for seat N back at once, like a browser after a page reload (v0.0.28)
 var _autojoin_class: int = 0
 var _autojoin_class_given: bool = false
 var _server_override: String = ""
@@ -114,6 +115,30 @@ func _ft_reset() -> void:
 	_ft_phys_frames = 0
 	_ft_worst_ms = 0.0
 	_ft_hitches = 0
+	_in_keys = 0
+
+# Keyboard probe (v0.0.28, backlog 13). The story: after a page reload inside the
+# replay gap the PC fighter could aim with the mouse but not walk. A headless client
+# doing the same reload walks fine, so the keys may never reach the game: in the
+# browser the key events are bound to the <canvas>, which only gets them while it
+# has the page focus. Every NetStats line now ends with `keys=<presses since the
+# last line> focus=<1 if the canvas has the focus>`, and focus_canvas() asks the
+# browser for the focus when the arena starts and on every click.
+var _in_keys: int = 0   # key presses seen since the last NetStats line
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		_in_keys += 1
+
+func canvas_focused() -> bool:
+	if not OS.has_feature("web"):
+		return true
+	var v = JavaScriptBridge.eval("(function(){ var c = document.getElementById('canvas'); return !!c && document.activeElement === c; })()", true)
+	return bool(v)
+
+func focus_canvas() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("(function(){ var c = document.getElementById('canvas'); if (c) { c.focus(); } })()", true)
 
 func _physics_process(_delta: float) -> void:
 	_ft_phys_frames += 1
@@ -657,9 +682,9 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 
 	if type == "spectator_state" and my_player_id == 0:
 		if _autojoin:
-			print("🤖 [Global] --autojoin: requesting slot")
+			print("🤖 [Global] --autojoin: requesting slot", (" P%d back (--reclaim)" % _autojoin_reclaim) if _autojoin_reclaim > 0 else "")
 			_rejoin_pending = true
-			request_join(0)
+			request_join(_autojoin_reclaim)
 		elif _should_auto_rejoin():
 			var slot := _had_slot if _had_slot > 0 else _load_saved_player_id()
 			print("🔁 [Global] Reconnected: asking for our seat P", slot, " back")
@@ -694,6 +719,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 	if type == "scene_transition":
 		# Everyone occupying a slot at this moment is in the match (mirrors _setup_match on the server).
 		playing_players = active_players.duplicate()
+		current_round = 1
 		for k in server_stocks:
 			server_stocks[k] = max_stocks
 		get_tree().change_scene_to_file("res://scenes/arena.tscn")
@@ -727,6 +753,10 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 					player_configs[lp]["class"] = lc
 		if data.has("arena_flips"):
 			arena_flips = int(data.get("arena_flips", 0))
+		if data.has("current_round"):
+			# v0.0.28: a client that rejoins mid-match starts its arena at the real round
+			# number (banner, tape, spawn seed), not at round 1.
+			current_round = int(data.get("current_round", 1))
 		if data.has("stocks"):
 			var st = data.get("stocks", {})
 			for k in st:
@@ -740,7 +770,11 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 			# rejoin request is in flight (its assign_id decides the scene).
 			if type == "assign_id" and last_match_state == "PLAYING":
 				get_tree().change_scene_to_file("res://scenes/arena.tscn")
-			elif not _rejoin_pending:
+				focus_canvas()   # v0.0.28: a reload lands here with no click, take the keys
+			elif type == "assign_id" or not _rejoin_pending:
+				# v0.0.28 (backlog 13): an auto-rejoin that lands in LOBBY (the match ended
+				# while the phone was hidden, or the server restarted) used to leave the
+				# client in the arena for good, because _rejoin_pending was still true here.
 				_ensure_scene_for_state(last_match_state)
 	if type == "assign_id":
 		is_spectator = false
@@ -885,6 +919,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		
 	elif type == "new_round":
 		var r_num = int(data.get("round", 1))
+		current_round = r_num
 		for k in server_stocks:
 			server_stocks[k] = max_stocks
 		emit_signal("net_new_round", r_num)
@@ -941,6 +976,8 @@ func _parse_test_args() -> void:
 		elif a.begins_with("--class="):
 			_autojoin_class = clampi(int(a.substr(8)), 0, ClassType.size() - 1)
 			_autojoin_class_given = true
+		elif a.begins_with("--reclaim="):
+			_autojoin_reclaim = clampi(int(a.substr(10)), 0, 4)
 		elif a.begins_with("--server="):
 			_server_override = a.substr(9)
 		elif a == "--no-netstats":
@@ -1006,17 +1043,19 @@ func _report_net_stats() -> void:
 		"rtt_ms": _ns_last_rtt_ms,
 		"puppets": _pj_summary(),
 		"fps": _ft_summary(secs),
+		"keys": _in_keys,
+		"focus": canvas_focused(),
 	}
 	var pj: Dictionary = stats["puppets"]
 	var ft: Dictionary = stats["fps"]
-	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d | fps draw=%.1f phys=%.1f worst=%.0fms hitches=%d" % [
+	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d | fps draw=%.1f phys=%.1f worst=%.0fms hitches=%d | keys=%d focus=%d" % [
 		secs, my_player_id, get_tree().current_scene.name if get_tree().current_scene else "?",
 		stats["in_pps"], stats["in_bps"] / 1024.0, stats["in_avg"],
 		stats["out_pps"], stats["out_bps"] / 1024.0, stats["out_avg"],
 		_ns_format_types(_ns_types_in), _ns_format_types(_ns_types_out),
 		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms,
 		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["dips"], pj["frames"],
-		ft["draw"], ft["phys"], ft["worst_ms"], ft["hitches"]])
+		ft["draw"], ft["phys"], ft["worst_ms"], ft["hitches"], stats["keys"], 1 if stats["focus"] else 0])
 	emit_signal("net_stats_updated", stats)
 	_pj_reset()
 	_ft_reset()

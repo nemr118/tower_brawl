@@ -309,6 +309,14 @@ const engine = new Engine(GODOT_CONFIG);
 			},
 		}).then(() => {
 			setStatusMode('hidden');
+			// v0.0.28: the game reads the keyboard from the canvas, and the canvas only
+			// hears keys while it has the page focus. Take it once the game is up, and
+			// again on every click or tap anywhere on the page (a reload lands in the
+			// arena with no click at all).
+			const canvas = document.getElementById('canvas');
+			canvas.focus();
+			document.addEventListener('pointerdown', function () { canvas.focus(); });
+			window.addEventListener('focus', function () { canvas.focus(); });
 		}, displayFailureNotice);
 	}
 }());

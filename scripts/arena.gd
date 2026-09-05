@@ -224,6 +224,7 @@ func _ready():
 	replay.name = "Replay"
 	add_child(replay)
 	replay.finished.connect(_on_replay_finished)
+	Global.focus_canvas()   # v0.0.28: the browser keys go to the canvas only while it has the focus
 	_start_new_match()
 
 

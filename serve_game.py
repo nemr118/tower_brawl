@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.27"
+GAME_VERSION = "v0.0.28"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -1067,7 +1067,12 @@ def _next_round_later(label, replay=False):
     with lobby_lock:
         if global_match_state != 'PLAYING':
             return  # idle reset already returned everyone to the lobby
-        present = [p for p in global_playing_players if player_slots[p - 1]]
+        # v0.0.28 (backlog 13): a seat the server is still holding (page reload, hidden
+        # phone) counts as present. Before, a fighter that dropped inside the replay gap
+        # ended the match ("only 1 player left") although its seat was held for 8 s. If
+        # it never comes back, _grace_expired ends the new round as a forfeit instead.
+        held = [p for p in global_playing_players if not player_slots[p - 1] and p in pending_rejoin]
+        present = [p for p in global_playing_players if player_slots[p - 1] or p in pending_rejoin]
         if global_match_over or global_waiting_players or len(present) < 2:
             if global_match_over:
                 reason = f"match won ({MATCH_SCORE_LIMIT} crowns)"
@@ -1088,7 +1093,8 @@ def _next_round_later(label, replay=False):
             last_death.clear()
             match_timeline["rounds"].append([global_current_round, _match_t(), None, None])
             _stamp_names(present)
-            logger.info(f"[ROUND] round {global_current_round} starting with {present}")
+            logger.info(f"[ROUND] round {global_current_round} starting with {present}"
+                        + (f" (seat held for {held}, back within the grace or out)" if held else ""))
             broadcast(json.dumps({"type": "new_round", "round": global_current_round}))
 
 def _idle_reset_if_empty(label):

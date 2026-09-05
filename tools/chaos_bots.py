@@ -781,7 +781,10 @@ class Bot:
         if dup:
             self.dups[t] += 1
             kind = "dup.movement" if t in MOVEMENT_TYPES else "dup.event"
-            self.F.fail(kind, f"{self.name}: {t} received twice within {(now - prev) * 1000:.1f} ms")
+            # v0.0.28: name the sender and the packet, so a legitimate double shot
+            # can be told from a relay that sent the same bytes twice
+            pkt_info = {k: pkt[k] for k in ("sender", "weapon", "x", "y", "tick") if k in pkt}
+            self.F.fail(kind, f"{self.name}: {t} received twice within {(now - prev) * 1000:.1f} ms {pkt_info}")
         else:
             if spec is not None:
                 try:
@@ -1386,27 +1389,35 @@ HARNESS_LOG_DIR = os.path.join(ROOT, ".harness_logs")
 class GodotClient:
     """A real headless Godot client (global.gd --autojoin). Its log is the
     assertion surface: any SCRIPT ERROR / ERROR: line fails the scenario."""
-    def __init__(self, ctx, idx, cls, ai=""):
+    def __init__(self, ctx, idx, cls, ai="", tag="", keep_class=False):
         self.ctx = ctx
         self.idx = idx
         self.cls = cls
         self.ai = ai
+        self.keep_class = keep_class   # v0.0.28: a brain plays `cls` instead of its natural class
         self.name = f"Godot{idx}"
         os.makedirs(HARNESS_LOG_DIR, exist_ok=True)
-        self.log_path = os.path.join(HARNESS_LOG_DIR, f"{self.name.lower()}.log")
+        # `tag` (v0.0.28): a restarted client keeps its name (same token, same seat)
+        # but writes its own log, so the log of the process it replaces survives.
+        self.log_path = os.path.join(HARNESS_LOG_DIR, f"{self.name.lower()}{tag}.log")
         self.proc = None
         self.logf = None
 
-    def start(self):
+    def start(self, reclaim=0):
         self.logf = open(self.log_path, "w")
         argv = ["godot", "--headless", "--path", ROOT, "--", "--autojoin", f"--name={self.name}",
                 f"--server=ws://{self.ctx.args.host}:{self.ctx.args.port}"]
+        if reclaim:
+            # v0.0.28: ask for a held seat back, like a browser after a page reload
+            argv.append(f"--reclaim={int(reclaim)}")
         if self.ai:
             # seeded per client so a fleet run is reproducible with --seed; the
             # persona picks its own class (chaser/turtle knight, sniper mage, rusher rogue, griefer druid)
             argv += [f"--ai={self.ai}", f"--ai-seed={self.ctx.args.seed * 10 + self.idx}"]
             if self.ctx.args.ai_difficulty is not None:
                 argv.append(f"--ai-difficulty={self.ctx.args.ai_difficulty}")
+            if self.keep_class:
+                argv.append(f"--class={self.cls}")
         else:
             argv.append(f"--class={self.cls}")
         if self.ctx.args.latency_ms > 0:
@@ -1490,6 +1501,20 @@ class GodotClient:
         """The seat the server gave this client, from its log, or None."""
         m = re.search(r"Assigned Player ID: (\d+)", self.text())
         return int(m[1]) if m else None
+
+    def assigns(self):
+        """Every seat assignment in the log, oldest first: [(slot, rejoined)] (v0.0.28)."""
+        return [(int(m[1]), bool(m[2])) for m in re.finditer(r"Assigned Player ID: (\d+)( \(rejoined\))?", self.text())]
+
+    def scene(self):
+        """The scene named by the newest NetStats line ("Arena", the lobby, ...), or None (v0.0.28)."""
+        found = re.findall(r"\[NetStats [\d.]+s\] P\d+ (\S+) \|", self.text())
+        return found[-1] if found else None
+
+    def bot_moves(self):
+        """moves= of the newest brain status line, or -1 when there is none (v0.0.28)."""
+        found = self.BOT_LINE.findall(self.text())
+        return int(found[-1][4]) if found else -1
 
     def stats(self):
         t = self.text()
@@ -2254,6 +2279,181 @@ def sc_replay(ctx):
                  f"({r['frames']}, {r['drawn']} shown) in {r['dur_ms']} ms, started {r['late_ms']} ms after round_end")
     for c in clients:
         c.stop()
+
+
+
+def _reload_in_gap_spread(a, slot, since):
+    """Where the fighter in `slot` was drawn since event `since`, from the relayed sync_pos: (samples, spread px)."""
+    xs, ys = [], []
+    for _, t, p in list(a.events[since:]):
+        if t == "sync_pos" and int(p["sender"]) == slot:
+            xs.append(float(p["x"]))
+            ys.append(float(p["y"]))
+    if not xs:
+        return 0, 0.0
+    return len(xs), max(max(xs) - min(xs), max(ys) - min(ys))
+
+
+@scenario("reload_in_gap", "v0.0.28 (backlog 13): a headless Godot fighter drops inside the 6.5 s replay gap. Act 1: back 1 s later (page reload) -> same seat, new_round on time, it moves in the next round. Act 2: back only after new_round (hidden phone) -> the held seat must not end the match, the fighter rejoins the running round and moves. Act 3: the server restarts under a fighter in the arena -> its reconnect lands in LOBBY and the client must leave the arena scene")
+def sc_reload_in_gap(ctx):
+    if shutil.which("godot") is None:
+        ctx.fail("reload_in_gap.no-godot", "godot binary not on PATH")
+        return
+    a = ctx.bot(1)
+    lobby_join(ctx, [a])
+    a.shoot = False
+    g = GodotClient(ctx, 1, cls=1, ai="wanderer", keep_class=True).start()
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline and (len(a.model.active) < 2 or not g.slot()):
+        time.sleep(0.25)
+    gs = g.slot()
+    if len(a.model.active) < 2 or not gs:
+        ctx.fail("reload_in_gap.client-not-joined", f"active={sorted(a.model.active)} Godot1={gs} after 20 s")
+        g.stop()
+        return
+    start_match(ctx, [a], a)
+    a.die_rate = 0.0
+    ctx.timed(80.0)
+    clients = [g]
+
+    def check_errors(c):
+        for line, count in c.errors().items():
+            ctx.fail("reload_in_gap.script-error", f"{c.name} ({os.path.basename(c.log_path)}): {line} (x{count})")
+        for line, count in c.warnings().items():
+            ctx.warn("reload_in_gap.script-warning", f"{c.name} ({os.path.basename(c.log_path)}): {line} (x{count})")
+
+    def end_round_on_kill(label):
+        """Bot1 dies three times, killed by the Godot fighter: round_end with replay: true."""
+        m = a.mark()
+        idx, end = None, None
+        for _ in range(4):
+            # one death every 2 s (the server ignores repeats inside 1.5 s) until the
+            # round ends; a stomp by the wanderer may have taken a life already
+            a.die(killer=gs)
+            idx, end = a.wait_for("round_end", 2.0, since=m)
+            if end is not None:
+                break
+            STATE.update(bots=[c for c in (bot_card_from_stats(cl) for cl in clients) if c])
+        if end is None:
+            ctx.fail("reload_in_gap.no-round-end", f"{label}: no round_end after 4 deaths")
+            return None, None
+        if end.get("replay") is not True or int(end.get("winner", 0)) != gs:
+            ctx.fail("reload_in_gap.round-end", f"{label}: round_end winner={end.get('winner')} replay={end.get('replay')!r} (expected P{gs}, true)")
+        return idx, time.monotonic()
+
+    def moves_after(c, label, seconds=6.0):
+        """The fighter must move in the round that just started (spread of its relayed spots over `seconds`)."""
+        m = a.mark()
+        nap(ctx, seconds, clients)
+        n, spread = _reload_in_gap_spread(a, gs, m)
+        if n < 8 or spread < 30.0:
+            ctx.fail("reload_in_gap.stuck", f"{label}: P{gs} sent {n} spots over {seconds:.0f} s with a spread of {spread:.0f} px "
+                     f"(want 8+ and 30+ px); brain moves={c.bot_moves()}; log {os.path.relpath(c.log_path, ROOT)}")
+        else:
+            ctx.note(f"{label}: P{gs} moved {spread:.0f} px over {seconds:.0f} s ({n} spots)")
+
+    ctx.say("round 1: the wanderer must move before anything happens (baseline)")
+    nap(ctx, 3.0, clients)
+    moves_after(g, "baseline round 1", 5.0)
+
+    # ---- Act 1: page reload inside the gap (the PC case) ----
+    ctx.say("act 1: Bot1 burns its stocks, round 1 ends on a kill by the wanderer")
+    idx, t_end = end_round_on_kill("act 1")
+    if idx is None:
+        g.stop()
+        return
+    time.sleep(1.5)   # inside the gap: the tape froze, the wanderer's screen plays the replay
+    m = a.mark()
+    ctx.say(f"act 1: the wanderer (P{gs}) drops 1.5 s into the gap and comes back 1 s later")
+    g.stop()
+    _, left = a.wait_for("player_left", 3.0, since=m, pred=lambda p: int(p["id"]) == gs)
+    if left is None:
+        ctx.fail("reload_in_gap.no-player-left", "act 1: no player_left when the wanderer dropped")
+    time.sleep(1.0)
+    g1 = GodotClient(ctx, 1, cls=1, ai="wanderer", tag="-act1", keep_class=True).start(reclaim=gs)
+    clients = [g1]
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline and not g1.assigns():
+        time.sleep(0.2)
+    got = g1.assigns()
+    if not got or got[0] != (gs, True):
+        ctx.fail("reload_in_gap.no-rejoin", f"act 1: after the reload the client got {got} (want seat {gs}, rejoined)")
+    _, nr = a.wait_for("new_round", REPLAY_ROUND_DELAY + 2.5, since=idx + 1)
+    gap = time.monotonic() - t_end
+    if a.count("return_to_lobby", since=idx) > 0:
+        ctx.fail("reload_in_gap.match-ended", f"act 1: the match ended {gap:.1f} s after round_end although the seat came back")
+    elif nr is None:
+        ctx.fail("reload_in_gap.no-new-round", f"act 1: no new_round within {REPLAY_ROUND_DELAY + 2.5:.1f} s of round_end")
+    else:
+        ctx.note(f"act 1: new_round {gap:.2f} s after round_end, the reloaded client is P{gs} again")
+    moves_after(g1, "act 1 (rejoined inside the gap)")
+    check_errors(g1)
+
+    # ---- Act 2: away past new_round (the hidden phone) ----
+    ctx.say("act 2: round 2 ends on a kill, the wanderer drops and stays away until after new_round")
+    idx, t_end = end_round_on_kill("act 2")
+    if idx is None:
+        g1.stop()
+        return
+    time.sleep(1.5)
+    m = a.mark()
+    g1.stop()
+    _, left = a.wait_for("player_left", 3.0, since=m, pred=lambda p: int(p["id"]) == gs)
+    if left is None:
+        ctx.fail("reload_in_gap.no-player-left", "act 2: no player_left when the wanderer dropped")
+    _, nr = a.wait_for("new_round", REPLAY_ROUND_DELAY + 2.5, since=idx + 1)
+    gap = time.monotonic() - t_end
+    if a.count("return_to_lobby", since=idx) > 0:
+        ctx.fail("reload_in_gap.match-ended-seat-held", f"act 2: the match ended {gap:.1f} s after round_end while P{gs}'s seat was still held ({REJOIN_GRACE:g} s grace)")
+        return
+    if nr is None:
+        ctx.fail("reload_in_gap.no-new-round", f"act 2: no new_round within {REPLAY_ROUND_DELAY + 2.5:.1f} s of round_end (seat held, round should start)")
+        return
+    ctx.note(f"act 2: new_round {gap:.2f} s after round_end with P{gs}'s seat held")
+    # back 7.5 s after round_end: after new_round (6.5 s), inside the grace (drop + 8 s = 9.5 s)
+    while time.monotonic() - t_end < 7.5:
+        time.sleep(0.1)
+    g2 = GodotClient(ctx, 1, cls=1, ai="wanderer", tag="-act2", keep_class=True).start(reclaim=gs)
+    clients = [g2]
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline and not g2.assigns():
+        time.sleep(0.2)
+    got = g2.assigns()
+    if not got or got[0] != (gs, True):
+        ctx.fail("reload_in_gap.no-rejoin", f"act 2: after new_round the client got {got} (want seat {gs}, rejoined)")
+    moves_after(g2, "act 2 (rejoined after new_round)")
+    check_errors(g2)
+
+    # ---- Act 3: the server restarts under a fighter in the arena ----
+    ctx.say("act 3: the server restarts while the wanderer stands in the arena; its reconnect lands in LOBBY")
+    before = len(g2.assigns())
+    restart_server()
+    deadline = time.monotonic() + 12.0
+    while time.monotonic() < deadline and len(g2.assigns()) <= before:
+        time.sleep(0.25)
+    got = g2.assigns()
+    if len(got) <= before:
+        ctx.fail("reload_in_gap.no-reconnect", f"act 3: the client did not get a seat back within 12 s of the server restart ({got})")
+    else:
+        # the next NetStats line (every 5 s) names the scene the client is in
+        t0 = time.monotonic()
+        scene = None
+        while time.monotonic() - t0 < 8.0:
+            time.sleep(0.5)
+            txt = g2.text()
+            after = txt[txt.rfind("Assigned Player ID"):]
+            found = re.findall(r"\[NetStats [\d.]+s\] P\d+ (\S+) \|", after)
+            if found:
+                scene = found[-1]
+                break
+        if scene is None:
+            ctx.fail("reload_in_gap.no-netstats", "act 3: no NetStats line within 8 s of the reconnect")
+        elif scene == "Arena":
+            ctx.fail("reload_in_gap.stuck-in-arena", f"act 3: the server is in LOBBY but the reconnected client still sits in the {scene} scene (its fighter can do nothing there)")
+        else:
+            ctx.note(f"act 3: after the server restart the client is in the {scene} scene")
+    check_errors(g2)
+    g2.stop()
 
 
 @scenario("play", "free play for --duration seconds with --bots bots (bandwidth baseline; use --die-rate 0 for steady state)")

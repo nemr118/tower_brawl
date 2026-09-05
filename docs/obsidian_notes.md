@@ -52,7 +52,7 @@ Versioning scheme: `v0.0.x` while building; `v0.1.0` is the target once the VHS 
 ### 5. The Test Harness (formerly the Chaos Bots)
 `tools/chaos_bots.py` is a protocol test harness: every bot behaves like the Godot client (join, name, lock in, 30 Hz `sync_pos` while alive, silence while dead, 1 s pings) and keeps a model of what the server state should be. Every packet is checked against a per-type schema, the model (oracle) and a duplicate-broadcast detector. Named scenarios end with a report and a non-zero exit code on any finding.
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                  # scenarios (21 since v0.0.26)
+./venv/bin/python tools/chaos_bots.py --list                  # scenarios (22 since v0.0.28)
 ./venv/bin/python tools/chaos_bots.py                         # run them all
 ./venv/bin/python tools/chaos_bots.py --restart-each          # restart the server before each one (isolates scenarios)
 ./venv/bin/python tools/chaos_bots.py --scenario smoke --trace /tmp/trace.jsonl   # packet capture with model snapshots
@@ -75,8 +75,9 @@ Step 2 scenarios (added after Phase 1):
 ### 6. Headless Godot as a real client (bandwidth measurements)
 ```bash
 godot --headless --path . -- --autojoin --name=Headless --class=2
+godot --headless --path . -- --autojoin --name=Headless --reclaim=2   # ask for seat 2 back at once, like a browser after a page reload (v0.0.28)
 ```
-Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type, the puppet jitter numbers, and since v0.0.27 the frame rate: `fps draw=59.8 phys=60.0 worst=21ms hitches=0` = pictures drawn a second, physics ticks a second, the slowest single frame, frames over 50 ms). The same line appears in the browser console of any real client, so a phone playtest shows where the frames drop. The server logs a `[STATS]` line every 10 s in `server.log`.
+Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type, the puppet jitter numbers, and since v0.0.27 the frame rate: `fps draw=59.8 phys=60.0 worst=21ms hitches=0` = pictures drawn a second, physics ticks a second, the slowest single frame, frames over 50 ms). The same line appears in the browser console of any real client, so a phone playtest shows where the frames drop. Since v0.0.28 the line ends with `keys=<key presses since the last line> focus=<1 if the game canvas has the page focus>`: in a browser the keyboard only reaches the game while the canvas has the focus, so `focus=0` explains a fighter that aims with the mouse but does not walk. The server logs a `[STATS]` line every 10 s in `server.log`.
 
 ### 7. The live operations deck (v0.0.21, grown in v0.0.22, keys and mouse since v0.0.24, tape column since v0.0.25)
 ```bash
@@ -143,6 +144,7 @@ When a round ends on a kill, the server puts `"replay": true` in `round_end` and
 - **What plays:** 211 frames around the closing kill `K`: `◄◄ REW` from K+60 back to K-150 at 10x (0.4 s), `► PLAY` K-150 to K-30 at 1x (2.0 s), `► SLOW` K-30 to K+30 at 0.5x with a white flash on K (2.0 s), `► PLAY` K+30 to K+60, the fall (0.5 s), `■ STOP` with a fade to black (0.2 s). 5.1 s in all; `new_round` at 6.5 s cuts anything still running.
 - **How:** the live fighters and projectiles are paused (`process_mode = DISABLED`, hidden); ghosts are real `player.tscn` and projectile scenes with `is_ghost = true` (no physics, no collision, not in the `players` / `projectiles` groups) moved to the frame's spots; the platforms turn to the frame's `rot`; a VHS overlay draws scanlines, a rolling tracking bar, a small shake, the label, a counter from the kill (`-2.5s` to `+1.0s`), `REPLAY` with a blinking dot, and the caption `Godot2 killed Andrew · Firebolt`. The banner hides while it plays. Nothing is put back by hand: the next round respawns everyone.
 - **Skipped when:** the tape is not frozen 1.5 s after `round_end` (`not-frozen`: a hidden tab whose ticks stalled), nothing was recorded (`empty-tape`), or there is no closing stamp (`no-closing-stamp`).
+- **A drop inside the gap (v0.0.28):** a screen that reloads or loses its socket inside the 6.5 s keeps its seat for the 8 s grace, and the next round starts with that seat counted as present (`[ROUND] round 3 starting with [1, 2] (seat held for [2], back within the grace or out)`). Back in time: same seat, `(rejoined mid-match)`, the arena loads at the real round. Never back: the round ends as a forfeit when the grace runs out. A client whose reconnect lands in LOBBY (the match ended meanwhile, or the server restarted) goes back to the lobby scene. Scenario: `./venv/bin/python tools/chaos_bots.py --scenario reload_in_gap` (about 50 s, restarts the server once in its last act).
 
 How to see it:
 ```bash
