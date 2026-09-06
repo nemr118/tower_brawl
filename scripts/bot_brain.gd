@@ -65,7 +65,7 @@ var _status_timer := 0.0
 var _aim_warned := false
 var _stats := {"moves": 0, "jumps": 0, "dashes": 0, "attacks": 0, "specials": 0, "evades": 0,
 	"aim_err_sum": 0.0, "aim_err_n": 0, "aim_err_max": 0.0, "decisions": 0,
-	"drops": 0, "wraps": 0, "seams": 0, "land_sum": 0.0, "land_n": 0, "max_loop": 0}
+	"drops": 0, "wraps": 0, "seams": 0, "land_sum": 0.0, "land_n": 0, "max_loop": 0, "shift_wraps": 0}
 
 # steering state shared by the personas
 var _stuck_time := 0.0                   # seconds spent pushing into a wall on the floor
@@ -83,6 +83,7 @@ var _climb_since := 0.0
 var _last_pos := Vector2.ZERO            # wrap statistics
 var _wrap_at := -1.0                     # brain time of the last bottom wrap, -1 once landed
 var _loop_len := 0                       # bottom wraps since the last landing
+var _was_rotating := false               # arena.is_arena_rotating last frame (backlog 23)
 var _g_mood := "harass"                  # griefer
 var _g_mood_until := 0.0
 var _g_goal := Vector2.ZERO
@@ -198,12 +199,25 @@ func _physics_process(delta: float) -> void:
 # (x jumps across the arena) and the time from a wrap to the next landing.
 func _track_wraps() -> void:
 	var pos := fighter.global_position
+	# v0.0.33 (backlog 23): the stage turn is a free fall by design (the platforms
+	# are soft for 2.5 s). A wrap while arena.is_arena_rotating is counted apart
+	# as shift_wraps and never joins a fall loop; the loop restarts clean when
+	# the turn begins, so the fleet gate (max_loop >= 4) only sees real loops.
+	var arena := fighter.get_parent()
+	var rotating: bool = arena != null and ("is_arena_rotating" in arena) and arena.is_arena_rotating
+	if rotating and not _was_rotating:
+		_loop_len = 0
+		_wrap_at = -1.0
+	_was_rotating = rotating
 	if fighter.spawn_invuln_timer < 0.99 and _last_pos != Vector2.ZERO:
 		if _last_pos.y > 300.0 and pos.y < 40.0:
-			_stats["wraps"] += 1
-			_loop_len += 1
-			if _wrap_at < 0.0:
-				_wrap_at = _clock
+			if rotating:
+				_stats["shift_wraps"] += 1
+			else:
+				_stats["wraps"] += 1
+				_loop_len += 1
+				if _wrap_at < 0.0:
+					_wrap_at = _clock
 		if absf(pos.x - _last_pos.x) > 400.0:
 			_stats["seams"] += 1
 	if fighter.is_on_floor() and _wrap_at >= 0.0:
@@ -957,10 +971,10 @@ func _print_status() -> void:
 	var land_avg := 0.0
 	if _stats["land_n"] > 0:
 		land_avg = _stats["land_sum"] / _stats["land_n"]
-	print("🧠 [Bot %s P%d %.0fs] pos=(%.0f,%.0f) decisions=%d moves=%d jumps=%d dashes=%d attacks=%d specials=%d evades=%d | wraps=%d drops=%d seams=%d land_avg=%.2fs max_loop=%d | aim err mean %.1f° max %.1f° over %d frames | held=%s queue=%d" % [
+	print("🧠 [Bot %s P%d %.0fs] pos=(%.0f,%.0f) decisions=%d moves=%d jumps=%d dashes=%d attacks=%d specials=%d evades=%d | wraps=%d drops=%d seams=%d land_avg=%.2fs max_loop=%d shift=%d | aim err mean %.1f° max %.1f° over %d frames | held=%s queue=%d" % [
 		persona, fighter.player_id, _clock, fighter.global_position.x, fighter.global_position.y,
 		_stats["decisions"], _stats["moves"], _stats["jumps"], _stats["dashes"], _stats["attacks"], _stats["specials"], _stats["evades"],
-		_stats["wraps"], _stats["drops"], _stats["seams"], land_avg, _stats["max_loop"],
+		_stats["wraps"], _stats["drops"], _stats["seams"], land_avg, _stats["max_loop"], _stats["shift_wraps"],
 		mean_err, _stats["aim_err_max"], _stats["aim_err_n"], ",".join(_held.keys()), _queue.size()])
 	if _stats["aim_err_n"] > 60 and mean_err > 1.0 and not _aim_warned:
 		_aim_warned = true
@@ -1000,6 +1014,7 @@ func _send_status(mean_err: float, land_avg: float) -> void:
 		"nav": {
 			"wraps": _stats["wraps"], "drops": _stats["drops"], "seams": _stats["seams"],
 			"land_avg_s": snappedf(land_avg, 0.01), "max_loop": _stats["max_loop"],
+			"shift_wraps": _stats["shift_wraps"],
 		},
 		"aim": {
 			"err_mean_deg": snappedf(mean_err, 0.1), "err_max_deg": snappedf(_stats["aim_err_max"], 0.1),

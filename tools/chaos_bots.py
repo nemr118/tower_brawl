@@ -308,7 +308,7 @@ def bot_card_from_stats(client):
             "uptime_s": b["seconds"], "state": None, "target": None, "goal": None,
             "actions": {k: b[k] for k in ("decisions", "moves", "jumps", "dashes", "attacks", "specials", "evades")},
             "nav": {"wraps": b["wraps"], "drops": b["drops"], "seams": b["seams"],
-                    "land_avg_s": b["land_avg"], "max_loop": b["max_loop"]},
+                    "land_avg_s": b["land_avg"], "max_loop": b["max_loop"], "shift_wraps": b.get("shift_wraps", 0)},
             "aim": None, "combat": None, "learning": None,
             "deaths_reported": st["deaths_reported"]}
 
@@ -1477,7 +1477,7 @@ class GodotClient:
 
     BOT_LINE = re.compile(r"\[Bot (\w+) P(\d) (\d+)s\] .*?decisions=(\d+) moves=(\d+) jumps=(\d+) dashes=(\d+) "
                           r"attacks=(\d+) specials=(\d+) evades=(\d+) \| wraps=(\d+) drops=(\d+) seams=(\d+) "
-                          r"land_avg=([\d.]+)s max_loop=(\d+)")
+                          r"land_avg=([\d.]+)s max_loop=(\d+)(?: shift=(\d+))?")   # shift= since v0.0.33
 
     # v0.0.25: one line per kill stamp and one per freeze, printed by arena.gd (history_ring.gd status_line)
     TAPE_LINE = re.compile(r"\[Tape\] round=(\d+) frozen=(\d) closing=(\d) killer=(-?\d+) victim=(-?\d+) weapon=(\S+) "
@@ -1589,7 +1589,8 @@ class GodotClient:
             st["bot"] = {"persona": b[0], "slot": int(b[1]), "seconds": int(b[2]), "decisions": int(b[3]),
                          "moves": int(b[4]), "jumps": int(b[5]), "dashes": int(b[6]), "attacks": int(b[7]),
                          "specials": int(b[8]), "evades": int(b[9]), "wraps": int(b[10]), "drops": int(b[11]),
-                         "seams": int(b[12]), "land_avg": float(b[13]), "max_loop": int(b[14])}
+                         "seams": int(b[12]), "land_avg": float(b[13]), "max_loop": int(b[14]),
+                         "shift_wraps": int(b[15]) if b[15] else 0}
         return st
 
 
@@ -2082,7 +2083,7 @@ def sc_fleet(ctx):
                 ctx.fail("fleet.bot-fall-loop", f"{c.name} ({b['persona']}): {b['max_loop']} bottom wraps without landing")
             ctx.note(f"{c.name} {b['persona']} P{b['slot']}: {b['decisions']} decisions, {b['attacks']} attacks, {b['specials']} specials, "
                      f"{b['dashes']} dashes, {b['jumps']} jumps, {b['evades']} evades, wraps {b['wraps']} (drops {b['drops']}, "
-                     f"seams {b['seams']}, land avg {b['land_avg']:.2f} s, longest loop {b['max_loop']}), {st['deaths_reported']} deaths reported")
+                     f"seams {b['seams']}, land avg {b['land_avg']:.2f} s, longest loop {b['max_loop']}, shift wraps {b['shift_wraps']}), {st['deaths_reported']} deaths reported")
     # Brainless Godot clients stand still and never get hit, so kills and round
     # ends are only asserted when brains are in the match. A round ends after 9
     # to 11 kills (3 stocks, four fighters) and four bots at difficulty 0.7 score

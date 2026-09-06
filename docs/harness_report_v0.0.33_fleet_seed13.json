@@ -1,0 +1,54 @@
+{
+  "version": "v0.0.33",
+  "seed": 13,
+  "complete": true,
+  "written_at": "2026-09-05 20:56:28",
+  "results": [
+    {
+      "scenario": "fleet",
+      "passed": true,
+      "minor": false,
+      "elapsed_s": 123.7,
+      "findings": {},
+      "warnings": {},
+      "notes": [
+        "Godot1: 24 NetStats lines, 753 sync_pos sent, 0 error kinds, log .harness_logs/godot1.log",
+        "Godot1 puppets: jitter mean 59.6 px/s, p95 median 268.8 max 647.6, snaps 12, wraps 90, stall 7.6%, extrap 34.0% over 13049 puppet-frames",
+        "Godot1 tape: 4 frozen, last round 4 closing=0 before=310 after=50 fps=60.0 stamps=12",
+        "Godot1 replay: 4 played, last round 4 211 frames in 5057 ms, started 1000 ms after round_end",
+        "Godot1 chaser P4: 351 decisions, 26 attacks, 0 specials, 17 dashes, 8 jumps, 10 evades, wraps 7 (drops 3, seams 3, land avg 0.76 s, longest loop 1, shift wraps 4), 18 deaths reported",
+        "Godot2: 24 NetStats lines, 1537 sync_pos sent, 0 error kinds, log .harness_logs/godot2.log",
+        "Godot2 puppets: jitter mean 57.2 px/s, p95 median 247.5 max 722.1, snaps 7, wraps 53, stall 7.9%, extrap 34.9% over 10583 puppet-frames",
+        "Godot2 tape: 4 frozen, last round 4 closing=0 before=310 after=50 fps=60.1 stamps=12",
+        "Godot2 replay: 4 played, last round 4 211 frames in 5058 ms, started 993 ms after round_end",
+        "Godot2 sniper P2: 751 decisions, 113 attacks, 0 specials, 31 dashes, 13 jumps, 1 evades, wraps 21 (drops 11, seams 11, land avg 0.45 s, longest loop 2, shift wraps 19), 12 deaths reported",
+        "Godot3: 24 NetStats lines, 1154 sync_pos sent, 0 error kinds, log .harness_logs/godot3.log",
+        "Godot3 puppets: jitter mean 68.1 px/s, p95 median 330.0 max 658.3, snaps 12, wraps 94, stall 7.6%, extrap 34.3% over 11660 puppet-frames",
+        "Godot3 tape: 4 frozen, last round 4 closing=0 before=310 after=50 fps=60.1 stamps=12",
+        "Godot3 replay: 4 played, last round 4 211 frames in 5058 ms, started 1000 ms after round_end",
+        "Godot3 turtle P3: 551 decisions, 8 attacks, 5 specials, 1 dashes, 9 jumps, 7 evades, wraps 6 (drops 0, seams 0, land avg 4.24 s, longest loop 2, shift wraps 4), 21 deaths reported",
+        "Godot4: 24 NetStats lines, 1580 sync_pos sent, 0 error kinds, log .harness_logs/godot4.log",
+        "Godot4 puppets: jitter mean 51.0 px/s, p95 median 216.0 max 561.7, snaps 7, wraps 81, stall 7.6%, extrap 35.1% over 10410 puppet-frames",
+        "Godot4 tape: 4 frozen, last round 4 closing=0 before=310 after=50 fps=60.0 stamps=12",
+        "Godot4 replay: 4 played, last round 4 211 frames in 5058 ms, started 1000 ms after round_end",
+        "Godot4 rusher P1: 751 decisions, 115 attacks, 33 specials, 24 dashes, 34 jumps, 10 evades, wraps 17 (drops 19, seams 3, land avg 0.47 s, longest loop 2, shift wraps 6), 23 deaths reported",
+        "kills seen by a Godot client: 51, rounds ended: 4"
+      ],
+      "metrics": {
+        "bots": 0,
+        "elapsed_s": 123.7,
+        "in_pkts": 0,
+        "in_bytes": 0,
+        "out_pkts": 0,
+        "out_bytes": 0,
+        "in_pps_per_bot": 0.0,
+        "in_kbps_per_bot": 0.0,
+        "out_pps_per_bot": 0.0,
+        "out_kbps_per_bot": 0.0,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": null
+      }
+    }
+  ]
+}
