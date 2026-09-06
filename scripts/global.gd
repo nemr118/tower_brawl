@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.33"
+const GAME_VERSION: String = "v0.0.34"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -89,14 +89,25 @@ var _pj_puppets: Dictionary = {}     # player_id -> true, seen this interval
 # How fast this screen runs. Counted here because Global is an autoload that
 # runs in every scene: _process = one drawn picture, _physics_process = one
 # physics tick. Reported in the NetStats line as
-#   fps draw=59.8 phys=60.0 worst=21ms hitches=0
+#   fps draw=59.8 phys=60.0 worst=21ms hitches=0 proc=0.6ms phys_cpu=0.4ms
 # so a phone playtest says where the frames drop (the replay draws 211 tape
 # frames in about 5 s; drawn < frames in the Replay line means a slow screen).
+# v0.0.34 (optimisation Step C, build 1): `proc=` and `phys_cpu=` are the two
+# Godot monitors TIME_PROCESS and TIME_PHYSICS_PROCESS. Godot refreshes them once
+# a second with the SLOWEST _process frame and the slowest _physics_process tick
+# of that second (Main::iteration keeps process_max / physics_process_max, not a
+# mean). We sample them every drawn frame and print the mean over the 5 s
+# window, so `proc=` is "the worst script frame of each second, averaged over
+# five seconds": how much of a phone's 16.7 ms budget the scripts take at their
+# worst (draw list versus sim). The first line after a scene load carries the
+# load spike, like `worst=` and `hitches=` do; read the lines after it.
 const FRAME_HITCH_MS := 50.0         # a drawn frame slower than this counts as a hitch
 var _ft_draw_frames: int = 0
 var _ft_phys_frames: int = 0
 var _ft_worst_ms: float = 0.0
 var _ft_hitches: int = 0
+var _ft_proc_sum: float = 0.0        # seconds, TIME_PROCESS summed over the window
+var _ft_phys_cpu_sum: float = 0.0    # seconds, TIME_PHYSICS_PROCESS summed over the window
 
 func _ft_sample(delta: float) -> void:
 	_ft_draw_frames += 1
@@ -105,16 +116,22 @@ func _ft_sample(delta: float) -> void:
 		_ft_worst_ms = ms
 	if ms > FRAME_HITCH_MS:
 		_ft_hitches += 1
+	_ft_proc_sum += Performance.get_monitor(Performance.TIME_PROCESS)
+	_ft_phys_cpu_sum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
 
 func _ft_summary(secs: float) -> Dictionary:
+	var n: int = max(1, _ft_draw_frames)
 	return {"draw": _ft_draw_frames / secs, "phys": _ft_phys_frames / secs,
-		"worst_ms": _ft_worst_ms, "hitches": _ft_hitches}
+		"worst_ms": _ft_worst_ms, "hitches": _ft_hitches,
+		"proc_ms": _ft_proc_sum * 1000.0 / n, "phys_cpu_ms": _ft_phys_cpu_sum * 1000.0 / n}
 
 func _ft_reset() -> void:
 	_ft_draw_frames = 0
 	_ft_phys_frames = 0
 	_ft_worst_ms = 0.0
 	_ft_hitches = 0
+	_ft_proc_sum = 0.0
+	_ft_phys_cpu_sum = 0.0
 	_in_keys = 0
 
 # Keyboard probe (v0.0.28, backlog 13). The story: after a page reload inside the
@@ -1048,14 +1065,14 @@ func _report_net_stats() -> void:
 	}
 	var pj: Dictionary = stats["puppets"]
 	var ft: Dictionary = stats["fps"]
-	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d | fps draw=%.1f phys=%.1f worst=%.0fms hitches=%d | keys=%d focus=%d" % [
+	print("📈 [NetStats %.0fs] P%d %s | IN %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | OUT %5.1f pkt/s %6.2f KB/s (avg %3.0f B) | in: %s | out: %s | total in %.1f KB out %.1f KB over %.0fs | rtt %d ms | puppets=%d jitter=%.1f/%.1fpx/s snaps=%d wraps=%d stall=%.1f%% extrap=%.1f%% dips=%d pn=%d | fps draw=%.1f phys=%.1f worst=%.0fms hitches=%d proc=%.1fms phys_cpu=%.1fms | keys=%d focus=%d" % [
 		secs, my_player_id, get_tree().current_scene.name if get_tree().current_scene else "?",
 		stats["in_pps"], stats["in_bps"] / 1024.0, stats["in_avg"],
 		stats["out_pps"], stats["out_bps"] / 1024.0, stats["out_avg"],
 		_ns_format_types(_ns_types_in), _ns_format_types(_ns_types_out),
 		_ns_total_in / 1024.0, _ns_total_out / 1024.0, stats["uptime"], _ns_last_rtt_ms,
 		pj["puppets"], pj["mean"], pj["p95"], pj["snaps"], pj["wraps"], pj["stall_pct"], pj["extrap_pct"], pj["dips"], pj["frames"],
-		ft["draw"], ft["phys"], ft["worst_ms"], ft["hitches"], stats["keys"], 1 if stats["focus"] else 0])
+		ft["draw"], ft["phys"], ft["worst_ms"], ft["hitches"], ft["proc_ms"], ft["phys_cpu_ms"], stats["keys"], 1 if stats["focus"] else 0])
 	emit_signal("net_stats_updated", stats)
 	_pj_reset()
 	_ft_reset()
