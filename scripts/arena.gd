@@ -12,6 +12,7 @@ extends Node2D
 var powerup_node: Area2D = null
 var is_arena_rotating: bool = false
 var spin_tween: Tween = null   # the running arena spin, so a round start can finish it at once
+var platform_layers: Dictionary = {}   # v0.0.32: each platform's collision_layer while the stage turns (backlog 9)
 
 const PlayerScene = preload("res://scenes/player.tscn")
 const BotBrainScript = preload("res://scripts/bot_brain.gd")
@@ -741,6 +742,7 @@ func _activate_rotation():
 		return
 		
 	is_arena_rotating = true
+	_set_platforms_solid(false)
 	Global.arena_flips += 1
 	_show_banner("** ARENA SHIFT! **", 2.5)
 	
@@ -756,6 +758,28 @@ func _activate_rotation():
 	if spin_tween == tween:   # still our spin: a round start may have finished it already
 		spin_tween = null
 		is_arena_rotating = false
+		_set_platforms_solid(true)
+
+func _set_platforms_solid(solid: bool) -> void:
+	# v0.0.32, backlog 9. The story: the half turn swings the outer platforms
+	# 29 to 36 px above the top edge, and a fighter standing on one rode it out
+	# of the screen for about a second. Now the platforms are not solid while
+	# the stage turns: collision_layer goes to 0, so fighters fall through the
+	# turning stage and land on the new layout when it locks. collision_mask is
+	# left alone. Each body's own layer is stashed and given back, so nothing
+	# here needs to know the layer numbers.
+	for plat in platforms_node.get_children():
+		if not plat is StaticBody2D:
+			continue
+		if solid:
+			if platform_layers.has(plat):
+				plat.collision_layer = platform_layers[plat]
+		else:
+			if not platform_layers.has(plat):
+				platform_layers[plat] = plat.collision_layer
+			plat.collision_layer = 0
+	if solid:
+		platform_layers.clear()
 
 func _finish_spin_now() -> void:
 	# v0.0.20. The story: a round could start while the arena was still turning
@@ -767,6 +791,7 @@ func _finish_spin_now() -> void:
 	spin_tween = null
 	platforms_node.rotation = Global.arena_flips * PI
 	is_arena_rotating = false
+	_set_platforms_solid(true)
 
 func _on_arena_join_pressed():
 	Global.request_join(Global._load_saved_player_id())

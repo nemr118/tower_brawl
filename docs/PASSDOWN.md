@@ -6,19 +6,18 @@ tags: [handoff]
 Godot 4.7 web game (4-player LAN brawler), custom WebSocket relay in Python. `docs/` is the Obsidian vault. Kickoff reads: `CLAUDE.md`, this file, the newest page in `Patch Notes/`, [[Commands]]. History: [[Changelog]]. Deep dives: `docs/reference/`. Closed: [[closed]].
 
 ## Now (2026-09-05)
-- **Tagged `v0.0.31`** on `master`, working tree clean at handoff. **Harness 23/23 with `--restart-each`, no Minor**, report `harness_report_v0.0.31.json`.
-- **Next: the user's design call on backlog 9** (options A, B, C in [[v0.0.31 - Top Edge Probe]]; A = platforms not solid during the turn, a small `arena.gd` change, one build). Backlog 20 moves up if a playtest gives a `🪤 [JumpTrap]` line. **Then the optimisation plan, measure first:** A. the `fps` field (done, v0.0.27); B. three profiles, no code change (Godot profiler in a 4-brain fleet, the cost of `status_loop`, bandwidth per client at 4 players); C. a cut list ranked by those numbers (`_record_tape_frame`, the `VhsOverlay` redraw, puppet telemetry, JSON events to binary, the 40 log lines in `status.json`, backlog 4); D. one build per cut, gated by the harness. Then `v0.1.0`.
-- **Waiting on a human:** [[Playtest Backlog 1 — Ranger Reload Quiver]] and [[Playtest Backlog 13 — PC Reload Input Probe]]. Both stay in `docs/` until their verdicts are ticked.
+- **Tagged `v0.0.32`** on `master`, working tree clean at handoff. **Harness 23/23 with `--restart-each`, no Minor**, report `harness_report_v0.0.32.json`. Heavy fleet seed 13: **0 `🧗 [TopEdge]` lines** (backlog 9 closed), FAILED on `fleet.bot-fall-loop` = backlog 23.
+- **Next: the backlog 23 call, then the optimisation plan, measure first.** A. the `fps` field (done, v0.0.27); B. three profiles, no code change (Godot profiler in a 4-brain fleet, the cost of `status_loop`, bandwidth per client at 4 players); C. a cut list ranked by those numbers (`_record_tape_frame`, the `VhsOverlay` redraw, puppet telemetry, JSON events to binary, the 40 log lines in `status.json`, backlog 4); D. one build per cut, gated by the harness. Then `v0.1.0`. Backlog 20 moves up if a playtest gives a `🪤 [JumpTrap]` line.
+- **Waiting on a human:** [[Playtest Backlog 1 — Ranger Reload Quiver]], [[Playtest Backlog 13 — PC Reload Input Probe]] and [[Playtest v0.0.32 — Free-Fall Arena Shift]] (the feel of the free fall). All stay in `docs/` until their verdicts are ticked.
 - **v0.1.0 ideas, not scheduled:** replay skip key, virtual stick, touch buttons, spread air spawns, spawn shield, death animations, zoomed replay, montage, sound on the flash, replay on demand. Detail: [[PASSDOWN-2026-09-05]].
+- **v0.0.32 "Free-Fall Arena Shift" (bug build 5, backlog 9 closed, option A):** `arena.gd` `_set_platforms_solid` zeroes `collision_layer` on the eight `StaticBody2D` under `Platforms` while the stage turns, restores it at the timer end and in `_finish_spin_now`. Fighters drop through the turning stage. See [[v0.0.32 - Free-Fall Arena Shift]].
 - **v0.0.31 "Top Edge Probe" (bug build 4, backlog 9, cause found):** `player.gd` `_probe_top_edge` prints a `🧗 [TopEdge]` line with the collider names when a local fighter touches something above `y = -20`; the fleet scenario notes the lines. Three heavy runs: every hit is mid-turn on `LedgeRight` or `GroundLeft` passing over the top edge. See [[v0.0.31 - Top Edge Probe]].
-- **v0.0.30 "Ranger Rejoin Quiver" (bug build 3, backlog 1 and 6):** `player.gd` `restore_combat_state` ignores a save from another round and gives a same-round ranger at least 1 arrow. One `🏹 [Quiver]` line per rejoin. Harness scenario `ranger_rejoin` (23 total); `Bot.double_shot_ok` explains backlog 15. See [[v0.0.30 - Ranger Rejoin Quiver]].
 
 ## Open backlog
 `N. **Title** — state — next action — where the detail lives`. Numbers are never reused; closed items are in [[closed]].
 3. **Second tab spectating stalls the game tab** — open, mitigated — spectate from a second device or profile — [[PASSDOWN-2026-09-05]].
 4. **`server.log` / `debug.log` never rotate** — open — add rotation inside the optimisation plan — [[PASSDOWN-2026-09-05]].
 5. **`player_configs` still carries a default class per slot** — open, harmless — clean up when `global.gd` is next touched.
-9. **A fighter rides the arena shift out of the top of the screen** — cause found (v0.0.31): the outer platforms pass 29 to 36 px above the top edge mid-turn and carry a standing fighter along for about 1 s; no `.tscn` fix is possible — design call: A) `arena.gd` makes the platforms not solid during the turn, B) wrap at the top during a turn, C) leave it — [[v0.0.31 - Top Edge Probe]].
 11. **Arena voids are a mechanic, not a bug** — user decision (v0.0.11) — nothing to do (`bot_brain.gd` routes through the seams).
 12. **One-off `fleet.client-silent`** — seen once (v0.0.27 run 1) — if it shows again keep `.harness_logs/godot2.log` — `harness_report_v0.0.27_run1.json`.
 13. **PC keyboard dead after a reload in the replay gap** — waiting on a human — run the sheet and read `keys= focus=` (the sheet says what each answer means) — [[Playtest Backlog 13 — PC Reload Input Probe]], [[v0.0.28 - Rejoin in the Replay Gap]].
@@ -30,6 +29,7 @@ Godot 4.7 web game (4-player LAN brawler), custom WebSocket relay in Python. `do
 20. **The W jump lock** — waiting on a `🪤 [JumpTrap]` line from a real game — then fix — [[v0.0.18 - Playtest Fixes: Bubble Spawn, Arrows, Bots, HUD]].
 21. **Slope traction and air shield feel** — design call — fighters slide off tilted platforms; an air shield kills sideways speed — [[Playtest v0.0.17]].
 22. **Hiding on top of the flipped ground** — design call — upside down, the old floor sits at the top edge — [[Playtest v0.0.17]].
+23. **The shift tumble: a standing fighter wraps through the bottom 3 to 4 times per shift** — design call (option A's side effect; `fleet.bot-fall-loop` trips on it) — keep it and make `bot_brain.gd` `_track_wraps` ignore wraps while `arena.is_arena_rotating`, or change the feel — [[v0.0.32 - Free-Fall Arena Shift]].
 
 ## How to work here
 - **Rules:** `CLAUDE.md` (plain words, rule 7; wrap up with the trim step, rule 8; no `.tscn` edits; GDScript ships via `./bump_build.sh --title "..."`). One approved phase at a time; report bugs found outside it, don't fix them unasked. Every human-validation ask gets a `Playtest ....md` sheet in `docs/`.
