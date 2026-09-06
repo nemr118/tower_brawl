@@ -1528,6 +1528,24 @@ class GodotClient:
                         "tick": int(m[9])})
         return out
 
+    # v0.0.31 (backlog 9): one line a second while a local fighter is above the
+    # top edge and touching something; the collider list follows the "|".
+    TOPEDGE_LINE = re.compile(r"\[TopEdge\] P(\d+) pos=\((-?[\d.]+), (-?[\d.]+)\) vel=\((-?[\d.]+), (-?[\d.]+)\) "
+                              r"dy=(-?[\d.]+) floor=(true|false) floor_normal=\((-?[\d.]+), (-?[\d.]+)\) contacts=(\d+) "
+                              r"flips=(\d+) rot=(-?[\d.]+) dash=(true|false) shield=(true|false) egg=(true|false) "
+                              r"bubble=(true|false) \| (.*)")
+
+    def top_edges(self):
+        """Every 🧗 [TopEdge] line of this client, oldest first, as dicts (v0.0.31)."""
+        out = []
+        for m in self.TOPEDGE_LINE.finditer(self.text()):
+            colliders = re.findall(r"([\w/]+)\(", m[17])
+            out.append({"slot": int(m[1]), "x": float(m[2]), "y": float(m[3]), "vx": float(m[4]), "vy": float(m[5]),
+                        "dy": float(m[6]), "floor": m[7] == "true", "contacts": int(m[10]), "flips": int(m[11]),
+                        "rot": float(m[12]), "dash": m[13] == "true", "shield": m[14] == "true",
+                        "egg": m[15] == "true", "bubble": m[16] == "true", "colliders": colliders, "raw": m[17]})
+        return out
+
     def scene(self):
         """The scene named by the newest NetStats line ("Arena", the lobby, ...), or None (v0.0.28)."""
         found = re.findall(r"\[NetStats [\d.]+s\] P\d+ (\S+) \|", self.text())
@@ -1627,6 +1645,23 @@ def replay_gate(ctx, client, scen):
         r = played[-1]
         ctx.note(f"{client.name} replay: {len(played)} played, last round {r['round']} {r['frames']} frames in {r['dur_ms']} ms, "
                  f"started {r['late_ms']} ms after round_end{', cut' if r['cut'] else ''}")
+
+
+def top_edge_note(ctx, client):
+    """v0.0.31 (backlog 9): report the 🧗 [TopEdge] lines of one client as a note.
+    A note, not a failure: the line is the diagnosis, the fix is in the scene."""
+    lines = client.top_edges()
+    if not lines:
+        return
+    names = collections.Counter(n for l in lines for n in l["colliders"])
+    top = ", ".join(f"{n} x{k}" for n, k in names.most_common(4)) or "no collider names"
+    ys = [l["y"] for l in lines]
+    stuck = sum(1 for l in lines if l["floor"] and l["dy"] < -5.0)
+    first = lines[0]
+    ctx.note(f"{client.name} top edge: {len(lines)} 🧗 [TopEdge] line(s), y {min(ys):.0f}..{max(ys):.0f}, "
+             f"{stuck} with feet on the floor and pushed up, flips {sorted(set(l['flips'] for l in lines))}, "
+             f"colliders: {top}; first: P{first['slot']} pos=({first['x']:.0f}, {first['y']:.0f}) dy={first['dy']} "
+             f"floor={first['floor']} | {first['raw']}")
 
 
 def puppet_gate(ctx, client, heavy, scen):
@@ -2030,6 +2065,7 @@ def sc_fleet(ctx):
         if pj:
             ctx.note(f"{c.name} puppets: jitter mean {pj['jitter_mean']:.1f} px/s, p95 median {pj['jitter_p95_med']:.1f} max {pj['jitter_p95_max']:.1f}, "
                      f"snaps {pj['snaps']}, wraps {pj['wraps']}, stall {pj['stall_pct']:.1f}%, extrap {pj['extrap_pct']:.1f}% over {pj['frames']} puppet-frames")
+        top_edge_note(ctx, c)
         if c.ai:
             # brains move like players, so their view of the others is the quality gate
             puppet_gate(ctx, c, heavy=ctx.args.jitter_ms > PUPPET_HEAVY_JITTER_MS, scen="fleet")

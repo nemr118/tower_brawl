@@ -1,0 +1,55 @@
+{
+  "version": "v0.0.31",
+  "seed": 42,
+  "complete": true,
+  "written_at": "2026-09-05 20:03:16",
+  "results": [
+    {
+      "scenario": "fleet",
+      "passed": true,
+      "minor": false,
+      "elapsed_s": 93.7,
+      "findings": {},
+      "warnings": {},
+      "notes": [
+        "Godot1: 18 NetStats lines, 431 sync_pos sent, 0 error kinds, log .harness_logs/godot1.log",
+        "Godot1 puppets: jitter mean 48.8 px/s, p95 median 198.1 max 448.8, snaps 5, wraps 53, stall 6.5%, extrap 34.4% over 9860 puppet-frames",
+        "Godot1 tape: 3 frozen, last round 3 closing=1 before=300 after=60 fps=59.9 stamps=10",
+        "Godot1 replay: 2 played, last round 2 211 frames in 5057 ms, started 1001 ms after round_end",
+        "Godot1 chaser P2: 201 decisions, 14 attacks, 0 specials, 10 dashes, 9 jumps, 6 evades, wraps 4 (drops 1, seams 4, land avg 1.25 s, longest loop 1), 7 deaths reported",
+        "Godot2: 18 NetStats lines, 1143 sync_pos sent, 0 error kinds, log .harness_logs/godot2.log",
+        "Godot2 puppets: jitter mean 50.2 px/s, p95 median 223.8 max 445.9, snaps 5, wraps 35, stall 7.8%, extrap 33.8% over 7509 puppet-frames",
+        "Godot2 top edge: 1 \ud83e\uddd7 [TopEdge] line(s), y -22..-22, 0 with feet on the floor and pushed up, flips [1], colliders: Platforms/GroundLeft x3; first: P1 pos=(222, -22) dy=-412.6 floor=False | Platforms/GroundLeft(StaticBody2D shape=0 at=(263.0, -21.0) rot=122.0 normal=(-0.85, -0.53) depth=3.2 point=(230.0, -15.0)) ; Platforms/GroundLeft(StaticBody2D shape=0 at=(263.0, -21.0) rot=122.0 normal=(-0.85, -0.53) depth=0.4 point=(230.0, -15.0)) ; Platforms/GroundLeft(StaticBody2D shape=0 at=(263.0, -21.0) rot=122.0 normal=(-0.85, -0.53) depth=0.1 point=(229.0, -14.0))",
+        "Godot2 tape: 3 frozen, last round 3 closing=1 before=300 after=60 fps=60.0 stamps=10",
+        "Godot2 replay: 2 played, last round 2 211 frames in 5057 ms, started 1000 ms after round_end",
+        "Godot2 sniper P1: 551 decisions, 91 attacks, 0 specials, 18 dashes, 7 jumps, 4 evades, wraps 15 (drops 8, seams 4, land avg 0.46 s, longest loop 1), 12 deaths reported",
+        "Godot3: 18 NetStats lines, 672 sync_pos sent, 0 error kinds, log .harness_logs/godot3.log",
+        "Godot3 puppets: jitter mean 56.6 px/s, p95 median 266.0 max 740.8, snaps 5, wraps 58, stall 7.1%, extrap 33.9% over 9088 puppet-frames",
+        "Godot3 tape: 3 frozen, last round 3 closing=1 before=300 after=60 fps=59.9 stamps=10",
+        "Godot3 replay: 2 played, last round 2 211 frames in 5057 ms, started 994 ms after round_end",
+        "Godot3 turtle P4: 351 decisions, 6 attacks, 3 specials, 0 dashes, 4 jumps, 5 evades, wraps 3 (drops 3, seams 0, land avg 0.38 s, longest loop 1), 7 deaths reported",
+        "Godot4: 18 NetStats lines, 1367 sync_pos sent, 0 error kinds, log .harness_logs/godot4.log",
+        "Godot4 puppets: jitter mean 43.9 px/s, p95 median 155.9 max 528.3, snaps 0, wraps 35, stall 5.6%, extrap 34.5% over 6819 puppet-frames",
+        "Godot4 tape: 3 frozen, last round 3 closing=1 before=300 after=60 fps=59.9 stamps=10",
+        "Godot4 replay: 2 played, last round 2 211 frames in 5057 ms, started 994 ms after round_end",
+        "Godot4 rusher P3: 651 decisions, 65 attacks, 18 specials, 24 dashes, 21 jumps, 14 evades, wraps 14 (drops 15, seams 6, land avg 0.44 s, longest loop 2), 17 deaths reported",
+        "kills seen by a Godot client: 31, rounds ended: 3"
+      ],
+      "metrics": {
+        "bots": 0,
+        "elapsed_s": 93.7,
+        "in_pkts": 0,
+        "in_bytes": 0,
+        "out_pkts": 0,
+        "out_bytes": 0,
+        "in_pps_per_bot": 0.0,
+        "in_kbps_per_bot": 0.0,
+        "out_pps_per_bot": 0.0,
+        "out_kbps_per_bot": 0.0,
+        "sync_pos_avg_bytes": 0,
+        "duplicates": 0,
+        "rtt_ms": null
+      }
+    }
+  ]
+}

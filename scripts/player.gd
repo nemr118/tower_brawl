@@ -58,6 +58,13 @@ const BUBBLE_SIDE_SPEED = 160.0  # px/s, left and right while floating
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var _jump_fired_last_frame: bool = false   # for the jump trap (v0.0.18)
+# Top-edge probe (v0.0.31, backlog 9). A fighter was seen stuck above the top
+# edge with its feet "on the floor" and no platform up there. This prints one
+# line a second, with the collider names, whenever a local fighter touches
+# something while it is higher than TOP_EDGE_PROBE_Y. Zero cost in normal play.
+const TOP_EDGE_PROBE_Y = -20.0
+var _top_edge_probe_cooldown: float = 0.0
+var _top_edge_last_y: float = 0.0
 
 var is_facing_right: bool = true
 var is_dead: bool = false
@@ -786,7 +793,61 @@ func _check_head_stomp():
 					collider.take_hit(player_id, Vector2.DOWN, "Goomba Stomp")
 					return
 
+# One 🧗 [TopEdge] line a second while a local fighter is above the top edge
+# and touching something (backlog 9). Names every collider of the last
+# move_and_slide(): its scene path, its class, where it sits, its rotation,
+# the contact normal and how deep the overlap was. dy= is how far the fighter
+# moved up or down since the last physics tick (the bug pushed it up 17 px a
+# tick). flips= and rot= say whether the arena is upside down right now.
+func _probe_top_edge() -> void:
+	var dy := global_position.y - _top_edge_last_y
+	_top_edge_last_y = global_position.y
+	if _top_edge_probe_cooldown > 0.0:
+		_top_edge_probe_cooldown -= get_physics_process_delta_time()
+		return
+	if global_position.y >= TOP_EDGE_PROBE_Y:
+		return
+	var contacts := get_slide_collision_count()
+	if contacts == 0 and not is_on_floor():
+		return
+	_top_edge_probe_cooldown = 1.0
+	var platforms := get_tree().get_first_node_in_group("platforms")
+	var rot_deg := -1.0
+	var flips := Global.arena_flips
+	if platforms == null:
+		var arena := get_tree().current_scene
+		if arena != null and arena.has_node("Platforms"):
+			platforms = arena.get_node("Platforms")
+	if platforms != null:
+		rot_deg = snappedf(rad_to_deg(platforms.rotation), 0.1)
+	var parts: Array[String] = []
+	for i in contacts:
+		var col := get_slide_collision(i)
+		var collider := col.get_collider()
+		var cname := "null"
+		var cpos := Vector2.ZERO
+		var crot := 0.0
+		var ccls := "?"
+		var node := collider as Node
+		if node != null:
+			ccls = node.get_class()
+			var parent: Node = node.get_parent()
+			cname = (parent.name + "/" if parent != null else "") + node.name
+			if node is Node2D:
+				cpos = (node as Node2D).global_position
+				crot = snappedf(rad_to_deg((node as Node2D).global_rotation), 0.1)
+		parts.append("%s(%s shape=%d at=%s rot=%s normal=%s depth=%s point=%s)" % [
+			cname, ccls, col.get_collider_shape_index(), str(cpos.round()), str(crot),
+			str(col.get_normal().snapped(Vector2(0.01, 0.01))), str(snappedf(col.get_depth(), 0.1)),
+			str(col.get_position().round())])
+	print("🧗 [TopEdge] P", player_id, " pos=", global_position.round(), " vel=", velocity.round(),
+		" dy=", snappedf(dy, 0.1), " floor=", is_on_floor(), " floor_normal=", get_floor_normal(),
+		" contacts=", contacts, " flips=", flips, " rot=", rot_deg,
+		" dash=", is_dashing, " shield=", is_shielding, " egg=", is_egg, " bubble=", is_bubble,
+		" | ", " ; ".join(parts) if parts.size() > 0 else "no contact data")
+
 func _check_screen_wrap():
+	_probe_top_edge()   # runs right after every local move_and_slide()
 	var screen_w = 640.0
 	var screen_h = 360.0
 	if global_position.x < -12.0:
