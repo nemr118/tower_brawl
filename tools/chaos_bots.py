@@ -8,7 +8,8 @@ Tower Brawl test harness: protocol bots with an oracle, assertions and scenarios
     ./venv/bin/python tools/chaos_bots.py --list
 
 Every bot is a headless WebSocket client that behaves like the Godot client
-(join, name, lock in, 20 Hz binary sync_pos with idle suppression while alive, silence while dead, 1 s pings)
+(join, name, lock in, 20 Hz binary sync_pos with idle suppression while alive, silence while dead, 1 s pings;
+relayed movement arrives as sync_bundle frames since v0.0.36 and is flattened back into sync_pos here)
 and keeps a MODEL of what the server state should be. Every packet the server
 sends is checked against a per-type SCHEMA, against the model (ORACLE), and
 against a short window of recently received packets (DUPLICATE detection).
@@ -111,6 +112,14 @@ def _type_ok(value, expected):
 # ── Binary movement packets (Phase 2; mirrors global.gd / serve_game.py) ────
 BIN_SYNC_POS, BIN_SPAWN_PROJECTILE = 1, 2
 BIN_SYNC_SIZE, BIN_PROJ_SIZE = 11, 9      # sync_pos carries a u16 tick since Phase 3a
+# v0.0.36 (optimisation Step C, build 3): the server relays sync_pos as one
+# sync_bundle per client every RELAY_BUNDLE_MS: [0] 3, [1] n, then n x 10 B entries
+# (a sync_pos from byte 1 on). A player never receives its own entries. Server -> client only.
+BIN_SYNC_BUNDLE = 3
+BIN_BUNDLE_ENTRY, BIN_BUNDLE_MAX = 10, 25
+RELAY_BUNDLE_MS = 50                      # serve_game.py RELAY_BUNDLE_MS
+BUNDLE_RATE_MIN, BUNDLE_RATE_MAX = 16.0, 22.0   # bundles/s into a client while 2+ others move at 20 Hz
+BUNDLE_DELAY_P95_MS = 70.0                # relay delay a sample may pick up waiting for the window (50 ms + slack)
 NET_TICK_HZ = 20.0
 NET_IDLE_RESEND = 0.5
 
@@ -147,6 +156,24 @@ def encode_sync_pos(x, y, aim_x, aim_y, facing=True, dash=False, shield=False, b
 
 def encode_projectile(weapon, x, y, dx, dy, sender=0):
     return struct.pack("<BBBhhH", BIN_SPAWN_PROJECTILE, sender, BIN_WEAPONS.index(weapon), q10(x), q10(y), dir_to_u16(dx, dy))
+
+
+def decode_bundle(b):
+    """A sync_bundle -> list of sync_pos dicts (v0.0.36), or None if malformed.
+    Each entry is decoded as if it were a plain sync_pos with the type byte put back."""
+    if len(b) < 2 or b[0] != BIN_SYNC_BUNDLE:
+        return None
+    n = b[1]
+    if n < 1 or n > BIN_BUNDLE_MAX or len(b) != 2 + n * BIN_BUNDLE_ENTRY:
+        return None
+    out = []
+    for i in range(n):
+        o = 2 + i * BIN_BUNDLE_ENTRY
+        pkt = decode_binary(bytes([BIN_SYNC_POS]) + b[o:o + BIN_BUNDLE_ENTRY])
+        if pkt is None:
+            return None
+        out.append(pkt)
+    return out
 
 
 def decode_binary(b):
@@ -565,6 +592,8 @@ class Bot:
         self.sockopt = None       # e.g. a tiny SO_RCVBUF for the slow-reader scenario
         self.last_sync_at = None  # inter-arrival tracking of relayed sync_pos
         self.max_sync_gap = 0.0
+        self.bundle_entries = 0   # v0.0.36: sync_pos entries that arrived inside sync_bundle frames
+        self.sync_sent_at = {}    # tick -> monotonic time our sync_pos left (the bundle scenario measures relay delay)
         self.tick = 0             # our movement sample counter
         self._last_sync_body = None
         self._last_sync_sent = 0.0
@@ -742,6 +771,24 @@ class Bot:
     def _on_packet(self, raw, now):
         if isinstance(raw, (bytes, bytearray)):
             raw = bytes(raw)
+            if raw and raw[0] == BIN_SYNC_BUNDLE:
+                # v0.0.36: one frame, n movement samples. The frame is counted under
+                # sync_bundle (its 2 header bytes), every entry under sync_pos (10 B),
+                # and each entry then runs through the same checks as a plain sync_pos.
+                entries = decode_bundle(raw)
+                if entries is None:
+                    n = raw[1] if len(raw) > 1 else -1
+                    self.F.fail("oracle.bundle-size", f"{self.name}: sync_bundle of {len(raw)} B claims n={n} (want 2 + 10 n, 1 <= n <= {BIN_BUNDLE_MAX})")
+                    return
+                self.in_pkts["sync_bundle"] += 1
+                self.in_bytes["sync_bundle"] += 2
+                self.bundle_entries += len(entries)
+                for i, pkt in enumerate(entries):
+                    if self.slot and int(pkt["sender"]) == self.slot:
+                        self.F.fail("oracle.bundle-own-echo", f"{self.name}: P{self.slot} found its own tick {pkt['tick']} in a sync_bundle")
+                    o = 2 + i * BIN_BUNDLE_ENTRY
+                    self._on_decoded(bytes([BIN_SYNC_POS]) + raw[o:o + BIN_BUNDLE_ENTRY], pkt, BIN_BUNDLE_ENTRY, now)
+                return
             pkt = decode_binary(raw)
             if pkt is None:
                 self.F.fail("schema.bad-binary", f"{self.name}: {len(raw)} B, type {raw[0] if raw else '-'}")
@@ -757,6 +804,12 @@ class Bot:
                 self.F.fail("schema.no-type", f"{self.name}: {raw[:80]!r}")
                 return
             size = len(raw.encode())
+        self._on_decoded(raw, pkt, size, now)
+
+    def _on_decoded(self, raw, pkt, size, now):
+        """Schema, duplicate window, oracle model, reactions and the event list for one
+        decoded packet. `raw` is the packet's own bytes (an entry of a bundle is keyed
+        by its bytes with the type byte put back, so the duplicate window still works)."""
         t = str(pkt["type"])
         self.in_pkts[t] += 1
         self.in_bytes[t] += size
@@ -859,6 +912,10 @@ class Bot:
                     if body != self._last_sync_body or now - self._last_sync_sent >= NET_IDLE_RESEND:
                         self._last_sync_body = body
                         self._last_sync_sent = now
+                        self.sync_sent_at[self.tick] = time.monotonic()
+                        if len(self.sync_sent_at) > 400:
+                            for k in list(self.sync_sent_at)[:200]:
+                                del self.sync_sent_at[k]
                         self.send_binary(pkt)
                     if self.shoot and self.rng.random() < 0.02:
                         self.send_binary(self._projectile_bytes())
@@ -1559,10 +1616,17 @@ class GodotClient:
     def stats(self):
         t = self.text()
         out_sync = sum(int(m) for m in re.findall(r"out: [^|\n]*?sync_pos=(\d+)", t))
+        # v0.0.36 (Step C build 3): what comes IN, to watch the packet count fall.
+        # Skip the first NetStats line after connect (a lobby / scene-load line).
+        in_pps = [float(m) for m in re.findall(r"\| IN\s+([\d.]+) pkt/s", t)][1:]
+        in_sync = sum(int(m) for m in re.findall(r"in: [^|\n]*?sync_pos=(\d+)", t))
+        in_bundle = sum(int(m) for m in re.findall(r"in: [^|\n]*?sync_bundle=(\d+)", t))
         # v0.0.35 (Step C build 2): the tape cards this screen sent, to watch the cut
         tape_hits = re.findall(r"out: [^|\n]*?history_status=(\d+)\((\d+)B\)", t)
         st = {"assigned": "Assigned Player ID" in t, "netstats_lines": t.count("[NetStats"),
               "out_sync_pos": out_sync,
+              "in_pps_mean": (sum(in_pps) / len(in_pps)) if in_pps else 0.0,
+              "in_sync_pos": in_sync, "in_sync_bundle": in_bundle,
               "out_history_status": sum(int(n) for n, _ in tape_hits),
               "out_history_status_bytes": sum(int(b) for _, b in tape_hits),
               "round_ends": sum(int(m) for m in re.findall(r"round_end=(\d+)", t)),
@@ -1950,6 +2014,14 @@ def sc_fuzz(ctx):
     alive("binary-wrong-length"); relaying("binary-wrong-length")
     fz.send_raw_frame(ws_frame(bytes([1, 0]) + bytes(7), opcode=2))   # old 9-byte sync_pos layout
     alive("binary-old-layout"); relaying("binary-old-layout")
+    # v0.0.36: sync_bundle is server -> client only; a client sending one is dropped, and the
+    # other players must not see its entry (x = 500.0 is nowhere a bot walks)
+    m = bots[1].mark()
+    fz.send_raw_frame(ws_frame(bytes([BIN_SYNC_BUNDLE, 1]) + encode_sync_pos(500.0, 7.0, 1.0, 0.0, sender=fz.slot, tick=fz.tick)[1:], opcode=2))
+    alive("binary-bundle-from-client"); relaying("binary-bundle-from-client")
+    _, leak = bots[1].wait_for("sync_pos", 0.5, since=m, pred=lambda p: abs(p["x"] - 500.0) < 0.06 and abs(p["y"] - 7.0) < 0.06)
+    if leak is not None:
+        ctx.fail("server.bundle-from-client-relayed", "a sync_bundle sent BY a client was relayed to the other players (server-only type)")
 
     # sender spoofing in the binary header: the server must stamp the real slot
     m = bots[1].mark()
@@ -2021,6 +2093,63 @@ def sc_fuzz(ctx):
     relaying("oversized-header")
 
 
+@scenario("bundle", "v0.0.36 (optimisation Step C, build 3): 3 protocol bots move at 20 Hz for 10 s and a fourth socket only watches; every client must receive relayed movement as sync_bundle frames at about 20 a second (one per 50 ms window), a fighter's bundles hold about 2 entries (the other two fighters, never itself), the spectator's about 3, and a sample must reach the others within 70 ms (p95) of leaving its sender")
+def sc_bundle(ctx):
+    bots = [ctx.bot(i) for i in range(1, 4)]
+    lobby_join(ctx, bots)
+    watcher = ctx.bot(9, "Watcher").connect()
+    _, st = watcher.wait_for("spectator_state", 3.0)
+    if st is None:
+        ctx.fail("timeout.spectator-state", "Watcher: no spectator_state after connect")
+    start_match(ctx, bots, bots[0])
+    for b in bots:
+        b.die_rate = 0.0
+    time.sleep(2.0)   # everyone in the arena and moving
+    everyone = bots + [watcher]
+    before = {b: (dict(b.in_pkts), b.bundle_entries, b.mark()) for b in everyone}
+    ctx.say("3 fighters moving at 20 Hz for 10 s, the watcher only listens")
+    t0 = time.monotonic()
+    time.sleep(10.0)
+    secs = time.monotonic() - t0
+    by_slot = {b.slot: b for b in bots if b.slot}
+    for b in everyone:
+        pk0, en0, m = before[b]
+        bundles = b.in_pkts["sync_bundle"] - pk0.get("sync_bundle", 0)
+        loose = (b.in_pkts["sync_pos"] - pk0.get("sync_pos", 0)) - (b.bundle_entries - en0)
+        entries = b.bundle_entries - en0
+        others = len(bots) - (1 if b in bots else 0)
+        rate = bundles / secs
+        mean_n = entries / bundles if bundles else 0.0
+        if loose > 0:
+            ctx.fail("bundle.loose-sync-pos", f"{b.name}: {loose} sync_pos arrived outside a sync_bundle (RELAY_BUNDLE_MS off?)")
+        if not (BUNDLE_RATE_MIN <= rate <= BUNDLE_RATE_MAX):
+            ctx.fail("bundle.rate", f"{b.name}: {rate:.1f} sync_bundle/s over {secs:.1f} s (want {BUNDLE_RATE_MIN:.0f} to {BUNDLE_RATE_MAX:.0f}: one per {RELAY_BUNDLE_MS} ms window)")
+        if mean_n < others - 0.2:
+            ctx.fail("bundle.entries", f"{b.name}: {mean_n:.2f} entries per bundle, want about {others} (the other fighters' 20 Hz samples)")
+        # relay delay: when did the sender's sample leave, when did it arrive here
+        delays = []
+        for at, t, pkt in b.events:
+            if t != "sync_pos" or at < 0:
+                continue
+            snd = by_slot.get(int(pkt["sender"]))
+            if snd is None:
+                continue
+            left = snd.sync_sent_at.get(int(pkt["tick"]))
+            if left is not None and at >= left:
+                delays.append((at - left) * 1000.0)
+        # b.events holds (time, type, pkt) with time = monotonic at arrival; only this window's samples
+        delays = delays[-(entries or 1):]
+        if delays:
+            delays.sort()
+            p95 = delays[int(len(delays) * 0.95) - 1] if len(delays) >= 20 else delays[-1]
+            mean = sum(delays) / len(delays)
+            if p95 > BUNDLE_DELAY_P95_MS:
+                ctx.fail("bundle.delay", f"{b.name}: relay delay p95 {p95:.0f} ms > {BUNDLE_DELAY_P95_MS:.0f} ms (mean {mean:.0f} ms over {len(delays)} samples)")
+            ctx.note(f"{b.name}: {rate:.1f} bundles/s x {mean_n:.2f} entries, {loose} loose sync_pos, relay delay mean {mean:.0f} ms p95 {p95:.0f} ms max {delays[-1]:.0f} ms ({len(delays)} samples)")
+        else:
+            ctx.fail("bundle.no-samples", f"{b.name}: no relayed sync_pos could be matched to a sender's send time")
+
+
 @scenario("fleet", "N headless Godot clients (--godot, --ai personas) fight bots for --duration s; fails on any client script error, an idle brain, no kills (--ai), no round ending (--ai, 150 s+), or a brain's puppets failing the jitter/snap gate")
 def sc_fleet(ctx):
     if shutil.which("godot") is None:
@@ -2065,7 +2194,8 @@ def sc_fleet(ctx):
             ctx.fail("fleet.client-silent", f"{c.name} never sent movement (not in the arena, or dead all along)")
         round_ends = max(round_ends, st["round_ends"])
         deaths_seen = max(deaths_seen, st["deaths_seen"])
-        ctx.note(f"{c.name}: {st['netstats_lines']} NetStats lines, {st['out_sync_pos']} sync_pos sent, {st['out_history_status']} tape cards sent, {len(errs)} error kinds, log {os.path.relpath(c.log_path, ROOT)}")
+        ctx.note(f"{c.name}: {st['netstats_lines']} NetStats lines, {st['out_sync_pos']} sync_pos sent, {st['out_history_status']} tape cards sent, "
+                 f"in {st['in_pps_mean']:.1f} pkt/s ({st['in_sync_bundle']} sync_bundle, {st['in_sync_pos']} sync_pos), {len(errs)} error kinds, log {os.path.relpath(c.log_path, ROOT)}")
         pj = st["puppets"]
         if pj:
             ctx.note(f"{c.name} puppets: jitter mean {pj['jitter_mean']:.1f} px/s, p95 median {pj['jitter_p95_med']:.1f} max {pj['jitter_p95_max']:.1f}, "
@@ -2681,7 +2811,7 @@ def restart_server():
 
 def metrics(ctx, elapsed):
     bots = [b for b in ctx.bots if b.connected_at is not None]
-    in_p = sum(sum(b.in_pkts.values()) for b in bots)
+    in_p = sum(sum(b.in_pkts.values()) - b.bundle_entries for b in bots)   # v0.0.36: an entry of a bundle is not a packet on the wire
     in_b = sum(sum(b.in_bytes.values()) for b in bots)
     out_p = sum(sum(b.out_pkts.values()) for b in bots)
     out_b = sum(sum(b.out_bytes.values()) for b in bots)

@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.35"
+GAME_VERSION = "v0.0.36"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -156,6 +156,22 @@ MAX_FRAME_BYTES = 4096   # a frame header claiming more than this closes the soc
 MAX_RELAY_BYTES = 1024   # text messages above this are dropped, never relayed (no amplification)
 # Binary packets: [0] type, [1] sender slot (stamped here), fixed-size body. See global.gd.
 BIN_TYPES = {1: ("sync_pos", 11), 2: ("spawn_projectile", 9)}   # sync_pos gained a u16 tick (Phase 3a)
+
+# v0.0.36 (optimisation Step C, build 3): sync_bundle. The relay used to send
+# every sync_pos on its own the moment it arrived: 3 puppets x 13 pkt/s = about
+# 40 packets a second into every client, and on the wire each one carries 40 to
+# 50 B of headers around 11 B of payload. Now the reader threads hand type 1
+# packets to one MovementBatcher, which flushes every RELAY_BUNDLE_MS as ONE
+# binary frame per client: [0] = 3, [1] = n, then n entries of 10 B, each entry
+# being a sync_pos from byte 1 onward ([sender u8, tick u16, x s16, y s16, aim u16,
+# flags u8]). A player never gets its own entries (like exclude=sock before);
+# spectators get all of them. Server -> client only: a client sending type 3 is
+# dropped like any other unknown binary type. 0 = relay each sync_pos at once, as
+# before (the client decodes both). spawn_projectile stays immediate.
+RELAY_BUNDLE_MS = 50     # one bundle per 50 ms, the client's own NET_TICK_INTERVAL
+BIN_SYNC_BUNDLE = 3
+BIN_BUNDLE_ENTRY = 10    # bytes per entry
+BIN_BUNDLE_MAX = 25      # entries per bundle; more pending than this flushes early (252 B frame)
 
 # Phase 3a: per-client send queues + backpressure ---------------------------
 MAX_QUEUE_FRAMES = 128   # queued frames per client before movement frames are dropped
@@ -240,13 +256,20 @@ def stats_loop():
             spectators = len(spectator_sockets)   # sockets without a slot (a slot holder is not in here)
             state = global_match_state
         top = ", ".join(f"{k}={v}" for k, v in sorted(s["in_types"].items(), key=lambda kv: -kv[1])[:6])
+        bundle_txt = ""
+        if batcher is not None:
+            with batcher.lock:
+                nb, ne = batcher.bundles, batcher.entries
+                batcher.bundles = batcher.entries = 0
+            if nb:
+                bundle_txt = f" bundles={nb / STATS_INTERVAL:.1f}/s x{ne / nb:.1f}"
         bots_txt = f" ({bots} bot{'s' if bots != 1 else ''})" if bots else ""
         logger.info(
             f"[STATS {STATS_INTERVAL:.0f}s] {state} players={players}{bots_txt} spectators={spectators} sockets={players + spectators}"
             f" | IN {s['in_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['in_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
             f" (avg {s['in_bytes'] / max(s['in_pkts'], 1):.0f} B)"
             f" | OUT {s['out_pkts'] / STATS_INTERVAL:6.1f} pkt/s {s['out_bytes'] / STATS_INTERVAL / 1024:6.2f} KB/s"
-            f" fail={s['out_fail']} drop={s['out_drop']} | in: {top or '-'}")
+            f" fail={s['out_fail']} drop={s['out_drop']}{bundle_txt} | in: {top or '-'}")
 
 # ── Live status file (Phase 3c step 0, v0.0.21) ──────────────────────────────
 # The story: to watch a match from the terminal you had to read raw log lines.
@@ -817,6 +840,88 @@ class ClientConn:
 conns = {}
 conns_lock = threading.Lock()
 
+class MovementBatcher:
+    """Holds the sync_pos samples that arrived in the last RELAY_BUNDLE_MS and
+    relays them as one sync_bundle per client (v0.0.36). Samples keep their
+    arrival order and none is dropped: with jitter two ticks of one sender can
+    land in one window, and a receiver reads a missing tick as "stood still"."""
+    def __init__(self, period_ms):
+        self.period = period_ms / 1000.0
+        self.lock = threading.Lock()
+        self.pending = []          # [(sender slot, id(sender socket), 10 B entry)] in arrival order
+        self.bundles = 0           # flushes that sent something (for the [STATS] line)
+        self.entries = 0
+        self.thread = threading.Thread(target=self._loop, daemon=True, name="batcher")
+        self.thread.start()
+
+    def add(self, slot, sock, entry):
+        with self.lock:
+            self.pending.append((slot, id(sock), entry))
+            full = len(self.pending) >= BIN_BUNDLE_MAX
+        if full:
+            self.flush()
+
+    def _loop(self):
+        next_at = time.monotonic()
+        while True:
+            next_at += self.period
+            wait = next_at - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            else:
+                next_at = time.monotonic()   # fell behind (a stall): realign instead of bursting
+            self.flush()
+
+    def flush(self):
+        with self.lock:
+            if not self.pending:
+                return
+            pending, self.pending = self.pending, []
+        with lobby_lock:
+            seen = set()
+            targets = []   # (sock, slot id or None for a spectator)
+            for i, entry in enumerate(player_slots):
+                if entry and id(entry["sock"]) not in seen:
+                    seen.add(id(entry["sock"]))
+                    targets.append((entry["sock"], i + 1))
+            for entry in spectator_sockets:
+                if entry and id(entry["sock"]) not in seen:
+                    seen.add(id(entry["sock"]))
+                    targets.append((entry["sock"], None))
+        # A recipient never gets its own entries: not the ones from its slot, and not
+        # the ones its socket sent (a fighter that pressed leave is a spectator by the
+        # time of the flush, but the sample it sent as a fighter is still not for it).
+        # Frames are built once per distinct set of left-out entries.
+        frames = {}
+        with conns_lock:
+            queues = [(s, pid, conns.get(id(s))) for s, pid in targets]
+        sent = 0
+        for s, pid, conn in queues:
+            sid = id(s)
+            key = tuple(i for i, (snd, src, _) in enumerate(pending) if snd == pid or src == sid)
+            frame = frames.get(key)
+            if frame is None:
+                entries = [e for i, (_, _, e) in enumerate(pending) if i not in key]
+                frame = ws_frame(bytes([BIN_SYNC_BUNDLE, len(entries)]) + b"".join(entries)) if entries else b""
+                frames[key] = frame
+            if not frame:
+                continue
+            sent += 1
+            if conn is None:
+                try:
+                    s.sendall(frame)
+                except Exception:
+                    try: s.close()
+                    except Exception: pass
+            else:
+                conn.enqueue(frame, True)
+        if sent:
+            with self.lock:
+                self.bundles += 1
+                self.entries += len(pending)
+
+batcher = MovementBatcher(RELAY_BUNDLE_MS) if RELAY_BUNDLE_MS > 0 else None
+
 def _stat_drop():
     with net_stats_lock:
         net_stats["out_drop"] += 1
@@ -1199,7 +1304,10 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                 _stat_in_type(spec[0])
                 stamped = bytearray(payload)
                 stamped[1] = assigned_id
-                broadcast(bytes(stamped), exclude=sock, msg_type=spec[0])
+                if payload[0] == 1 and batcher is not None:
+                    batcher.add(assigned_id, sock, bytes(stamped[1:]))   # relayed as part of the next sync_bundle
+                else:
+                    broadcast(bytes(stamped), exclude=sock, msg_type=spec[0])
                 continue
 
             msg = payload

@@ -1,21 +1,21 @@
 ---
 tags: [playtest]
-build: v0.0.34
-backlog: 1, 6, 13, 23 (the feel), optimisation Step C
+build: v0.0.36
+backlog: 1, 6, 13, 23 (the feel), optimisation Step C (build 1 and build 3)
 result: not played yet
 ---
 # Playtest — Master Validation Suite
 
 **Result: not played yet. Tick the boxes, paste the console lines into the tables, tick one verdict per section.**
 
-One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 is new: it reads the phone's own frame numbers over a USB cable.
+One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers over a USB cable. Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles.
 
 ## 0. Setup (once per evening)
 
 | Field | Your answer |
 |---|---|
 | Date and time (so the `server.log` lines can be found) | |
-| Build shown in the lobby (must be v0.0.34 or later) | |
+| Build shown in the lobby (must be v0.0.36 or later for section 5, v0.0.34 for the rest) | |
 | PC: operating system, browser and version (`chrome://version`) | |
 | Phones and tablets in the game (model, browser) | |
 | Number of players, bots in the game (yes / no, how many) | |
@@ -383,4 +383,43 @@ Notes:
 
 ---
 
-Related: [[PASSDOWN]] (backlog 1, 6, 13, 23; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).
+## 5. Movement bundles: do the puppets still feel right? (optimisation Step C, build 3)
+
+**Why.** Until v0.0.35 the server sent every fighter's movement packet on its own: with 3 other fighters that was about 40 packets a second into every screen, and on the wire each one carries 40 to 50 B of headers around 11 B of game data ([[optimisation_step_b_profiles]], Profile 3). Since v0.0.36 the server holds the samples for up to 50 ms and sends them as ONE `sync_bundle` frame per screen, about 20 a second. The harness (`bundle` and `fleet` scenarios) says the puppets move as smoothly as before on the PC, with 25 ms more delay on average, hidden inside the 100 ms the puppets already render behind. Only a person can say whether it feels the same on a phone over Wi-Fi. Detail: [[v0.0.36 - Relay Packet Coalescing]].
+
+### 5.1 Setup
+- [ ] Build in the lobby is v0.0.36 or later (an older build is refused with VERSION MISMATCH).
+- [ ] At least three fighters: you on the PC, you on a phone, and one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). Four is better (add `--ai=rusher --name=Bot2`).
+- [ ] PC console open (F12, Console, filter `NetStats`). Phone console over USB if you can (section 1 says how); otherwise write "no console".
+
+### 5.2 Play two rounds and watch the other fighters
+- [ ] The bot and the other screen's fighter glide; no stutter, no rubber-banding, no sliding after a stop.
+- [ ] A dash, a jump and a landing on the other screen look like they did before v0.0.36 (nobody sinks into the floor after landing).
+- [ ] The phone's fighter, watched from the PC: same as above.
+- [ ] Arrows, firebolts and kunai still appear where the shooter is (those packets are not bundled).
+- [ ] Anything that felt late or wrong, in your words:
+
+### 5.3 The numbers
+Paste one `📈 [NetStats]` line per device from the middle of a round. Read `IN … pkt/s`, then in the `in:` list `sync_bundle=N(…B)` and `sync_pos=M(…B)`, then the `puppets=` part. With 3 other fighters `IN` should be about 20 to 25 pkt/s (it was about 40), `sync_bundle` about 100 per 5 s line, `sync_pos` about 200.
+
+| Device | Fighters in the game | `IN` pkt/s | `sync_bundle=` | `sync_pos=` | `jitter=` (mean/p95) | `snaps=` | `stall=` | `extrap=` | `dips=` | `keys=` | `focus=` |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| PC | | | | | | | | | | | |
+| Phone (model) | | | | | | | | | | | |
+| Second phone / tablet | | | | | | | | | | | |
+
+Server side, one `[STATS 10s]` line from `server.log` (it now ends with `bundles=20.0/s x2.9` = bundles a second and mean entries per bundle):
+
+| `OUT` pkt/s | `bundles=` | `in:` `sync_pos=` |
+|---|---|---|
+| | | |
+
+### 5.4 Verdict (section 5)
+- [ ] **The puppets feel the same and `IN` is about half of 40 pkt/s:** the bundle stays. Step C cut 3 is closed.
+- [ ] **The puppets feel later or stutter (write where):** turn the bundle off without a client rebuild: `RELAY_BUNDLE_MS = 0` in `serve_game.py`, `systemctl --user restart towerbrawl`, play again; if the feel returns, the 50 ms window is too long for Wi-Fi, try 25.
+- [ ] **`IN` is still about 40 pkt/s and there is no `sync_bundle=` in the `in:` list:** the server is not bundling; check the `[STATS]` line for `bundles=` and that the service restarted after the build.
+Notes:
+
+---
+
+Related: [[PASSDOWN]] (backlog 1, 6, 13, 23; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).

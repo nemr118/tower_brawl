@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.35"
+const GAME_VERSION: String = "v0.0.36"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -219,10 +219,18 @@ func _pj_reset() -> void:
 # order packets, place each sample in time and read a gap as "nothing changed".
 # Everything else (lobby, deaths, rounds) stays JSON: rare, and readable in the logs.
 # serve_game.py (BIN_TYPES) and tools/chaos_bots.py mirror this layout.
+# v0.0.36 (optimisation Step C, build 3): the server no longer relays each
+# sync_pos on its own. Every 50 ms it sends ONE sync_bundle per client:
+#   sync_bundle (2 + 10n B): [0] 3  [1] n entries  then n x 10 B, each entry a sync_pos from byte 1 on
+#                            ([0] sender u8 [1..2] tick u16 [3..4] x [5..6] y [7..8] aim [9] flags)
+# Our own entries are left out by the server. Type 1 is still decoded (the
+# server's RELAY_BUNDLE_MS = 0 switch sends the old way). We never send type 3.
 const BIN_SYNC_POS := 1
 const BIN_SPAWN_PROJECTILE := 2
+const BIN_SYNC_BUNDLE := 3
 const BIN_SYNC_SIZE := 11
 const BIN_PROJECTILE_SIZE := 9
+const BIN_BUNDLE_ENTRY := 10
 const NET_TICK_HZ := 20.0            # movement samples per second (was 30)
 const NET_TICK_INTERVAL := 1.0 / NET_TICK_HZ
 const NET_IDLE_RESEND := 0.5         # an unchanged state is still repeated this often (keepalive for late joiners)
@@ -637,24 +645,17 @@ func _handle_net_binary(pkt: PackedByteArray) -> void:
 	if ptype == BIN_SYNC_POS and pkt.size() == BIN_SYNC_SIZE:
 		if net_stats_enabled:
 			_ns_count(_ns_types_in, "sync_pos", pkt.size())
-		if sender == my_player_id:
-			return
-		var flags := pkt.decode_u8(10)
-		var aim := _u16_to_dir(pkt.decode_u16(8))
-		emit_signal("net_player_state_received", sender, {
-			"sender": sender,
-			"tick": pkt.decode_u16(2),
-			"x": pkt.decode_s16(4) / 10.0,
-			"y": pkt.decode_s16(6) / 10.0,
-			"aim_x": aim.x,
-			"aim_y": aim.y,
-			"facing": (flags & FLAG_FACING) != 0,
-			"dash": (flags & FLAG_DASH) != 0,
-			"shield": (flags & FLAG_SHIELD) != 0,
-			"bear": (flags & FLAG_BEAR) != 0,
-			"egg": (flags & FLAG_EGG) != 0,
-			"floor": (flags & FLAG_FLOOR) != 0,
-		})
+		_emit_sync_entry(pkt, 1)
+	elif ptype == BIN_SYNC_BUNDLE and pkt.size() == 2 + sender * BIN_BUNDLE_ENTRY and sender > 0:
+		# byte 1 is the entry count here, not a sender. NetStats counts the
+		# frame under sync_bundle (its 2 header bytes) and every entry under
+		# sync_pos (10 B each), so the in: list still shows the puppet sample rate.
+		if net_stats_enabled:
+			_ns_count(_ns_types_in, "sync_bundle", 2)
+			for _i in range(sender):
+				_ns_count(_ns_types_in, "sync_pos", BIN_BUNDLE_ENTRY)
+		for i in range(sender):
+			_emit_sync_entry(pkt, 2 + i * BIN_BUNDLE_ENTRY)
 	elif ptype == BIN_SPAWN_PROJECTILE and pkt.size() == BIN_PROJECTILE_SIZE:
 		if net_stats_enabled:
 			_ns_count(_ns_types_in, "spawn_projectile", pkt.size())
@@ -672,6 +673,30 @@ func _handle_net_binary(pkt: PackedByteArray) -> void:
 		})
 	elif net_stats_enabled:
 		_ns_count(_ns_types_in, "<bad-binary>", pkt.size())
+
+# One movement sample starting at byte `base` of the packet: [base] sender,
+# [base+1..2] tick, [base+3..4] x, [base+5..6] y, [base+7..8] aim, [base+9] flags.
+# base is 1 for a plain sync_pos and 2 + 10 i for entry i of a sync_bundle.
+func _emit_sync_entry(pkt: PackedByteArray, base: int) -> void:
+	var sender := pkt.decode_u8(base)
+	if sender == my_player_id:
+		return
+	var flags := pkt.decode_u8(base + 9)
+	var aim := _u16_to_dir(pkt.decode_u16(base + 7))
+	emit_signal("net_player_state_received", sender, {
+		"sender": sender,
+		"tick": pkt.decode_u16(base + 1),
+		"x": pkt.decode_s16(base + 3) / 10.0,
+		"y": pkt.decode_s16(base + 5) / 10.0,
+		"aim_x": aim.x,
+		"aim_y": aim.y,
+		"facing": (flags & FLAG_FACING) != 0,
+		"dash": (flags & FLAG_DASH) != 0,
+		"shield": (flags & FLAG_SHIELD) != 0,
+		"bear": (flags & FLAG_BEAR) != 0,
+		"egg": (flags & FLAG_EGG) != 0,
+		"floor": (flags & FLAG_FLOOR) != 0,
+	})
 
 func _handle_net_packet(msg_str: String, byte_size: int = 0):
 	var data = JSON.parse_string(msg_str)
