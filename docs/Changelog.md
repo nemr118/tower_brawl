@@ -52,4 +52,4 @@ Every build gets its own page in the `Patch Notes/` folder, newest first here. P
 - **next** the remaining bug builds, one each (backlog 1 and 6 ranger arrows with the simple fallback, backlog 9 stuck at the top), then the optimisation plan. Replay ideas (a match-end montage of every round's closing kill, a skip key) are listed in the PASSDOWN under v0.1.0 ideas.
 - **v0.1.0** tagged when the replay, the netcode bugs and the optimisation plan are all done.
 
-Related: [[PASSDOWN]] (start here in a new session), [[obsidian_notes]] (commands, server, harness usage), [[Playtest v0.0.5]], [[Playtest v0.0.8]], [[Playtest v0.0.17]] (the current tick-box sheet).
+Related: [[PASSDOWN]] (start here in a new session), [[Commands]] (commands, server, harness usage), [[closed]] (closed backlog items), the playtest sheets in `archive/playtests/` ([[Playtest v0.0.5]], [[Playtest v0.0.8]], [[Playtest v0.0.17]], [[Playtest v0.0.26]]).

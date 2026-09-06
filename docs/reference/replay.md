@@ -1,0 +1,30 @@
+---
+tags: [reference]
+---
+# The replay: playing the tape back
+
+Built in v0.0.26, the rejoin-in-the-gap rules in v0.0.28. Read this page when working on `scripts/replay_player.gd`, the round gaps in `serve_game.py` or the `replay` / `reload_in_gap` scenarios. The recording side: [[tape]]. Commands: [[Commands]].
+
+**The server side.** When a round ends on a kill, `_check_round_end` puts `"replay": true` in `round_end` (rule: a winner, and a death in `last_death` within `REPLAY_KILL_WINDOW = 1.5` s) and `_next_round_later(label, replay)` waits `REPLAY_ROUND_DELAY = 6.5` s before `new_round`. A draw or a forfeit win keeps `NEXT_ROUND_DELAY = 2.6`; a won match waits `MATCH_END_DELAY = 7.0`.
+
+**The client side.** Every screen (players and spectators alike) plays its own frozen tape with `scripts/replay_player.gd`, started by `arena.gd` the moment the tape freezes (`_record_tape_frame` → `_start_replay`, about 1.0 s after `round_end`); `REPLAY_WAIT_S = 1.5` s later a tape still not frozen is skipped; `_start_round` → `_stop_replay_now` cuts a running replay and prints its line before `tape.clear`. `start(ring, platforms, live, round_end_msec)` pauses the live nodes and plays; `stop(cut)` frees the ghosts, restores the live nodes and the platform angle and emits `finished(result)`; `status_line(ring, result)` is the `📼 [Replay]` line. Stepped in `_process` (local tape, not network state).
+- **What plays:** 211 frames around the closing kill `K`: `◄◄ REW` from K+60 back to K-150 at 10x (0.4 s), `► PLAY` K-150 to K-30 at 1x (2.0 s), `► SLOW` K-30 to K+30 at 0.5x with a white flash on K (2.0 s), `► PLAY` K+30 to K+60, the fall (0.5 s), `■ STOP` with a fade to black (0.2 s). 5.1 s in all; `new_round` at 6.5 s cuts anything still running.
+- **How:** the live fighters and projectiles are paused (`process_mode = DISABLED`, hidden); ghosts are real `player.tscn` and projectile scenes with `is_ghost = true` (no physics, no collision, out of the `players` / `projectiles` groups, no ammo row, `ghost_on_floor` from `FLAG_FLOOR`) moved to the frame's spots; the platforms turn to the frame's `rot`; a `VhsOverlay` child draws scanlines, a rolling tracking bar, a small shake, the red ring on the victim in slow motion, the label, a counter from the kill (`-2.5s` to `+1.0s`), `REPLAY` with a blinking dot, and the caption `Godot2 killed Andrew · Firebolt`. The banner hides while it plays. Nothing is put back by hand: the next round respawns everyone.
+- **Skipped when:** the tape is not frozen 1.5 s after `round_end` (`not-frozen`: a hidden tab whose ticks stalled), nothing was recorded (`empty-tape`), there is no closing stamp (`no-closing-stamp`), or the next round came first (`cut-before-start`).
+
+**A drop inside the gap (v0.0.28).** A screen that reloads or loses its socket inside the 6.5 s keeps its seat for the 8 s grace, and the next round starts with that seat counted as present (`_next_round_later`: `present = [... if player_slots[p - 1] or p in pending_rejoin]`, `[ROUND] round 3 starting with [1, 2] (seat held for [2], back within the grace or out)`). Back in time: same seat, `(rejoined mid-match)`, the arena loads at the real round (`Global.current_round` follows the snapshot, `new_round` and `scene_transition`). Never back: `_grace_expired` removes the seat and the round ends as a forfeit. A client whose reconnect lands in LOBBY (the match ended meanwhile, or the server restarted) goes back to the lobby scene (`global.gd`: `elif type == "assign_id" or not _rejoin_pending: _ensure_scene_for_state(...)`). The browser keyboard after such a reload is backlog 13: `Global.focus_canvas()` runs at arena `_ready` and after the auto-rejoin, `web/shell.html` focuses the canvas after the engine starts, on every `pointerdown` and on window focus; the `keys= focus=` probe is on every `NetStats` line.
+
+**How to see it:**
+```bash
+grep "📼 \[Replay\]" .harness_logs/godot1.log | tail -3   # one line per replay, played, cut or skipped
+#   📼 [Replay] round=1 killer=4 victim=3 weapon=Firebolt from=869 to=1079 frames=211 drawn=211 dur_ms=5050 late_ms=987 cut=0 skipped=-
+grep "\[TAPE\].*replay" server.log | tail                 # [TAPE] P3's screen played the round 1 replay: 211 frames in 5.0 s, started 1.0 s after the round end
+python3 -c "import json; [print(s['id'], (s['tape'] or {}).get('replay')) for s in json.load(open('status.json'))['seats']]"
+./venv/bin/python tools/chaos_bots.py --scenario replay          # the v0.0.26 scenario (about 30 s)
+./venv/bin/python tools/chaos_bots.py --scenario reload_in_gap   # the v0.0.28 scenario (about 50 s, restarts the server once in its last act)
+```
+The card: `history_status.replay = {playing, played, round, frames, drawn, dur_ms, late_ms, cut, skipped}`, sent once when the replay starts and once when it ends or is skipped. On the deck the `Tape` column reads `▶ R3` while playing, `■ R3 ✓ ▶5.1s` after, `■ R3 ✓ ✗` when skipped; the inspect line of a round-end column adds `· replay played on 2 screens (P3 P4), 5.1 s, started 1.0 s after the kill`.
+
+**Good numbers:** `frames=211 drawn=211 dur_ms≈5050 late_ms≈1000 cut=0`. The harness `replay` scenario wants `round_end.replay == true`, `new_round` 6.0 to 8.0 s after `round_end`, 200+ frames, 90 %+ drawn, 4 500 to 6 000 ms, started within 1 500 ms, not cut, not skipped, and a played card in `status.json`; `replay_gate` on `fleet` and `lag` wants every frozen tape with a closing kill (but the last) played back on time. `reload_in_gap`: act 1 reload inside the gap, act 2 away past `new_round`, act 3 a server restart under a fighter must land it in the lobby scene.
+
+Related: [[tape]], [[deck]], [[v0.0.26 - Play the Tape]], [[v0.0.28 - Rejoin in the Replay Gap]].

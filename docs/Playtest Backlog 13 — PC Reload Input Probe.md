@@ -137,4 +137,4 @@ Tick one, using the table at the top:
 - [ ] `focus=1 keys>0` and no walking: **the fighter state.** Next: `player.gd`, with the `🧭 [Spawn]` line and the NetStats line from this sheet.
 - [ ] Walking worked every time: **not reproduced on v0.0.29.** Close backlog 13 or keep the probe and wait for the next family evening.
 
-Related: [[PASSDOWN]] (backlog 13), [[v0.0.28 - Rejoin in the Replay Gap]], [[Playtest v0.0.26]] (where the bug was found), [[obsidian_notes]] section 6 (the NetStats fields).
+Related: [[PASSDOWN]] (backlog 13), [[v0.0.28 - Rejoin in the Replay Gap]], [[Playtest v0.0.26]] (where the bug was found), [[Commands]] (the NetStats fields).

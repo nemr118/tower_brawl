@@ -155,4 +155,4 @@ Tick one:
 - [ ] **C or D gives less than 3:** the round guard did not fire. Paste the line: `round` and `saved_round` say what the client believed. Next: when `Global.current_round` is set on a rejoin (`global.gd` snapshot handling, `new_round`).
 - [ ] **Something else:** write it down with the console lines.
 
-Related: [[PASSDOWN]] (backlog 1, 6, 15), [[v0.0.30 - Ranger Rejoin Quiver]], [[Playtest v0.0.8]] (where the bug was found), [[obsidian_notes]] section 6 (the console lines).
+Related: [[PASSDOWN]] (backlog 1, 6, 15), [[v0.0.30 - Ranger Rejoin Quiver]], [[Playtest v0.0.8]] (where the bug was found), [[Commands]] (the console lines).

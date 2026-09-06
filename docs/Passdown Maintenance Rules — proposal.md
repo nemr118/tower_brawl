@@ -1,8 +1,8 @@
 ---
 tags: [handoff, proposal]
-status: proposal, not enacted (written 2026-09-05 at the v0.0.30 wrap)
+status: enacted 2026-09-05 (P1 to P7; P8 deferred, the size gate in bump_build.sh is a later code change)
 ---
-# Passdown Maintenance Rules — proposal
+# Passdown Maintenance Rules — proposal (enacted 2026-09-05, P8 deferred)
 
 **Why.** Every kickoff reads five documents. Measured on 2026-09-05 at v0.0.30:
 
@@ -56,4 +56,4 @@ Nothing else. The "later list", the playtest summaries and the roadmap prose mov
 
 Estimated result: a kickoff read of about 20 000 bytes instead of 90 000, and a PASSDOWN a human can read in two minutes.
 
-Related: [[PASSDOWN]], [[Changelog]], [[obsidian_notes]].
+Related: [[PASSDOWN]], [[Changelog]], [[Commands]], [[closed]], [[PASSDOWN-2026-09-05]].
