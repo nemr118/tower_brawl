@@ -176,20 +176,6 @@ func _physics_process(delta: float):
 	anim_time += delta * 12.0
 	
 	# Timers tick down for BOTH Local and Remote players
-	if is_egg:
-		egg_timer -= delta
-		if egg_timer <= 0.0:
-			is_egg = false
-			spawn_invuln_timer = 1.0
-			_squash_and_stretch(1.5, 1.5)
-		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
-		velocity.y += GRAVITY * delta
-		move_and_slide()
-		_check_screen_wrap()   # an egg falling past the seam used to keep falling
-		_sync_network_state(delta)
-		queue_redraw()
-		return
-		
 	if spawn_invuln_timer > 0.0:
 		spawn_invuln_timer -= delta
 	if is_bubble:
@@ -211,6 +197,24 @@ func _physics_process(delta: float):
 		# movement packet goes off. A late safety timer covers a lost packet.
 		if is_bubble and ((_snaps.size() > 0 and not is_shielding) or bubble_timer <= -0.5):
 			is_bubble = false
+		queue_redraw()
+		return
+		
+	# LOCAL EGG FORM (v0.0.29, backlog 10): this branch used to sit above the
+	# puppet check, so a puppet drawn as an egg fell with local gravity and sent
+	# sync_pos under the observer's seat. A puppet's egg flag now comes only from
+	# the sender's packets (_apply_state), like dash, shield and bear.
+	if is_egg:
+		egg_timer -= delta
+		if egg_timer <= 0.0:
+			is_egg = false
+			spawn_invuln_timer = 1.0
+			_squash_and_stretch(1.5, 1.5)
+		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
+		velocity.y += GRAVITY * delta
+		move_and_slide()
+		_check_screen_wrap()   # an egg falling past the seam used to keep falling
+		_sync_network_state(delta)
 		queue_redraw()
 		return
 		
