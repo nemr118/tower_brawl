@@ -534,6 +534,12 @@ class Bot:
         self.autoplay = False
         self.die_rate = ctx.args.die_rate
         self.shoot = True            # random spawn_projectile while alive (the tape scenario turns it off)
+        # v0.0.30: a ranger that presses attack and special in the same physics frame fires two
+        # arrows from the same spot in the same direction = two identical 9 B spawn_projectile
+        # packets in one frame (backlog 15, the wanderer brain does this now and then). A scenario
+        # that plays a ranger brain sets this so those pairs are counted, not failed.
+        self.double_shot_ok = False
+        self.double_shots = 0
         self.dead = False
         self.dead_until = None
         self.invuln_until = 0.0
@@ -778,6 +784,9 @@ class Bot:
         if len(self.recent) > 4000:
             for _ in range(2000):
                 self.recent.popitem(last=False)
+        if dup and t == "spawn_projectile" and self.double_shot_ok:
+            self.double_shots += 1
+            dup = False
         if dup:
             self.dups[t] += 1
             kind = "dup.movement" if t in MOVEMENT_TYPES else "dup.event"
@@ -1505,6 +1514,19 @@ class GodotClient:
     def assigns(self):
         """Every seat assignment in the log, oldest first: [(slot, rejoined)] (v0.0.28)."""
         return [(int(m[1]), bool(m[2])) for m in re.finditer(r"Assigned Player ID: (\d+)( \(rejoined\))?", self.text())]
+
+    # v0.0.30: one line per restore_combat_state call, printed by player.gd after a rejoin
+    QUIVER_LINE = re.compile(r"\[Quiver\] rejoin slot=(\d+) round=(-?\d+) saved_round=(-?\d+) arrows=(\d+)->(\d+) "
+                             r"charges=(\d+) kunai=(\d+) bear=(\d) tick=(\d+)")
+
+    def quivers(self):
+        """Every 🏹 [Quiver] line of this client, oldest first, as dicts (v0.0.30)."""
+        out = []
+        for m in self.QUIVER_LINE.finditer(self.text()):
+            out.append({"slot": int(m[1]), "round": int(m[2]), "saved_round": int(m[3]), "arrows_saved": int(m[4]),
+                        "arrows": int(m[5]), "charges": int(m[6]), "kunai": int(m[7]), "bear": m[8] == "1",
+                        "tick": int(m[9])})
+        return out
 
     def scene(self):
         """The scene named by the newest NetStats line ("Arena", the lobby, ...), or None (v0.0.28)."""
@@ -2453,6 +2475,139 @@ def sc_reload_in_gap(ctx):
         else:
             ctx.note(f"act 3: after the server restart the client is in the {scene} scene")
     check_errors(g2)
+    g2.stop()
+
+
+def _headless_combat_save_path():
+    """Where a headless Godot client keeps its combat state (global.gd _storage_set: user://towerbrawl_combat.sav).
+    All headless clients share this one user:// directory; the browser keeps the same dictionary in localStorage."""
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "godot", "app_userdata", "TowerBrawl", "towerbrawl_combat.sav")
+
+
+@scenario("ranger_rejoin", "v0.0.30 (backlog 1 and 6): a headless ranger reloads mid-match. Act A: the saved quiver says 0 arrows for the running round -> the rejoined fighter must print a [Quiver] line with arrows=0->1, move, and fire at least one arrow. Act B: round 1 ends on a kill, and the save left behind names round 1 while the fighter rejoins round 2 -> the stale save must not touch the fresh quiver (arrows=0->3)")
+def sc_ranger_rejoin(ctx):
+    if shutil.which("godot") is None:
+        ctx.fail("ranger_rejoin.no-godot", "godot binary not on PATH")
+        return
+    save_path = _headless_combat_save_path()
+    a = ctx.bot(1)
+    a.double_shot_ok = True   # a ranger brain's same-frame attack + special is two arrows, not a relay dup (backlog 15)
+    lobby_join(ctx, [a])
+    a.shoot = False
+    g = GodotClient(ctx, 1, cls=0, ai="wanderer", keep_class=True).start()   # cls 0 = ranger
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline and (len(a.model.active) < 2 or not g.slot()):
+        time.sleep(0.25)
+    gs = g.slot()
+    if len(a.model.active) < 2 or not gs:
+        ctx.fail("ranger_rejoin.client-not-joined", f"active={sorted(a.model.active)} Godot1={gs} after 20 s")
+        g.stop()
+        return
+    start_match(ctx, [a], a)
+    a.die_rate = 0.0
+    ctx.timed(70.0)
+    clients = [g]
+
+    def check_errors(c):
+        for line, count in c.errors().items():
+            ctx.fail("ranger_rejoin.script-error", f"{c.name} ({os.path.basename(c.log_path)}): {line} (x{count})")
+        for line, count in c.warnings().items():
+            ctx.warn("ranger_rejoin.script-warning", f"{c.name} ({os.path.basename(c.log_path)}): {line} (x{count})")
+
+    def write_save(arrows, rnd, tick):
+        """What a browser's localStorage holds after the fighter shot its arrows: the dictionary
+        player.gd _persist_combat_state writes, with the numbers this act needs."""
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "w") as f:
+            json.dump({"arrows": arrows, "charges": 3, "kunai": 4, "bear": False, "round": rnd, "slot": gs, "tick": tick}, f)
+
+    def reload(label, tag, saved_arrows, saved_round, want_arrows):
+        """Stop the client, plant the save, start it again with --reclaim, and read its [Quiver] line."""
+        nonlocal clients
+        m = a.mark()
+        clients[0].stop()
+        _, left = a.wait_for("player_left", 3.0, since=m, pred=lambda p: int(p["id"]) == gs)
+        if left is None:
+            ctx.fail("ranger_rejoin.no-player-left", f"{label}: no player_left when the ranger dropped")
+        write_save(saved_arrows, saved_round, 500)
+        time.sleep(1.0)
+        c = GodotClient(ctx, 1, cls=0, ai="wanderer", tag=tag, keep_class=True).start(reclaim=gs)
+        clients = [c]
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline and not c.assigns():
+            time.sleep(0.2)
+        got = c.assigns()
+        if not got or got[0] != (gs, True):
+            ctx.fail("ranger_rejoin.no-rejoin", f"{label}: after the reload the client got {got} (want seat {gs}, rejoined)")
+            return c
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline and not c.quivers():
+            time.sleep(0.2)
+        q = c.quivers()
+        if not q:
+            ctx.fail("ranger_rejoin.no-quiver-line", f"{label}: no 🏹 [Quiver] line within 6 s of the rejoin (restore_combat_state never ran?); log {os.path.relpath(c.log_path, ROOT)}")
+            return c
+        q = q[-1]
+        if q["saved_round"] != saved_round or q["arrows_saved"] != saved_arrows:
+            ctx.fail("ranger_rejoin.wrong-save", f"{label}: the client read saved_round={q['saved_round']} arrows={q['arrows_saved']} (planted round {saved_round}, {saved_arrows} arrows)")
+        if q["round"] != a.model.round:
+            ctx.fail("ranger_rejoin.wrong-round", f"{label}: the client restored in round {q['round']} while the server is in round {a.model.round}")
+        if q["arrows"] != want_arrows:
+            ctx.fail("ranger_rejoin.arrows", f"{label}: arrows={q['arrows_saved']}->{q['arrows']} after the rejoin (want {want_arrows})")
+        else:
+            ctx.note(f"{label}: round {q['round']}, save from round {q['saved_round']}: arrows {q['arrows_saved']}->{q['arrows']}")
+        return c
+
+    def moves_and_shoots(c, label, seconds=10.0):
+        """The rejoined ranger must walk and fire at least one arrow (relayed spawn_projectile from its seat)."""
+        m = a.mark()
+        nap(ctx, seconds, clients)
+        n, spread = _reload_in_gap_spread(a, gs, m)
+        if n < 8 or spread < 30.0:
+            ctx.fail("ranger_rejoin.stuck", f"{label}: P{gs} sent {n} spots over {seconds:.0f} s with a spread of {spread:.0f} px "
+                     f"(want 8+ and 30+ px); brain moves={c.bot_moves()}; log {os.path.relpath(c.log_path, ROOT)}")
+        shots = sum(1 for _, t, p in list(a.events[m:]) if t == "spawn_projectile" and int(p["sender"]) == gs)
+        if shots < 1:
+            ctx.fail("ranger_rejoin.no-shot", f"{label}: P{gs} fired nothing in {seconds:.0f} s after the rejoin (an empty quiver?); log {os.path.relpath(c.log_path, ROOT)}")
+        else:
+            ctx.note(f"{label}: P{gs} moved {spread:.0f} px and fired {shots} arrow(s) in {seconds:.0f} s")
+
+    ctx.say("round 1: the ranger plays 3 s (baseline)")
+    nap(ctx, 3.0, clients)
+
+    # ---- Act A: reload mid-round with an empty quiver saved for this round ----
+    ctx.say(f"act A: the ranger (P{gs}) reloads mid-round 1 with a save that says 0 arrows for round 1")
+    g1 = reload("act A", "-actA", saved_arrows=0, saved_round=a.model.round, want_arrows=1)
+    moves_and_shoots(g1, "act A (same round, empty quiver)")
+    check_errors(g1)
+
+    # ---- Act B: a stale save from the round before ----
+    ctx.say("act B: Bot1 burns its stocks, round 1 ends on a kill by the ranger")
+    m = a.mark()
+    idx, end = None, None
+    for _ in range(4):
+        a.die(killer=gs)
+        idx, end = a.wait_for("round_end", 2.0, since=m)
+        if end is not None:
+            break
+    if end is None:
+        ctx.fail("ranger_rejoin.no-round-end", "act B: no round_end after 4 deaths")
+        g1.stop()
+        return
+    old_round = int(end.get("round", 1))
+    _, nr = a.wait_for("new_round", REPLAY_ROUND_DELAY + 2.5, since=idx + 1)
+    if nr is None:
+        ctx.fail("ranger_rejoin.no-new-round", f"act B: no new_round within {REPLAY_ROUND_DELAY + 2.5:.1f} s of round_end")
+        g1.stop()
+        return
+    nap(ctx, 2.0, clients)
+    ctx.say(f"act B: round {a.model.round} runs; the ranger reloads with a save that says 0 arrows for round {old_round}")
+    g2 = reload("act B", "-actB", saved_arrows=0, saved_round=old_round, want_arrows=3)
+    moves_and_shoots(g2, "act B (stale save, fresh quiver)")
+    check_errors(g2)
+    if a.double_shots:
+        ctx.note(f"{a.double_shots} same-frame double shot(s) by the ranger brain (two arrows, identical packets; backlog 15)")
     g2.stop()
 
 

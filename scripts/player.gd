@@ -841,13 +841,27 @@ func _persist_combat_state() -> void:
 func restore_combat_state(d: Dictionary) -> void:
 	if d.is_empty() or int(d.get("slot", -1)) != player_id:
 		return
-	current_arrows = clampi(int(d.get("arrows", max_arrows)), 0, max_arrows)
-	mage_charges = clampi(int(d.get("charges", 3)), 0, 3)
-	rogue_kunai = clampi(int(d.get("kunai", 4)), 0, 4)
-	is_bear_form = bool(d.get("bear", false)) and class_type == Global.ClassType.DRUID
 	# Movement ticks continue after a reload so receivers never see the counter restart.
 	net_tick = (int(d.get("tick", 0)) + 100) & 0xFFFF
-	_last_persisted = [current_arrows, mage_charges, rogue_kunai, is_bear_form, Global.current_round]
+	var saved_round := int(d.get("round", -1))
+	var saved_arrows := clampi(int(d.get("arrows", max_arrows)), 0, max_arrows)
+	if saved_round == Global.current_round:
+		# Same round as the save: no free quiver, the fight goes on with what was left.
+		current_arrows = saved_arrows
+		mage_charges = clampi(int(d.get("charges", 3)), 0, 3)
+		rogue_kunai = clampi(int(d.get("kunai", 4)), 0, 4)
+		is_bear_form = bool(d.get("bear", false)) and class_type == Global.ClassType.DRUID
+		# v0.0.30 (backlog 1 and 6): the stuck arrows on the ground are not in the join
+		# snapshot, so a reloaded ranger cannot pick them up. Never come back with an
+		# empty quiver: keep at least one arrow.
+		if class_type == Global.ClassType.RANGER and current_arrows < 1:
+			current_arrows = 1
+	# A save from another round is stale: every round starts with a fresh quiver
+	# (respawn -> _apply_class_defaults already set it), so only the tick is kept.
+	print("🏹 [Quiver] rejoin slot=%d round=%d saved_round=%d arrows=%d->%d charges=%d kunai=%d bear=%d tick=%d" % [
+		player_id, Global.current_round, saved_round, saved_arrows, current_arrows,
+		mage_charges, rogue_kunai, 1 if is_bear_form else 0, net_tick])
+	_last_persisted = []   # the next movement tick writes the true state (and this round) back to storage
 	queue_redraw()
 
 func force_die() -> void:

@@ -52,7 +52,7 @@ Versioning scheme: `v0.0.x` while building; `v0.1.0` is the target once the VHS 
 ### 5. The Test Harness (formerly the Chaos Bots)
 `tools/chaos_bots.py` is a protocol test harness: every bot behaves like the Godot client (join, name, lock in, 30 Hz `sync_pos` while alive, silence while dead, 1 s pings) and keeps a model of what the server state should be. Every packet is checked against a per-type schema, the model (oracle) and a duplicate-broadcast detector. Named scenarios end with a report and a non-zero exit code on any finding.
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                  # scenarios (22 since v0.0.28)
+./venv/bin/python tools/chaos_bots.py --list                  # scenarios (23 since v0.0.30)
 ./venv/bin/python tools/chaos_bots.py                         # run them all
 ./venv/bin/python tools/chaos_bots.py --restart-each          # restart the server before each one (isolates scenarios)
 ./venv/bin/python tools/chaos_bots.py --scenario smoke --trace /tmp/trace.jsonl   # packet capture with model snapshots
@@ -70,6 +70,7 @@ Step 2 scenarios (added after Phase 1):
 ./venv/bin/python tools/chaos_bots.py --scenario lag           # 150 +/- 50 ms and 10% loss on one player
 ./venv/bin/python tools/chaos_bots.py --scenario play --latency-ms 120 --jitter-ms 40 --loss 0.05   # fault knobs for Phase 3 interpolation work
 ./venv/bin/python tools/chaos_bots.py --soak 30                # loop the suite on one server, watch RSS / threads / fds for growth
+./venv/bin/python tools/chaos_bots.py --scenario ranger_rejoin  # v0.0.30: a headless ranger reloads mid-match with an empty quiver saved (about 40 s)
 ```
 
 ### 6. Headless Godot as a real client (bandwidth measurements)
@@ -77,7 +78,7 @@ Step 2 scenarios (added after Phase 1):
 godot --headless --path . -- --autojoin --name=Headless --class=2
 godot --headless --path . -- --autojoin --name=Headless --reclaim=2   # ask for seat 2 back at once, like a browser after a page reload (v0.0.28)
 ```
-Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type, the puppet jitter numbers, and since v0.0.27 the frame rate: `fps draw=59.8 phys=60.0 worst=21ms hitches=0` = pictures drawn a second, physics ticks a second, the slowest single frame, frames over 50 ms). The same line appears in the browser console of any real client, so a phone playtest shows where the frames drop. Since v0.0.28 the line ends with `keys=<key presses since the last line> focus=<1 if the game canvas has the page focus>`: in a browser the keyboard only reaches the game while the canvas has the focus, so `focus=0` explains a fighter that aims with the mouse but does not walk. The server logs a `[STATS]` line every 10 s in `server.log`.
+Joins, names itself, locks in, and once the match starts runs `player.gd` for real, sending `sync_pos` at the true rate. Every 5 s it prints a `📈 [NetStats]` line (bytes/packets in and out, per packet type, the puppet jitter numbers, and since v0.0.27 the frame rate: `fps draw=59.8 phys=60.0 worst=21ms hitches=0` = pictures drawn a second, physics ticks a second, the slowest single frame, frames over 50 ms). The same line appears in the browser console of any real client, so a phone playtest shows where the frames drop. Since v0.0.28 the line ends with `keys=<key presses since the last line> focus=<1 if the game canvas has the page focus>`: in a browser the keyboard only reaches the game while the canvas has the focus, so `focus=0` explains a fighter that aims with the mouse but does not walk. Since v0.0.30 a rejoin prints one `🏹 [Quiver] rejoin slot=2 round=2 saved_round=2 arrows=0->1 charges=3 kunai=4 bear=0 tick=612` line: the ammo restored from the save (`localStorage` key `towerbrawl_combat` in a browser, `user://towerbrawl_combat.sav` headless); a save from another round is ignored, a same-round ranger keeps at least 1 arrow. The server logs a `[STATS]` line every 10 s in `server.log`.
 
 ### 7. The live operations deck (v0.0.21, grown in v0.0.22, keys and mouse since v0.0.24, tape column since v0.0.25)
 ```bash
