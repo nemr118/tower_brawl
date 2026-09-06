@@ -1559,8 +1559,12 @@ class GodotClient:
     def stats(self):
         t = self.text()
         out_sync = sum(int(m) for m in re.findall(r"out: [^|\n]*?sync_pos=(\d+)", t))
+        # v0.0.35 (Step C build 2): the tape cards this screen sent, to watch the cut
+        tape_hits = re.findall(r"out: [^|\n]*?history_status=(\d+)\((\d+)B\)", t)
         st = {"assigned": "Assigned Player ID" in t, "netstats_lines": t.count("[NetStats"),
               "out_sync_pos": out_sync,
+              "out_history_status": sum(int(n) for n, _ in tape_hits),
+              "out_history_status_bytes": sum(int(b) for _, b in tape_hits),
               "round_ends": sum(int(m) for m in re.findall(r"round_end=(\d+)", t)),
               "deaths_seen": sum(int(m) for m in re.findall(r"in: [^|\n]*?player_died=(\d+)", t)),
               "deaths_reported": sum(int(m) for m in re.findall(r"out: [^|\n]*?player_died=(\d+)", t)),
@@ -2061,7 +2065,7 @@ def sc_fleet(ctx):
             ctx.fail("fleet.client-silent", f"{c.name} never sent movement (not in the arena, or dead all along)")
         round_ends = max(round_ends, st["round_ends"])
         deaths_seen = max(deaths_seen, st["deaths_seen"])
-        ctx.note(f"{c.name}: {st['netstats_lines']} NetStats lines, {st['out_sync_pos']} sync_pos sent, {len(errs)} error kinds, log {os.path.relpath(c.log_path, ROOT)}")
+        ctx.note(f"{c.name}: {st['netstats_lines']} NetStats lines, {st['out_sync_pos']} sync_pos sent, {st['out_history_status']} tape cards sent, {len(errs)} error kinds, log {os.path.relpath(c.log_path, ROOT)}")
         pj = st["puppets"]
         if pj:
             ctx.note(f"{c.name} puppets: jitter mean {pj['jitter_mean']:.1f} px/s, p95 median {pj['jitter_p95_med']:.1f} max {pj['jitter_p95_max']:.1f}, "

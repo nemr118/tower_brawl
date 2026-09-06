@@ -30,6 +30,15 @@ const ReplayPlayerScript = preload("res://scripts/replay_player.gd")
 var replay = null
 var _replay_due: bool = false    # round_end said replay: true and no replay has started or been skipped yet
 var _round_end_msec: int = 0     # when round_end arrived, for the late_ms number
+# v0.0.35 (optimisation Step C, build 2): the tape card (history_status, ~380 B)
+# used to go out on every kill stamp from every screen; Step B measured it as a
+# third of a player's outbound bytes. A stamp now only marks the card dirty and
+# _record_tape_frame sends it at most once per TAPE_CARD_MIN_S while recording.
+# The freeze and the replay start / skip / end still send at once: that is the
+# state the deck, the server's [TAPE] log and the harness read.
+const TAPE_CARD_MIN_S := 10.0
+var _tape_card_dirty: bool = false
+var _tape_card_sent_msec: int = -100000
 const REPLAY_WAIT_S := 1.5       # the tape must freeze this soon after round_end, or the replay is skipped
 
 # HUD textures resolved once at load. _update_panel used to call load() for every
@@ -287,9 +296,11 @@ func _record_tape_frame() -> void:
 	else:
 		pu[2] = 0.0
 	if tape.commit(Time.get_ticks_msec()):
-		_tape_report()   # the tail is recorded: the tape just froze
+		_tape_report()   # the tail is recorded: the tape just froze; the card goes now
 		if _replay_due:
 			_start_replay()
+	elif _tape_card_dirty and Time.get_ticks_msec() - _tape_card_sent_msec >= int(TAPE_CARD_MIN_S * 1000.0):
+		_send_tape_card()   # a stamp happened since the last card and the floor has passed
 
 
 func _tape_weapon_id(node: Node) -> int:
@@ -307,9 +318,19 @@ func _tape_weapon_id(node: Node) -> int:
 	return wid
 
 
-func _tape_report() -> void:
-	# One 📼 [Tape] line for the harness and one history_status card for the deck.
+func _tape_report(send_now: bool = true) -> void:
+	# One 📼 [Tape] line for the harness, always. The history_status card for the
+	# deck goes now (freeze) or waits for the TAPE_CARD_MIN_S floor (a kill stamp).
 	print(tape.status_line())
+	if send_now:
+		_send_tape_card()
+	else:
+		_tape_card_dirty = true
+
+
+func _send_tape_card() -> void:
+	_tape_card_dirty = false
+	_tape_card_sent_msec = Time.get_ticks_msec()
 	Global.send_net_data(tape.status_card())
 
 
@@ -333,7 +354,7 @@ func _start_replay() -> void:
 		_skip_replay(why)
 		return
 	banner_label.visible = false   # the VHS caption takes the banner's place
-	Global.send_net_data(tape.status_card())   # the card says playing: true
+	_send_tape_card()   # the card says playing: true
 
 
 func _skip_replay(reason: String) -> void:
@@ -341,13 +362,13 @@ func _skip_replay(reason: String) -> void:
 	tape.replay = {"playing": false, "played": false, "round": tape.round_num, "frames": 0, "drawn": 0,
 		"dur_ms": 0, "late_ms": Time.get_ticks_msec() - _round_end_msec, "cut": false, "skipped": reason}
 	print(ReplayPlayerScript.status_line(tape, tape.replay))
-	Global.send_net_data(tape.status_card())
+	_send_tape_card()
 
 
 func _on_replay_finished(result: Dictionary) -> void:
 	banner_label.visible = true
 	print(ReplayPlayerScript.status_line(tape, result))
-	Global.send_net_data(tape.status_card())
+	_send_tape_card()
 
 
 func _stop_replay_now() -> void:
@@ -523,7 +544,7 @@ func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int, weapon:
 	player_stocks[victim_id] = new_stock
 	# Phase 3c: stamp the tape with this kill (the server's word, so every screen stamps the same).
 	if tape != null and not tape.stamp(killer_id, victim_id, weapon).is_empty():
-		_tape_report()
+		_tape_report(false)   # v0.0.35: the line now, the card within TAPE_CARD_MIN_S
 	if victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
 		player_instances[victim_id].force_die()
 		
