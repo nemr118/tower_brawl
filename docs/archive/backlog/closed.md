@@ -6,6 +6,7 @@ tags: [archive, backlog]
 Appended at close time: the number, the closing version, one line on the fix, the page that holds the story. Numbers are never reused, so patch pages and sheets that name "backlog 15" still resolve here. The open list is in [[PASSDOWN]].
 
 ## Backlog
+19. **Fill-with-bots button** — closed in **v0.0.40** as a tool, not a server feature: `tools/tbbot.py` (`tbbot add [persona]`, `remove`, `clear`, `list`) starts real headless Godot clients on the server machine, max 4; the deck's `--controls` panel has the buttons — [[v0.0.40 - LAN Server Kit]], [[laptop-server]].
 22. **Hiding on top of the flipped ground** — closed in **v0.0.39** (the ground slabs are anchored and never turn, so the old floor never sits at the top edge) — [[v0.0.39 - Anchored Ground]].
 1. **Ranger reload mid-match loses the stuck arrows** — fallback shipped in **v0.0.30**: `player.gd` `restore_combat_state` ignores a save from another round and gives a same-round ranger at least 1 arrow; headless proof `ranger_rejoin`, browser proof [[Playtest Backlog 1 — Ranger Reload Quiver]]; the proper fix is open backlog 18 — [[v0.0.30 - Ranger Rejoin Quiver]], [[Playtest v0.0.8]].
 2. **`p0_left` InputMap error** — fixed in **v0.0.11**: the three P1-bind copies in `global.gd` require `my_player_id >= 2` (id 0 = spectator); was the intermittent red on the default fleet scenario.

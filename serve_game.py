@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.39"
+GAME_VERSION = "v0.0.40"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -1049,6 +1049,7 @@ def _release_seat(sock, addr, label, old_id, why):
         player_tapes.pop(old_id, None)
         spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})  # pure spectator again
         logger.info(f"[LEAVE] P{old_id} {why}")
+        _stats_log({"kind": "leave", "seat": old_id, "why": why})
         broadcast(json.dumps({
             "type": "player_left",
             "id": old_id,
@@ -1277,6 +1278,7 @@ def _grace_expired(label, pid, seq, delay):
             player_bots.pop(pid, None)
             player_tapes.pop(pid, None)
         logger.info(f"[LEAVE] P{pid} did not come back within {delay:g} s, out of the match")
+        _stats_log({"kind": "leave", "seat": pid, "why": "grace expired"})
         _idle_reset_if_empty(label)
         _check_round_end(label)
 
@@ -1487,6 +1489,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         }
 
                     known_name = snapshot["player_names"].get(str(assigned_id))
+                    _stats_log({"kind": "join", "seat": assigned_id, "name": known_name, "link": label, "addr": _ip(addr),
+                                "bot": bot_card["persona"] if bot_card else None, "reclaim": bool(hot_reclaim), "rejoin": bool(rejoin)})
                     logger.info(f"[JOIN] P{assigned_id} took seat {assigned_id} via {label} from {_ip(addr)}"
                                 + (f" as '{known_name}'" if known_name else "")
                                 + (f" (bot: {bot_card['persona']})" if bot_card else "")
@@ -1510,6 +1514,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         logger.info(f"[NAME] P{assigned_id} asked for '{name}', it was taken, now '{final}'")
                     else:
                         logger.info(f"[NAME] P{assigned_id} is now '{final}'")
+                    _stats_log({"kind": "name", "seat": assigned_id, "name": final})
                     broadcast(json.dumps({"type": "name_update", "player_names": names}))
                     continue
 
@@ -1661,6 +1666,10 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         else:
                             logger.info(f"[KILL] P{killer} ({killer_name}) killed P{victim} ({victim_name}) with '{weapon}', "
                                         f"{_lives_text(left)} (seen by P{assigned_id})")
+                        # v0.0.40: the kill as a record in client_stats.jsonl, next to the cards.
+                        _stats_log({"kind": "kill", "killer": killer, "victim": victim, "killer_name": killer_name,
+                                    "victim_name": victim_name, "weapon": weapon, "left": left, "seen_by": assigned_id,
+                                    "round": global_current_round, "self": killer == victim})
                         # Fight telemetry (v0.0.22): count it and put it on the timeline.
                         match_kd[victim]["deaths"] += 1
                         if 1 <= killer <= 4 and killer != victim:
@@ -1684,6 +1693,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     logger.info(f"[LOCK] P{assigned_id} locked in as {CLASS_NAMES.get(data.get('class'), data.get('class'))}")
                     with lobby_lock:
                         player_locked[assigned_id] = int(data.get("class", 0))
+                        _stats_log({"kind": "lock", "seat": assigned_id, "name": player_names.get(assigned_id),
+                                    "class": int(data.get("class", 0)), "class_name": CLASS_NAMES.get(int(data.get("class", 0)))})
 
                 if mtype == "activate_powerup":
                     # Track the arena flip so a client arriving mid-match (spectator
@@ -1738,6 +1749,7 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
         if freed:
             logger.info(f"[LEAVE] P{assigned_id} disconnected via {label}, remaining {remaining}"
                         + (f" (seat held {REJOIN_GRACE:g} s)" if in_match else ""))
+            _stats_log({"kind": "leave", "seat": assigned_id, "why": "disconnected", "held": bool(in_match), "link": label})
             broadcast(json.dumps({
                 "type":           "player_left",
                 "id":             assigned_id,

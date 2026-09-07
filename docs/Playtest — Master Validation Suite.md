@@ -1,6 +1,6 @@
 ---
 tags: [playtest]
-build: v0.0.39
+build: v0.0.40
 backlog: 1, 6, 13, 9 and 24 (the shift feel), optimisation Step C (build 1 and build 3), v0.1.0 release sign-off
 result: not played yet
 ---
@@ -8,7 +8,7 @@ result: not played yet
 
 **Result: not played yet. Tick the boxes, paste the console lines into the tables, tick one verdict per section.**
 
-One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 4 (rewritten 2026-09-07) checks the arena shift with the floor anchored and the rest turning above it. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.39 with a new number, so a pass here on v0.0.39 counts for the release ([[release-v0.1.0]]).
+One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 4 (rewritten 2026-09-07) checks the arena shift with the floor anchored and the rest turning above it. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.40 with a new number, so a pass here on v0.0.40 counts for the release ([[release-v0.1.0]]).
 
 **No console needed anywhere (v0.0.37).** Every device, phone or PC or tablet, sends its NetStats numbers to the server every 5 s; the server stamps every match and round. You write clock times (the PC clock, HH:MM), nothing else. Afterwards `./venv/bin/python tools/stats_table.py --list` shows the matches and `--match N` (or `--from HH:MM --to HH:MM`) prints one row per device, all devices at once. A console is only where the tagged lines (`Quiver`, `Spawn`, `TopEdge`) print, and only the PC needs it.
 
@@ -17,12 +17,12 @@ One sheet for everything a person still has to check. It replaces the three old 
 | Field | Your answer |
 |---|---|
 | Date and time (so the `server.log` lines can be found) | |
-| Build shown in the lobby (must be v0.0.39, the release candidate) | |
+| Build shown in the lobby (must be v0.0.40, the release candidate) | |
 | PC: operating system, browser and version (`chrome://version`) | |
 | Phones and tablets in the game (model, browser) | |
 | Number of players, bots in the game (yes / no, how many) | |
 
-- The server runs as the service (`systemctl --user status towerbrawl`). Play at `https://192.168.4.21:8443/play`. If a console says VERSION MISMATCH, reload hard.
+- The server is the laptop at a family evening ([[laptop-server]]; the play link is on its screen) or the PC's service at home (`https://192.168.4.21:8443/play`). If a console says VERSION MISMATCH, reload hard. Everything the night records is pulled afterwards with `tools/pull_laptop_logs.sh <laptop ip>`.
 - PC console: F12, tab Console, then type the filter word the section names (`NetStats`, `Quiver`, `Spawn`, `TopEdge`).
 - Numbers: no console. Write clock times in the match log below and next to the tick boxes; the tables are pulled from the server afterwards (`tools/stats_table.py`, [[Commands]]).
 - A bot as the second fighter: `godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`.
@@ -358,7 +358,7 @@ Notes:
 **Why.** Until v0.0.35 the server sent every fighter's movement packet on its own: with 3 other fighters that was about 40 packets a second into every screen, and on the wire each one carries 40 to 50 B of headers around 11 B of game data ([[optimisation_step_b_profiles]], Profile 3). Since v0.0.36 the server holds the samples for up to 50 ms and sends them as ONE `sync_bundle` frame per screen, about 20 a second. The harness (`bundle` and `fleet` scenarios) says the puppets move as smoothly as before on the PC, with 25 ms more delay on average, hidden inside the 100 ms the puppets already render behind. Only a person can say whether it feels the same on a phone over Wi-Fi. Detail: [[v0.0.36 - Relay Packet Coalescing]].
 
 ### 5.1 Setup
-- [ ] Build in the lobby is v0.0.39 or later (an older build is refused with VERSION MISMATCH).
+- [ ] Build in the lobby is v0.0.40 or later (an older build is refused with VERSION MISMATCH).
 - [ ] At least three fighters: you on the PC, you on a phone, and one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). Four is better (add `--ai=rusher --name=Bot2`).
 - [ ] No console needed: write the clock time of the rounds in the match log (section 0.1).
 
@@ -386,10 +386,10 @@ Notes:
 
 ## 6. v0.1.0 release sign-off (one match, a spectator, everything on screen)
 
-**Why.** v0.1.0 is the first minor version: v0.0.39 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
+**Why.** v0.1.0 is the first minor version: v0.0.40 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
 
 ### 6.1 Setup
-- [ ] Section 0 filled. Build in the lobby is v0.0.39 (the release candidate).
+- [ ] Section 0 filled. Build in the lobby is v0.0.40 (the release candidate).
 - [ ] Fighters: you on the PC, you on the S25 Ultra, at least one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). A fourth fighter (iPad, Pixel or `--ai=rusher --name=Bot2`) is better.
 - [ ] Spectator: a device that is NOT one of the fighters opens `https://192.168.4.21:8443/play` and does not press join (a second device or a second browser profile, never a second tab in the game PC's browser, backlog 3).
 - [ ] No console needed for the numbers. Write the match in the match log (section 0.1). PC console (F12) only for the tagged lines.

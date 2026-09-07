@@ -16,6 +16,9 @@ window of that file into one row per device, the rows the playtest sheet asks fo
     ./venv/bin/python tools/stats_table.py --match 3 --scene Arena   # only cards from the arena (drop lobby and load lines)
     ./venv/bin/python tools/stats_table.py --devices          # who reported: model, OS, screen rate, browser
     ./venv/bin/python tools/stats_table.py --raw --from 20:41 --to 20:42   # the cards themselves
+    ./venv/bin/python tools/stats_table.py --summary          # v0.0.40: the match as a story: who sat where, classes, kills, K/D, weapons
+    ./venv/bin/python tools/stats_table.py --events --match 3 # every join / name / lock / kill / leave / round marker, in order
+    ./venv/bin/python tools/stats_table.py --file playtest_logs/2026-09-07_192-168-4-29/client_stats.jsonl --list   # a pulled file
 
 A device is one socket's name plus its address. The first card after a scene
 change carries the load spike; --skip-load drops it (default on).
@@ -178,6 +181,55 @@ def print_window(recs, start, end, title, args):
             print(f"- {k}: {device_line(c)}")
 
 
+def summary(recs, m):
+    """v0.0.40: one match as a story from the markers: seats and names, classes, kills, K/D, weapons, devices."""
+    t0, t1 = m["start"], m["end"] or float("inf")
+    ev = [r for r in recs if r.get("kind") in ("join", "name", "lock", "kill", "leave", "round") and t0 - 120 <= r.get("t", 0) <= t1]
+    names = dict((m["start_rec"].get("names") or {}))
+    classes, kills, deaths, weapons, selfk = {}, defaultdict(int), defaultdict(int), defaultdict(int), defaultdict(int)
+    for r in ev:
+        if r["kind"] == "name":
+            names[str(r["seat"])] = r.get("name")
+        elif r["kind"] == "lock":
+            classes[str(r["seat"])] = r.get("class_name")
+        elif r["kind"] == "kill" and r["t"] >= t0:
+            deaths[r["victim"]] += 1
+            if r.get("self"):
+                selfk[r["victim"]] += 1
+            else:
+                kills[r["killer"]] += 1
+                weapons[(r["killer"], r.get("weapon"))] += 1
+    end = m.get("end_rec") or {}
+    rounds = [r for r in m["rounds"] if r.get("event") == "over"]
+    print(f"\n## match {m['n']}: {clock(m['start'])} to {clock(m['end'])}, {len(rounds)} rounds, "
+          f"winner {('P' + str(end['winner'])) if end.get('winner') else '-'} ({end.get('reason', 'no end marker')})")
+    rows = []
+    seats = sorted({int(k) for k in names} | set(kills) | set(deaths))
+    for p in seats:
+        w = ", ".join(f"{wp} x{n}" for (k, wp), n in sorted(weapons.items()) if k == p) or "-"
+        d = deaths[p]
+        rows.append([f"P{p}", names.get(str(p), "?"), classes.get(str(p), "?"), str(kills[p]), str(d),
+                     f"{kills[p] / d:.1f}" if d else str(float(kills[p])), str(selfk[p]), w])
+    print(table(rows, ["Seat", "Name", "Class", "Kills", "Deaths", "K/D", "Self", "Weapons"]))
+    crowns = [f"round {r['round']}: P{r.get('winner')}" for r in rounds]
+    if crowns:
+        print("rounds: " + " · ".join(crowns))
+    cards = in_window(recs, m["start"], m["end"])
+    seen = {}
+    for c in cards:
+        seen.setdefault(device_key(c), c)
+    for k, c in sorted(seen.items()):
+        print(f"- {k}: {device_line(c)}")
+
+
+def events(recs, t0, t1):
+    for r in recs:
+        if r.get("kind") in ("card", "server") or not (t0 - 120 <= r.get("t", 0) <= (t1 or float("inf"))):
+            continue
+        body = {k: v for k, v in r.items() if k not in ("kind", "t", "clock")}
+        print(f"{r.get('clock', '?')}  {r['kind']:<6} {json.dumps(body, separators=(',', ':'))}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="One row per device from client_stats.jsonl (Tower Brawl v0.0.37).")
     ap.add_argument("--file", default=STATS_FILE)
@@ -192,6 +244,8 @@ def main():
     ap.add_argument("--scene", help="only cards from this scene (Arena, CharacterSelect, ...)")
     ap.add_argument("--keep-load", action="store_true", help="keep the first card after a scene change (the load spike)")
     ap.add_argument("--raw", action="store_true", help="print the cards instead of the table")
+    ap.add_argument("--summary", action="store_true", help="the match as a story: seats, classes, kills, K/D, weapons, devices (v0.0.40)")
+    ap.add_argument("--events", action="store_true", help="every marker in the window, in order (v0.0.40)")
     args = ap.parse_args()
 
     recs = load(args.file)
@@ -225,7 +279,10 @@ def main():
         date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
         start = parse_clock(args.t_from, date)
         end = parse_clock(args.t_to, date) if args.t_to else None
-        print_window(recs, start, end, "window", args)
+        if args.events:
+            events(recs, start, end)
+        else:
+            print_window(recs, start, end, "window", args)
         return 0
 
     chosen = [m for m in ms if m["n"] == args.match] if args.match else ms[-args.last:]
@@ -233,6 +290,12 @@ def main():
         print("no such match; try --list")
         return 1
     for m in chosen:
+        if args.summary:
+            summary(recs, m)
+            continue
+        if args.events:
+            events(recs, m["start"], m["end"])
+            continue
         if args.by_round:
             starts = [r for r in m["rounds"] if r.get("event") == "start"]
             bounds = [(m["start"], 1)] + [(r["t"], r.get("round")) for r in starts]

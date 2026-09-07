@@ -29,7 +29,7 @@ Keys:  ← →  pan the strip     + -  zoom (0.5 s .. 30 s per column)
        Home  match start      End or f  back to live and follow
        click a column  what happened that second      Esc  clear it
        1-9  hide / show a log tag    p  pause    s  save a text snapshot    q  quit
-       with --controls:  b  add a bot    B  remove a bot    x  clear bots    w  wifi help
+       with --controls:  a  add a bot    r  remove a bot    x  clear bots    w  wifi help
                          (or click the buttons in the SERVER panel; tools/tbbot.py does the work)
 Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel
 over the events panel scrolls it. --no-mouse turns the mouse off.
@@ -1135,9 +1135,9 @@ class Deck:
         elif key == "esc":
             self.selected_t = None
             self.show_wifi = False
-        elif self.controls and key == "b":
+        elif self.controls and key == "a":
             self.bot_action("add")
-        elif self.controls and key == "B":
+        elif self.controls and key == "r":
             self.bot_action("remove")
         elif self.controls and key == "x":
             self.bot_action("clear")
@@ -1442,7 +1442,7 @@ def server_panel(deck, width):
         x += 2
     bots = deck.status.get("bots", 0) if deck.status else 0
     body.append(f"bots: {bots}", style="magenta")
-    body.append("   keys: b add  B remove  x clear  w wifi", style="dim")
+    body.append("   keys: a add  r remove  x clear  w wifi", style="dim")
     return Panel(body, title="server", title_align="left", border_style="green"), 4
 
 

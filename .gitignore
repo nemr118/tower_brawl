@@ -25,3 +25,7 @@ deck_snapshot_*.txt
 
 # v0.0.37: every client card and match marker, appended by serve_game.py (rotates to .1 at 10 MB)
 client_stats.jsonl*
+
+# v0.0.40: the laptop bot manager (tools/tbbot.py) pid and log files, and playtest data pulled off the laptop
+.bots/
+playtest_logs/
