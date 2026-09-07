@@ -10,7 +10,7 @@ An old laptop runs the game server so the main PC stays free to play. It has no 
 - `towerbrawl.service` starts the game server at boot and restarts it if it dies.
 - The lid can be closed. Sleep is off.
 - The screen logs in by itself and opens a one-window graphical terminal (`cage` + `foot`, JetBrainsMono Nerd Font, the Omarchy colours, so it looks like the PC's deck). It prints a help box with the play link and every command, then opens the deck (`tbdash --controls`). If the graphics fail, it falls back to the plain text console.
-- The deck has a SERVER panel at the top: the play link, buttons for **+ bot**, **- bot**, **clear bots** and **wifi help**. Keys do the same: `a`, `r`, `x`, `w`. `a` (or **+ bot**) opens the bot menu (v0.0.41): press `1` to `6` or click a chip to add that persona (wanderer, chaser, sniper, turtle, rusher, griefer), `a` again adds the next one in the list, Esc closes it. Press `q` to leave the deck and get a shell; `tbdash` brings it back, `tbhelp` prints the box again.
+- The deck has a SERVER panel at the top: the play link, buttons for **+ bot**, **- bot**, **clear bots** and **wifi help**. Keys do the same: `a`, `r`, `x`, `w`. `a` (or **+ bot**) opens the bot menu (v0.0.41): press `1` to `6` or click a chip to add that persona (wanderer, chaser, sniper, turtle, rusher, griefer), `a` again adds the next one in the list, Esc closes it. `i` (or **info**) shows the about panel with the public GitHub link, for anyone who asks about the code. Press `q` to leave the deck and get a shell; `tbdash` brings it back, `tbhelp` prints the box again.
 - Bots are real headless Godot players with a bot brain (`tools/tbbot.py`, alias `tbbot`). Up to 4. Godot and the game source live on the laptop for this.
 
 ## At a new house

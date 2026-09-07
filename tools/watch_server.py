@@ -30,7 +30,7 @@ Keys:  ← →  pan the strip     + -  zoom (0.5 s .. 30 s per column)
        click a column  what happened that second      Esc  clear it
        1-9  hide / show a log tag    p  pause    s  save a text snapshot    q  quit
        with --controls:  a  the bot menu (1-6 add that persona, a the next one, Esc closes)
-                         r  remove a bot    x  clear bots    w  wifi help
+                         r  remove a bot    x  clear bots    w  wifi help    i  about the game (the GitHub link)
                          (or click the buttons and the persona chips in the SERVER panel; tools/tbbot.py does the work)
 Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel
 over the events panel scrolls it. --no-mouse turns the mouse off.
@@ -902,6 +902,7 @@ class Deck:
         self.controls = False          # --controls: the SERVER panel with the play link and bot buttons
         self.show_wifi = False         # w: the wifi help panel
         self.show_bots = False         # a: the bot menu (v0.0.41): pick a persona by key or click
+        self.show_info = False         # i: the about panel with the GitHub link (v0.0.41)
         self.button_geom = []          # [(y, x0, x1, action)] of the last drawn buttons, 1-based cells
         self._ip = ("", 0.0)           # (address, time it was read)
         self.events_geom = None        # (y0, y1) of the last drawn events panel
@@ -1106,6 +1107,9 @@ class Deck:
                 if action == "add":
                     self.show_bots = not self.show_bots
                     continue
+                if action == "info":
+                    self.show_info = not self.show_info
+                    continue
                 if action and action.startswith("add:"):
                     self.bot_action("add", action[4:])
                     self.show_bots = False
@@ -1165,8 +1169,11 @@ class Deck:
             self.selected_t = None
             self.show_wifi = False
             self.show_bots = False
+            self.show_info = False
         elif self.controls and key == "a":
             self.show_bots = True
+        elif self.controls and key == "i":
+            self.show_info = not self.show_info
         elif self.controls and key == "r":
             self.bot_action("remove")
         elif self.controls and key == "x":
@@ -1328,6 +1335,9 @@ def render_rich(deck, height, width):
         if deck.show_wifi:
             panel, lines = wifi_panel()
             add(panel, lines)
+        if deck.show_info:
+            panel, lines = info_panel(deck)
+            add(panel, lines)
 
     if status is None or age > STALE_AFTER:
         if view and view["mode"] == "live" and view["state"] == "restarting":
@@ -1437,7 +1447,8 @@ def render_rich(deck, height, width):
     return Group(*parts)
 
 
-BUTTONS = (("+ bot", "add"), ("- bot", "remove"), ("clear bots", "clear"), ("wifi help", "wifi"))
+BUTTONS = (("+ bot", "add"), ("- bot", "remove"), ("clear bots", "clear"), ("wifi help", "wifi"), ("info", "info"))
+GITHUB_URL = "https://github.com/nemr118/tower_brawl"
 
 WIFI_HELP = (
     "Plug in a cable if you can. It is faster and needs no setup. Otherwise, in a shell (q leaves the deck):",
@@ -1469,14 +1480,14 @@ def server_panel(deck, width):
     x = 3
     for i, (label, action) in enumerate(BUTTONS):
         chip = f" {label} "
-        body.append(chip, style="bold black on cyan" if action != "wifi" else "bold black on yellow")
+        body.append(chip, style={"wifi": "bold black on yellow", "info": "bold black on white"}.get(action, "bold black on cyan"))
         deck.button_geom.append((y, x, x + len(chip) - 1, action))
         x += len(chip)
         body.append("  ")
         x += 2
     bots = deck.status.get("bots", 0) if deck.status else 0
     body.append(f"bots: {bots}", style="magenta")
-    body.append("   keys: a bot menu  r remove  x clear  w wifi", style="dim")
+    body.append("   keys: a bot menu  r remove  x clear  w wifi  i info", style="dim")
     return Panel(body, title="server", title_align="left", border_style="green"), 4
 
 
@@ -1512,6 +1523,24 @@ def bot_menu_panel(deck):
     body.append("\n")
     body.append("in the game: " + (", ".join(bots) if bots else "no bots yet") + "   (max 4)", style="magenta")
     return Panel(body, title="bots (a or Esc closes this)", title_align="left", border_style="cyan"), 6
+
+
+def info_panel(deck):
+    """v0.0.41: the about panel (key i): what this is and where the code lives."""
+    from rich.panel import Panel
+    from rich.text import Text
+    version = (deck.status or {}).get("version") or "?"
+    body = Text(no_wrap=True, overflow="crop")
+    body.append("TOWER BRAWL  ", style="bold")
+    body.append(f"{version}  ", style="bold green")
+    body.append("a 4-player LAN brawler: a Godot 4.7 web client and a Python WebSocket relay. Phones and PCs play in a browser.\n")
+    body.append("The code:  ", style="bold")
+    body.append(GITHUB_URL, style="bold cyan underline")
+    body.append("   (public)\n")
+    body.append("The docs/ folder is the project notebook: patch notes per build, playtest sheets, the deck, the tape and the replay.\n", style="dim")
+    body.append("Built with Claude Code. This screen is the server's deck (tools/watch_server.py); the game server is serve_game.py; "
+                "the bots are headless Godot clients (tools/tbbot.py).", style="dim")
+    return Panel(body, title="about (i or Esc closes this)", title_align="left", border_style="white"), 6
 
 
 def wifi_panel():
