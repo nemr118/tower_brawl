@@ -21,7 +21,7 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 9. **An outer ledge carries a fighter out of the top of the screen mid-shift** — open (only the ledges swing past the edge since v0.0.39) — arena configurations: outer ledges inside 165 px of the pivot, or option B (wrap a fighter above the top edge to the bottom) — [[v0.0.31 - Top Edge Probe]].
 11. **Arena voids are a mechanic, not a bug** — user decision (v0.0.11) — nothing to do (`bot_brain.gd` routes through the seams).
 12. **One-off `fleet.client-silent`** — seen once (v0.0.27) — if it shows again keep `.harness_logs/godot2.log`.
-13. **PC keyboard dead after a reload in the replay gap** — open, low (seen once, June) — every card carries `keys=` and `focus=`; a clock time is enough next time — [[v0.0.28 - Rejoin in the Replay Gap]].
+13. **PC keyboard dead after a reload in the replay gap** — open, low (seen once, June) — every card carries `keys=` and `focus=`; a clock time is enough — [[v0.0.28 - Rejoin in the Replay Gap]].
 14. **Stall report from the playtest** — open, vague — ask for exact steps at the next playtest — [[Playtest v0.0.26]].
 16. **The stomp-egg has no author over the network** — design call — a `player_hit` event from the observer, relayed like `player_died` — [[v0.0.29 - Egg-Form Puppet]].
 17. **Seam hiding** — design call — a fighter is drawn on one side of the seam only; draw a second copy near the edge — [[Playtest v0.0.17]].
