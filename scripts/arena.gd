@@ -19,6 +19,16 @@ var platform_layers: Dictionary = {}   # v0.0.32: each platform's collision_laye
 # edge for a second (backlog 9, reopened). true = the v0.0.32 free fall. Kept as
 # a switch so a future arena configuration can pick either per layout.
 const SHIFT_SOFT_PLATFORMS: bool = false
+# v0.0.39: the two ground slabs do not turn with the stage any more (user
+# decision). At load they are moved out of `Platforms` into a sibling node,
+# `Ground`, at the same place, so their local positions stay (±140, 155) and the
+# spin tween never touches them. The floor is always the floor: the flipped
+# ground at the top edge (backlog 22) is gone, and a fighter dropped by the
+# shift lands on the floor instead of tumbling out of the bottom. The turning
+# ledges do sweep through the slabs' corners mid-turn (backlog 24, accepted
+# for now). Everything else under `Platforms` turns as a group, as before.
+const ANCHORED_PLATFORMS: Array[String] = ["GroundLeft", "GroundRight"]
+var ground_node: Node2D = null
 
 const PlayerScene = preload("res://scenes/player.tscn")
 const BotBrainScript = preload("res://scripts/bot_brain.gd")
@@ -86,6 +96,20 @@ const FEET_OFFSET = 8.0     # the fighter's feet sit 8 px below its middle point
 const SPOT_MIN_Y = 30.0     # a top edge above this line is out of view
 const SPOT_MAX_Y = 340.0    # a top edge below this line is too close to the bottom
 
+func _anchor_ground() -> void:
+	# v0.0.39. Runs first thing in _ready, while Platforms is still unturned
+	# (rotation 0 from the scene), so reparent() keeps the global transform and
+	# the local position with it. The rejoin rotation below then turns only
+	# what is left under Platforms.
+	ground_node = Node2D.new()
+	ground_node.name = "Ground"
+	ground_node.position = platforms_node.position
+	add_child(ground_node)
+	for plat_name in ANCHORED_PLATFORMS:
+		var plat := platforms_node.get_node_or_null(plat_name)
+		if plat != null:
+			plat.reparent(ground_node)
+
 func _platform_tops() -> Array:
 	# One point per platform: the middle of its top edge, where a fighter stands.
 	# A half turn of the arena moves a platform to the mirror spot around the
@@ -94,7 +118,16 @@ func _platform_tops() -> Array:
 	# two screens could disagree). The count is the same on every screen.
 	var tops: Array = []
 	var flipped := (Global.arena_flips % 2) != 0
-	for plat in platforms_node.get_children():
+	# v0.0.39: the anchored ground never mirrors; the rest mirrors on an odd flip count.
+	var groups: Array = [[platforms_node, flipped]]
+	if ground_node != null:
+		groups.append([ground_node, false])
+	var bodies: Array = []
+	for g in groups:
+		for plat in g[0].get_children():
+			bodies.append([plat, g[0], g[1]])
+	for entry in bodies:
+		var plat = entry[0]
 		if not plat is StaticBody2D:
 			continue
 		var shape_node = plat.get_node_or_null("CollisionShape2D")
@@ -102,9 +135,9 @@ func _platform_tops() -> Array:
 			continue
 		var half_h: float = shape_node.shape.size.y / 2.0
 		var local: Vector2 = plat.position
-		if flipped:
+		if entry[2]:
 			local = -local
-		var center: Vector2 = platforms_node.position + local
+		var center: Vector2 = entry[1].position + local
 		var top_y := center.y - half_h
 		if top_y < SPOT_MIN_Y or top_y > SPOT_MAX_Y:
 			continue
@@ -173,6 +206,7 @@ const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
 # level first loads. It's like setting up a board game before you start playing.
 # ------------------------------------------------------------------------------
 func _ready():
+	_anchor_ground()
 	var leave_btn = Button.new()
 	leave_btn.text = "LEAVE MATCH"
 	leave_btn.add_theme_font_size_override("font_size", 16)

@@ -1,14 +1,14 @@
 ---
 tags: [playtest]
-build: v0.0.38
-backlog: 1, 6, 13, 9 (reopened, the feel), optimisation Step C (build 1 and build 3), v0.1.0 release sign-off
+build: v0.0.39
+backlog: 1, 6, 13, 9 and 24 (the shift feel), optimisation Step C (build 1 and build 3), v0.1.0 release sign-off
 result: not played yet
 ---
 # Playtest — Master Validation Suite
 
 **Result: not played yet. Tick the boxes, paste the console lines into the tables, tick one verdict per section.**
 
-One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 4 (rewritten 2026-09-07) checks the arena shift with solid platforms again. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.38 with a new number, so a pass here on v0.0.38 counts for the release ([[release-v0.1.0]]).
+One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 4 (rewritten 2026-09-07) checks the arena shift with the floor anchored and the rest turning above it. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.39 with a new number, so a pass here on v0.0.39 counts for the release ([[release-v0.1.0]]).
 
 **No console needed anywhere (v0.0.37).** Every device, phone or PC or tablet, sends its NetStats numbers to the server every 5 s; the server stamps every match and round. You write clock times (the PC clock, HH:MM), nothing else. Afterwards `./venv/bin/python tools/stats_table.py --list` shows the matches and `--match N` (or `--from HH:MM --to HH:MM`) prints one row per device, all devices at once. A console is only where the tagged lines (`Quiver`, `Spawn`, `TopEdge`) print, and only the PC needs it.
 
@@ -17,7 +17,7 @@ One sheet for everything a person still has to check. It replaces the three old 
 | Field | Your answer |
 |---|---|
 | Date and time (so the `server.log` lines can be found) | |
-| Build shown in the lobby (must be v0.0.38, the release candidate) | |
+| Build shown in the lobby (must be v0.0.39, the release candidate) | |
 | PC: operating system, browser and version (`chrome://version`) | |
 | Phones and tablets in the game (model, browser) | |
 | Number of players, bots in the game (yes / no, how many) | |
@@ -299,36 +299,36 @@ Notes:
 
 ---
 
-## 4. Arena shift: the ride is back (backlog 9 reopened, the feel)
+## 4. Arena shift with the ground anchored (backlog 9 open, 24 new, the feel)
 
-**Why.** v0.0.32 made the platforms soft while the arena shift turns the stage, so a standing fighter fell through and tumbled out of the bottom three or four times. That fixed backlog 9 (a fighter riding an outer platform out of the top of the screen for about a second) but it felt terrible, so v0.0.38 puts the platforms back to solid during the turn (`SHIFT_SOFT_PLATFORMS = false` in `arena.gd`). The ride is back and backlog 9 is open again; the long-term fix comes with the arena configurations. This section checks that the old shift feels right and how bad the ride is in a real game.
+**Why.** Since v0.0.39 the two ground slabs do not turn with the stage. They are moved out of the spinning group when the arena loads, so the floor is always the floor; everything else (the four ledges, the tower, the apex) still turns as a group around the middle of the screen, with the platforms solid (v0.0.38). What that buys: the flipped floor at the top edge (backlog 22) is gone, and a fighter knocked off a turning ledge lands on the floor instead of falling out of the bottom. What it costs: the outer ledges still swing about 30 px past the top edge mid-turn (backlog 9, the ride, now on the ledges only), and the turning ledges sweep through the corners of the anchored slabs mid-turn, so a fighter standing at the outer end of a slab can be shoved or clipped for a moment (backlog 24, known and accepted for the playtest). This section checks how the new shift feels and how often the two known costs show up in a real game.
 
 Two players at least, four is best. Filter `TopEdge` on the PC console for the tagged line; every shift also gets a clock time in the match log.
 
-### 4.1 Standing on a platform when the shift starts
-- [ ] Stand on `LedgeLeft` or `LedgeRight` (the outer ledges). Let another player grab the power-up.
-- [ ] You stay on the ledge and ride it through the turn; you do not fall through it.
-- [ ] Near the middle of the turn you pass above the top of the screen for up to a second. How did that feel (fine / confusing / unfair)?
-- [ ] You come back into view on the new layout, still standing, when the stage locks.
+### 4.1 Standing on the floor when the shift starts
+- [ ] Stand in the middle of `GroundLeft` or `GroundRight`. Let another player grab the power-up. The floor does not move; the rest of the stage turns above you.
+- [ ] Stand at the OUTER end of a slab (near the screen edge). A turning ledge sweeps through that corner mid-turn. Were you shoved, clipped, stuck or killed by it (write which, and the clock time)?
+- [ ] After the turn the ledges, tower and apex are upside down above the same floor. Does the new layout read as fair (something to stand on, no dead spots)?
 Notes:
 
-### 4.2 Standing on the ground slab or the centre tower when the shift starts
-- [ ] Stand on `GroundLeft` or `GroundRight`: you ride the slab and stay on it.
-- [ ] Stand on the centre tower: it turns under you and you stay on it.
+### 4.2 Standing on a ledge or the tower when the shift starts
+- [ ] Stand on `LedgeLeft` or `LedgeRight` (the outer ledges). You ride the ledge; near the middle of the turn you pass above the top of the screen for up to a second. How did that feel (fine / confusing / unfair)?
+- [ ] Stand on `LedgeHighLeft`, the tower or the apex. You ride it; it stays on screen.
+- [ ] Come back into view on the new layout, still standing, when the stage locks.
 Notes:
 
-### 4.3 In the air when the shift starts
-- [ ] Jump just before the banner `** ARENA SHIFT! **`: you land on whatever turning platform is under you; the platforms are solid.
-- [ ] Fall out of the bottom during the turn: you wrap to the top and land on a passing platform or fall again. Did you land somewhere strange (write where)?
+### 4.3 In the air or falling when the shift starts
+- [ ] Jump just before the banner `** ARENA SHIFT! **`: you land on the floor or on a turning platform; everything is solid.
+- [ ] Fall through the centre gap during the turn: you wrap to the top and land somewhere. Did you land on a ledge passing near the top edge, mostly out of view (write it, clock time)?
 Notes:
 
 ### 4.4 A round start during the turn
 - [ ] Have the last fighter of a round die while the stage turns (the next round comes 2.6 s after the last kill).
-- [ ] The new round starts with everyone on solid platforms at the spawn.
+- [ ] The new round starts with everyone on solid platforms at the spawn; the `🧭 [Spawn]` line on the PC console lists a floor spot at `y = 302`.
 Notes:
 
 ### 4.5 Other screens
-- [ ] Watch another player ride the turn on your screen. They see the same on theirs (ask them).
+- [ ] Watch another player through a turn on your screen. They see the same on theirs (ask them). The floor is still at the bottom on every screen.
 Notes:
 
 ### 4.6 Telemetry
@@ -345,8 +345,9 @@ Clock times of a shift and of the moment the stage locked again; the numbers (dr
 | Right after the stage locked | | | |
 
 ### 4.7 Verdict (section 4)
-- [ ] **The old shift feels right and the ride out of the top is a nit:** ship v0.1.0 with it. Backlog 9 stays open for the arena configurations (option B, wrap a fighter carried above the top edge to the bottom).
-- [ ] **The ride out of the top is unfair (write why):** do option B before v0.1.0, as a v0.0.x build; play this section again.
+- [ ] **The anchored floor feels right; the ledge ride and the slab-corner sweep are nits:** ship v0.1.0 with it. Backlog 9 and 24 stay open for the arena configurations.
+- [ ] **The slab-corner sweep hurt someone (write how):** fix backlog 24 before v0.1.0 (soft turning pieces, or move the outer ledges inward); play this section again.
+- [ ] **The ledge ride out of the top is unfair (write why):** do option B or move the outer ledges inward before v0.1.0; play this section again.
 - [ ] **Something else felt wrong during the turn (write what):** open a backlog item with the clock time.
 Notes:
 
@@ -357,7 +358,7 @@ Notes:
 **Why.** Until v0.0.35 the server sent every fighter's movement packet on its own: with 3 other fighters that was about 40 packets a second into every screen, and on the wire each one carries 40 to 50 B of headers around 11 B of game data ([[optimisation_step_b_profiles]], Profile 3). Since v0.0.36 the server holds the samples for up to 50 ms and sends them as ONE `sync_bundle` frame per screen, about 20 a second. The harness (`bundle` and `fleet` scenarios) says the puppets move as smoothly as before on the PC, with 25 ms more delay on average, hidden inside the 100 ms the puppets already render behind. Only a person can say whether it feels the same on a phone over Wi-Fi. Detail: [[v0.0.36 - Relay Packet Coalescing]].
 
 ### 5.1 Setup
-- [ ] Build in the lobby is v0.0.38 or later (an older build is refused with VERSION MISMATCH).
+- [ ] Build in the lobby is v0.0.39 or later (an older build is refused with VERSION MISMATCH).
 - [ ] At least three fighters: you on the PC, you on a phone, and one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). Four is better (add `--ai=rusher --name=Bot2`).
 - [ ] No console needed: write the clock time of the rounds in the match log (section 0.1).
 
@@ -385,10 +386,10 @@ Notes:
 
 ## 6. v0.1.0 release sign-off (one match, a spectator, everything on screen)
 
-**Why.** v0.1.0 is the first minor version: v0.0.38 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
+**Why.** v0.1.0 is the first minor version: v0.0.39 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
 
 ### 6.1 Setup
-- [ ] Section 0 filled. Build in the lobby is v0.0.38 (the release candidate).
+- [ ] Section 0 filled. Build in the lobby is v0.0.39 (the release candidate).
 - [ ] Fighters: you on the PC, you on the S25 Ultra, at least one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). A fourth fighter (iPad, Pixel or `--ai=rusher --name=Bot2`) is better.
 - [ ] Spectator: a device that is NOT one of the fighters opens `https://192.168.4.21:8443/play` and does not press join (a second device or a second browser profile, never a second tab in the game PC's browser, backlog 3).
 - [ ] No console needed for the numbers. Write the match in the match log (section 0.1). PC console (F12) only for the tagged lines.
@@ -413,7 +414,7 @@ Notes:
 - [ ] The HUD (stocks, crowns, round number) agrees on every screen after each round.
 - [ ] The tape card (kill stamps) updates within about 10 s of a kill and at once at the replay (cut 2 in action).
 - [ ] The replay shows the closing kill from the right angle, with the right fighters, and skips or ends cleanly.
-- [ ] The arena shift looks the same on the phone and the PC (no half-drawn frames, no fighter left behind); the platforms stay solid (section 4).
+- [ ] The arena shift looks the same on the phone and the PC (no half-drawn frames, no fighter left behind); the floor stays put and the rest turns above it (section 4).
 - [ ] Puppets on the phone glide like on the PC (this repeats the section 5 feel with a full match; tick the section 5 verdict from the same evening).
 - [ ] Anything that looked wrong, in your words (device, round, what):
 
@@ -428,4 +429,4 @@ Notes:
 
 ---
 
-Related: [[release-v0.1.0]] (section 6), [[PASSDOWN]] (backlog 1, 6, 9, 13; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).
+Related: [[release-v0.1.0]] (section 6), [[PASSDOWN]] (backlog 1, 6, 9, 13, 24; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).

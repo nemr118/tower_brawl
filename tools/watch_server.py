@@ -8,6 +8,7 @@ interactive since v0.0.24).
     ./venv/bin/python tools/watch_server.py --once      # one picture and exit (colour, or --plain)
     ./venv/bin/python tools/watch_server.py --no-mouse  # keyboard only
     tbdash                                              # the shell alias for the first line
+    ./venv/bin/python tools/watch_server.py --controls  # server laptop: play link, bot buttons, wifi help
 
 The story: to watch a match from the terminal you had to read raw log lines.
 Now serve_game.py writes a small file, status.json, once a second, and the test
@@ -28,6 +29,8 @@ Keys:  ← →  pan the strip     + -  zoom (0.5 s .. 30 s per column)
        Home  match start      End or f  back to live and follow
        click a column  what happened that second      Esc  clear it
        1-9  hide / show a log tag    p  pause    s  save a text snapshot    q  quit
+       with --controls:  b  add a bot    B  remove a bot    x  clear bots    w  wifi help
+                         (or click the buttons in the SERVER panel; tools/tbbot.py does the work)
 Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel
 over the events panel scrolls it. --no-mouse turns the mouse off.
 
@@ -895,6 +898,10 @@ class Deck:
         self.harness = None
         self.now = time.time()
         self.strip_geom = None         # (y0, y1, x0, cells, start_t, bin_s) of the last drawn strip
+        self.controls = False          # --controls: the SERVER panel with the play link and bot buttons
+        self.show_wifi = False         # w: the wifi help panel
+        self.button_geom = []          # [(y, x0, x1, action)] of the last drawn buttons, 1-based cells
+        self._ip = ("", 0.0)           # (address, time it was read)
         self.events_geom = None        # (y0, y1) of the last drawn events panel
         self.last_view = None          # the strip dict of the last draw
 
@@ -963,6 +970,38 @@ class Deck:
 
     def say(self, text):
         self.message = (self.now + MESSAGE_KEEP, text)
+
+    # -- --controls: the server panel ----------------------------------------
+    def lan_ip(self):
+        """This machine's LAN address, re-read every 10 s (empty when there is no network)."""
+        if self.now - self._ip[1] > 10:
+            import socket
+            ip = ""
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.connect(("1.1.1.1", 80))
+                ip = sock.getsockname()[0]
+                sock.close()
+            except OSError:
+                pass
+            self._ip = (ip, self.now)
+        return self._ip[0]
+
+    def bot_action(self, action):
+        """Run tools/tbbot.py add / remove / clear and show its first line."""
+        import subprocess
+        cmd = [sys.executable, os.path.join(ROOT, "tools", "tbbot.py"), action]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired) as e:
+            out = f"tbbot failed: {e}"
+        self.say((out.strip().splitlines() or ["done"])[0])
+
+    def button_at(self, x, y):
+        for by, x0, x1, action in self.button_geom:
+            if y == by and x0 <= x <= x1:
+                return action
+        return None
 
     # -- the view -------------------------------------------------------------
     @property
@@ -1056,6 +1095,13 @@ class Deck:
                     self.pan(step * cols)
             elif ev[0] == "click":
                 _, button, x, y = ev
+                action = self.button_at(x, y) if self.controls else None
+                if action == "wifi":
+                    self.show_wifi = not self.show_wifi
+                    continue
+                if action:
+                    self.bot_action(action)
+                    continue
                 c = self.strip_col(x, y)
                 if c is not None and self.last_view:
                     self.selected_t = self.last_view["start_t"] + c * self.last_view["bin_s"]
@@ -1088,6 +1134,15 @@ class Deck:
             self.zoom_to(self.zoom + 1)
         elif key == "esc":
             self.selected_t = None
+            self.show_wifi = False
+        elif self.controls and key == "b":
+            self.bot_action("add")
+        elif self.controls and key == "B":
+            self.bot_action("remove")
+        elif self.controls and key == "x":
+            self.bot_action("clear")
+        elif self.controls and key == "w":
+            self.show_wifi = not self.show_wifi
         elif key == "pgup":
             self.events_scroll += 10
         elif key == "pgdn":
@@ -1231,6 +1286,15 @@ def render_rich(deck, height, width):
     if alert:
         add(Text(f" {alert} "[:width], style="bold white on red", no_wrap=True, overflow="crop"), 1)
 
+    deck.button_geom = []
+    if deck.controls:
+        deck._panel_top = used
+        panel, lines = server_panel(deck, width)
+        add(panel, lines)
+        if deck.show_wifi:
+            panel, lines = wifi_panel()
+            add(panel, lines)
+
     if status is None or age > STALE_AFTER:
         if view and view["mode"] == "live" and view["state"] == "restarting":
             add(Panel(Text("server restarting for the next harness scenario", style="bold black on yellow"),
@@ -1339,6 +1403,56 @@ def render_rich(deck, height, width):
     return Group(*parts)
 
 
+BUTTONS = (("+ bot", "add"), ("- bot", "remove"), ("clear bots", "clear"), ("wifi help", "wifi"))
+
+WIFI_HELP = (
+    "Plug in a cable if you can. It is faster and needs no setup. Otherwise, in a shell (q leaves the deck):",
+    "  nmcli device wifi list                                     see the networks around you",
+    "  sudo nmcli device wifi connect \"NAME\" password \"PASS\"     join one (it is remembered)",
+    "  nmcli device                                               check: wlan0 should say connected",
+    "  tbdash                                                     come back to the deck",
+    "The play link uses the address at the top of this panel. It changes on a new network.",
+)
+
+
+def server_panel(deck, width):
+    """The SERVER panel (--controls): play links, the bots, clickable buttons.
+    Returns (panel, height) and records where the buttons landed for the mouse."""
+    from rich.panel import Panel
+    from rich.text import Text
+    ip = deck.lan_ip()
+    body = Text(no_wrap=True, overflow="crop")
+    if ip:
+        body.append("Play on phones: ", style="bold")
+        body.append(f"https://{ip}:8443/play", style="bold green")
+        body.append("    PC: ", style="bold")
+        body.append(f"http://{ip}:8000", style="green")
+    else:
+        body.append("no network: plug in the cable or press w for the wifi commands", style="bold red")
+    body.append("\n")
+    # buttons: the row below the links. Border (1) + padding (1) puts the first cell at x=3.
+    y = deck._panel_top + 2
+    x = 3
+    for i, (label, action) in enumerate(BUTTONS):
+        chip = f" {label} "
+        body.append(chip, style="bold black on cyan" if action != "wifi" else "bold black on yellow")
+        deck.button_geom.append((y, x, x + len(chip) - 1, action))
+        x += len(chip)
+        body.append("  ")
+        x += 2
+    bots = deck.status.get("bots", 0) if deck.status else 0
+    body.append(f"bots: {bots}", style="magenta")
+    body.append("   keys: b add  B remove  x clear  w wifi", style="dim")
+    return Panel(body, title="server", title_align="left", border_style="green"), 4
+
+
+def wifi_panel():
+    from rich.panel import Panel
+    from rich.text import Text
+    body = Text("\n".join(WIFI_HELP), no_wrap=True, overflow="ellipsis")
+    return Panel(body, title="wifi (w or Esc closes this)", title_align="left", border_style="yellow"), len(WIFI_HELP) + 2
+
+
 def harness_panel(view, width, count=False):
     """The harness deck as a rich Panel. With count=True also returns its height."""
     from rich.panel import Panel
@@ -1414,6 +1528,8 @@ def main():
     ap.add_argument("--plain", action="store_true", help="plain text, no colours, no keys")
     ap.add_argument("--once", action="store_true", help="print one picture and exit")
     ap.add_argument("--no-mouse", action="store_true", help="keyboard only, no mouse reporting")
+    ap.add_argument("--controls", action="store_true",
+                    help="server laptop: a SERVER panel with the play link, bot buttons (tools/tbbot.py) and wifi help")
     args = ap.parse_args()
 
     use_rich = not args.plain
@@ -1427,6 +1543,7 @@ def main():
 
     zoom = min(range(len(ZOOM_LADDER)), key=lambda i: abs(ZOOM_LADDER[i] - args.zoom))
     deck = Deck(args.file, args.harness_file, zoom=zoom)
+    deck.controls = args.controls
 
     if args.once or not use_rich:
         size = shutil.get_terminal_size((100, 40))

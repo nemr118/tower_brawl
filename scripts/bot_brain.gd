@@ -288,8 +288,15 @@ func _perceive() -> Dictionary:
 	snap["ammo"] = _ammo()
 	snap["threat"] = _inbound_threat(snap)
 	var arena := me.get_parent()
+	# v0.0.39: the ground slabs live under arena.ground_node now (anchored, they
+	# do not turn); the brain reads both nodes so the floor stays on its map.
+	var plat_nodes: Array = []
 	if arena != null and "platforms_node" in arena and arena.platforms_node != null:
-		for body in arena.platforms_node.get_children():
+		plat_nodes.append(arena.platforms_node)
+	if arena != null and "ground_node" in arena and arena.ground_node != null:
+		plat_nodes.append(arena.ground_node)
+	for pn in plat_nodes:
+		for body in pn.get_children():
 			for cs in body.get_children():
 				if cs is CollisionShape2D and cs.shape is RectangleShape2D:
 					var size: Vector2 = cs.shape.size

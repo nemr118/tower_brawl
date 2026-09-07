@@ -5,16 +5,16 @@ decided: 2026-09-07
 ---
 # Release v0.1.0 — criteria and runbook
 
-**What ships.** v0.1.0 is v0.0.38 with a new version number and nothing else. It carries optimisation Step C cuts 2 (tape card on change, [[v0.0.35 - Tape Card on Change]]) and 3 (relay `sync_bundle`, [[v0.0.36 - Relay Packet Coalescing]]) the client stats cards ([[v0.0.37 - Client Stats Reporting]]) and the solid shift again ([[v0.0.38 - Solid Shift Restored]], backlog 9 reopened by decision). Cut 1 (the phone main thread) is NOT in it: it moves to v0.1.1 as the first post-release optimisation. Decided 2026-09-07.
+**What ships.** v0.1.0 is v0.0.39 with a new version number and nothing else. It carries optimisation Step C cuts 2 (tape card on change, [[v0.0.35 - Tape Card on Change]]) and 3 (relay `sync_bundle`, [[v0.0.36 - Relay Packet Coalescing]]) the client stats cards ([[v0.0.37 - Client Stats Reporting]]), the solid shift again ([[v0.0.38 - Solid Shift Restored]]) and the anchored floor ([[v0.0.39 - Anchored Ground]]; backlog 9 and 24 open by decision). Cut 1 (the phone main thread) is NOT in it: it moves to v0.1.1 as the first post-release optimisation. Decided 2026-09-07.
 
-**How it is verified.** One playtest on the v0.0.38 build, section 6 of [[Playtest — Master Validation Suite]], is the final human check of v0.1.0. The same evening's S25 Ultra rows from `tools/stats_table.py` (section 1) become the baseline for v0.1.1. Because v0.1.0 has no code change over v0.0.38, a pass on v0.0.38 counts for v0.1.0. If any code changes between the playtest and the tag, the playtest no longer counts and section 6 is played again.
+**How it is verified.** One playtest on the v0.0.39 build, section 6 of [[Playtest — Master Validation Suite]], is the final human check of v0.1.0. The same evening's S25 Ultra rows from `tools/stats_table.py` (section 1) become the baseline for v0.1.1. Because v0.1.0 has no code change over v0.0.39, a pass on v0.0.39 counts for v0.1.0. If any code changes between the playtest and the tag, the playtest no longer counts and section 6 is played again.
 
 ## 1. Before the tag (all must be true)
-- [ ] `git status --short` prints nothing on `master`; `git describe --tags` says `v0.0.38`.
+- [ ] `git status --short` prints nothing on `master`; `git describe --tags` says `v0.0.39`.
 - [ ] Master sheet section 6 verdict ticked **ship**. Section 5 verdict ticked **the bundle stays** (or the bundle is off, see 4.3, and the patch page says so).
 - [ ] Sections 1 to 4 played or written off: a verdict ticked, or "not played, moved to v0.1.x" written under the verdict, so the sheet can be archived at the tag.
 - [ ] The full suite on the v0.1.0 build: `24/24 scenarios passed`, no Minor, report `docs/harness_report_v0.1.0.json`. (Step 2 below; the suite runs after the bump because the server checks the version on every join.)
-- [ ] The only code diff between v0.0.38 and v0.1.0 is `GAME_VERSION` in `scripts/global.gd`, its mirror in `serve_game.py`, and the exported `build/web/` files. Check: `git diff v0.0.38 --stat -- scripts serve_game.py tools`.
+- [ ] The only code diff between v0.0.39 and v0.1.0 is `GAME_VERSION` in `scripts/global.gd`, its mirror in `serve_game.py`, and the exported `build/web/` files. Check: `git diff v0.0.39 --stat -- scripts serve_game.py tools`.
 - [ ] Patch page `docs/Patch Notes/v0.1.0 - Release.md` filled (summary, what is in, what moved to v0.1.1, harness line, playtest verdict), Changelog link present.
 
 ## 2. Branch, bump, gate
@@ -22,7 +22,7 @@ decided: 2026-09-07
 cd ~/Work/tower_brawl
 git status --short                                   # nothing
 git checkout -b release/v0.1.0
-./bump_build.sh minor --title "Release"              # v0.0.38 -> v0.1.0: compile check, export, index_v0.1.0.pck, patch page
+./bump_build.sh minor --title "Release"              # v0.0.39 -> v0.1.0: compile check, export, index_v0.1.0.pck, patch page
 systemctl --user restart towerbrawl                  # the service re-reads the version; old builds now get VERSION MISMATCH
 setsid nohup ./venv/bin/python tools/chaos_bots.py --restart-each --json docs/harness_report_v0.1.0.json > /tmp/harness_v0.1.0.log 2>&1 &
 grep "scenarios passed" /tmp/harness_v0.1.0.log      # wait for "24/24 scenarios passed", then check the report for MINOR
@@ -47,7 +47,7 @@ Verify after the push: `git describe --tags` says `v0.1.0`, the lobby at `https:
 ### 4.1 Before the merge (branch only)
 ```bash
 git checkout -- . && git clean -fd build/web         # drop the uncommitted bump and the new index_v0.1.0.* files
-git checkout master                                  # master still says v0.0.38; its build/web is tracked, so the served files come back
+git checkout master                                  # master still says v0.0.39; its build/web is tracked, so the served files come back
 git branch -D release/v0.1.0
 git tag -d v0.1.0 2>/dev/null
 systemctl --user restart towerbrawl
@@ -55,10 +55,10 @@ systemctl --user restart towerbrawl
 ### 4.2 After the push (the tag is public)
 Do not delete a pushed tag. Revert forward:
 ```bash
-git revert --no-edit <release commit>                # restores GAME_VERSION v0.0.38 and the v0.0.38 build files (tracked)
+git revert --no-edit <release commit>                # restores GAME_VERSION v0.0.39 and the v0.0.39 build files (tracked)
 systemctl --user restart towerbrawl                  # the service re-reads the version on every join
 ```
-Phones that cached v0.1.0 get VERSION MISMATCH once and reload to v0.0.38 (`/play` always redirects to the current build). Then bump a new patch build (`./bump_build.sh --title "..."`) with the fix; the version after a revert continues upward, numbers are never reused.
+Phones that cached v0.1.0 get VERSION MISMATCH once and reload to v0.0.39 (`/play` always redirects to the current build). Then bump a new patch build (`./bump_build.sh --title "..."`) with the fix; the version after a revert continues upward, numbers are never reused.
 ### 4.3 Turn a cut off without a client build
 - **Cut 3, the bundle feels late:** `RELAY_BUNDLE_MS = 0` in `serve_game.py`, `systemctl --user restart towerbrawl`. Every `sync_pos` is relayed at once, exactly like v0.0.35. Try 25 before 0.
 - **Cut 2, the tape card looks stale:** no server switch; `TAPE_CARD_MIN_S` lives in `arena.gd`, so that is a client build. Only worth it if section 6 names the card.
