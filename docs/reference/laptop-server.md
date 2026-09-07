@@ -13,6 +13,34 @@ An old laptop runs the game server so the main PC stays free to play. It has no 
 - The deck has a SERVER panel at the top: the play link, buttons for **+ bot**, **- bot**, **clear bots** and **wifi help**. Keys do the same: `a`, `r`, `x`, `w`. `a` (or **+ bot**) opens the bot menu (v0.0.41): press `1` to `6` or click a chip to add that persona (wanderer, chaser, sniper, turtle, rusher, griefer), `a` again adds the next one in the list, Esc closes it. `i` (or **info**) shows the about panel with the public GitHub link, for anyone who asks about the code. Press `q` to leave the deck and get a shell; `tbdash` brings it back, `tbhelp` prints the box again.
 - Bots are real headless Godot players with a bot brain (`tools/tbbot.py`, alias `tbbot`). Up to 4. Godot and the game source live on the laptop for this.
 
+## The hardware (read over ssh on 2026-09-07)
+
+| Part | What it is | State |
+|---|---|---|
+| Machine | ASUS G75VX gaming laptop, BIOS G75VX.204 (2012) | |
+| CPU | Intel Core i7-3630QM, 4 cores / 8 threads, 2.4 to 3.4 GHz, 6 MB L3, AES | `schedutil` governor; idle 40 to 49 °C |
+| Memory | 2 x 4 GB Samsung DDR3-1600 (8 GB, two channels), 4 GB zram swap (zstd) | 7.1 GB free with the server up; the server uses about 20 MB |
+| GPU | NVIDIA GeForce GTX 670MX on `nouveau` (no Intel iGPU exposed; the screen runs on it) | |
+| System disk | SanDisk Ultra II 480 GB SSD, ext4 root + 1 GB EFI | SMART PASSED, 34 868 h, 26 TB written, 0 reallocated, 100 % reserve |
+| Storage disk | HGST 1 TB 2.5" HDD at `/storage`, ext4 | SMART PASSED, 47 821 h, 1.18 M load cycles (old, nothing on it yet) |
+| Ethernet | Atheros AR8151 gigabit, `enp4s0` | 1000 Mb/s full duplex |
+| Wifi | Broadcom BCM4352 (`wl` driver), `wlp3s0` | works; no network saved yet |
+| Battery | 30 % of its design capacity left | irrelevant on mains; sleep masked, lid ignored |
+| Boot | 16 s to the deck | no failed units |
+| Software | Arch, `linux-lts` 6.18, Python 3.14, Godot 4.7.2, rich 15, websocket-client 1.9 | 0 updates pending |
+
+Kernel log noise that is harmless: `b43` probes the wifi chip and fails before `wl` takes it (the blacklist in `/usr/lib/modprobe.d/broadcom-wl-dkms.conf` is in place); the Bluetooth chip has no firmware file and is unused.
+
+## Server tuning (2026-09-07)
+
+- **`towerbrawl.service`** drop-in `/etc/systemd/system/towerbrawl.service.d/10-standalone.conf`: `StartLimitIntervalSec=0` (it keeps restarting after a crash for ever; the default gave up after 5 tries in 10 s), `Nice=-5` (the relay gets CPU before the deck and the bots), `OOMScoreAdjust=-500` (a bot is killed before the server if memory ever runs out), `TimeoutStopSec=10`.
+- **Journal** capped at 200 MB (`/etc/systemd/journald.conf.d/10-cap.conf`).
+- **The game's own logs rotate:** `logrotate` with `/etc/logrotate.d/towerbrawl`: `server.log` and `debug.log` at 50 MB, 5 kept, compressed, `copytruncate` because the server keeps the files open. `debug.log` grows about 1 MB an hour with bots in the game. (Backlog 4 is solved on the laptop this way; the PC still has no rotation.)
+- **Wifi power saving off** (`/etc/NetworkManager/conf.d/wifi-powersave.conf`, `wifi.powersave = 2`), for the night the cable is not an option.
+- **Diagnostics installed:** `smartmontools`, `ethtool`, `dmidecode`. `sudo smartctl -H /dev/sdb` for the SSD, `sudo ethtool enp4s0` for the link.
+- **Old builds are removed** from `build/web` after a deploy; only the current `index_v*` pair stays.
+- **Left alone on purpose:** the CPU governor (the relay is idle most of the time; the 50 ms bundle window dwarfs any ramp-up), `vm.swappiness` (memory is never tight), the HDD (nothing uses it yet), the firewall (none; a home LAN), and `PasswordAuthentication yes` in sshd, which is why the temporary password must change before the laptop sits on someone else's network.
+
 ## At a new house
 
 1. Plug in power and an ethernet cable to the router.
@@ -69,4 +97,4 @@ The file rotates to `.1` at 10 MB (about five hours of a full game with seven de
 
 ## Passwords
 
-`nemr` and `root` start with the password `towerbrawl`. Change them with `passwd` and `sudo passwd root`.
+`nemr` and `root` start with the password `towerbrawl`. Change them with `passwd` and `sudo passwd root`. Do this before the laptop joins a network that is not yours: sshd accepts passwords, and the word is written in this notebook.
