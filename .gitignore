@@ -22,3 +22,6 @@ harness_state.json.tmp
 
 # text snapshots saved from tools/watch_server.py with the s key
 deck_snapshot_*.txt
+
+# v0.0.37: every client card and match marker, appended by serve_game.py (rotates to .1 at 10 MB)
+client_stats.jsonl*

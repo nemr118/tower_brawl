@@ -1,34 +1,48 @@
 ---
 tags: [playtest]
-build: v0.0.36
-backlog: 1, 6, 13, 23 (the feel), optimisation Step C (build 1 and build 3)
+build: v0.0.37
+backlog: 1, 6, 13, 23 (the feel), optimisation Step C (build 1 and build 3), v0.1.0 release sign-off
 result: not played yet
 ---
 # Playtest — Master Validation Suite
 
 **Result: not played yet. Tick the boxes, paste the console lines into the tables, tick one verdict per section.**
 
-One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers over a USB cable. Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles.
+One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.37 with a new number, so a pass here on v0.0.37 counts for the release ([[release-v0.1.0]]).
+
+**No console needed anywhere (v0.0.37).** Every device, phone or PC or tablet, sends its NetStats numbers to the server every 5 s; the server stamps every match and round. You write clock times (the PC clock, HH:MM), nothing else. Afterwards `./venv/bin/python tools/stats_table.py --list` shows the matches and `--match N` (or `--from HH:MM --to HH:MM`) prints one row per device, all devices at once. A console is only where the tagged lines (`Quiver`, `Spawn`, `TopEdge`) print, and only the PC needs it.
 
 ## 0. Setup (once per evening)
 
 | Field | Your answer |
 |---|---|
 | Date and time (so the `server.log` lines can be found) | |
-| Build shown in the lobby (must be v0.0.36 or later for section 5, v0.0.34 for the rest) | |
+| Build shown in the lobby (must be v0.0.37 or later: the numbers reach the server from that build) | |
 | PC: operating system, browser and version (`chrome://version`) | |
 | Phones and tablets in the game (model, browser) | |
 | Number of players, bots in the game (yes / no, how many) | |
 
 - The server runs as the service (`systemctl --user status towerbrawl`). Play at `https://192.168.4.21:8443/play`. If a console says VERSION MISMATCH, reload hard.
 - PC console: F12, tab Console, then type the filter word the section names (`NetStats`, `Quiver`, `Spawn`, `TopEdge`).
-- Phone console: section 1 says how to open it over USB. A phone without a cable has no console; write "no console" in those fields.
+- Numbers: no console. Write clock times in the match log below and next to the tick boxes; the tables are pulled from the server afterwards (`tools/stats_table.py`, [[Commands]]).
 - A bot as the second fighter: `godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`.
-- Server lines on the side: `tail -f server.log | grep -E "JOIN|LEAVE|ROUND"`.
+- Server lines on the side: `tail -f server.log | grep -E "JOIN|LEAVE|ROUND"`. Live numbers per seat: `tbdash` (the Screen column, v0.0.37).
+
+### 0.1 Match log (the only numbers you write by hand are clock times)
+
+| # | Start (HH:MM) | End (HH:MM) | Devices in it (fighters, spectator) | What you did, what you noticed |
+|---|---|---|---|---|
+| 1 | | | | |
+| 2 | | | | |
+| 3 | | | | |
+| 4 | | | | |
+| 5 | | | | |
+
+The server stamps every match and round itself, so these times only need to be close: they say which match is which. For a moment inside a match (a shift, a replay, a reload, a screen rotation) write the clock time next to the tick box; to the minute is enough, 10 s in a situation gives two cards.
 
 ---
 
-## 1. Mobile frame telemetry and S25 Ultra USB inspection (optimisation Step C, build 1)
+## 1. Mobile frame telemetry (optimisation Step C, build 1; the v0.1.1 baseline)
 
 **Why.** On the dev PC the game uses about 1 ms of a 16.7 ms frame ([[optimisation_step_b_profiles]]). A phone is the platform that matters and has never been measured. Since v0.0.34 every `📈 [NetStats]` line ends its `fps` part with two new numbers:
 
@@ -49,7 +63,9 @@ Both come from Godot's `TIME_PROCESS` / `TIME_PHYSICS_PROCESS` monitors, which t
 
 **How to read it.** The frame budget is 1000 divided by the screen rate: 16.7 ms at 60 Hz, 8.3 ms at 120 Hz. Add `proc=` and `phys_cpu=` from a line taken mid-fight. If that sum is under a third of the budget and `draw=` still sits far below the screen rate, the time goes outside our scripts (the browser, WebGL, the renderer), and cutting script work will not help. If `proc=` is the big one, the draw-side scripts are the first cut. If `phys_cpu=` is the big one, the sim is.
 
-### 1.1 Open the S25 Ultra console from the Arch PC (Chromium + ADB)
+Since v0.0.37 every device sends these numbers to the server on its own (the `client_stats` card, every 5 s). The console below is optional: use it only to watch the lines live.
+
+### 1.1 Optional: watch the S25 Ultra console live from the Arch PC (Chromium + ADB)
 
 Developer Options and USB debugging are already on. `adb` is installed on the PC (package `android-tools`).
 
@@ -63,75 +79,47 @@ Developer Options and USB debugging are already on. `adb` is installed on the PC
 
 Snags: if the phone does not appear in step 3, run `adb devices` again (Chromium uses its own ADB and the two can fight; `adb kill-server` then retry). A DevTools window open on the PC costs the phone a little; note it in the table if `draw=` changes when you close it.
 
-- [ ] `adb devices` shows the phone as `device`
+- [ ] (optional) `adb devices` shows the phone as `device`
 - [ ] The phone and its tab show under Remote Target
 - [ ] The DevTools console shows `📈 [NetStats]` lines with `proc=` and `phys_cpu=`
 - [ ] The version line in the phone console says v0.0.34 or later
 
 ### 1.2 Device fields
 
-| Field | S25 Ultra | Pixel | iPad |
-|---|---|---|---|
-| Model and OS version | | | |
-| Browser and version | | | |
-| Screen refresh rate set (60 / 120 Hz, adaptive) | | | |
-| Battery saver on? | | | |
-| Wi-Fi band (2.4 / 5 GHz) | | | |
-| Console path used (USB DevTools / none) | | | |
+| Field                                           | S25 Ultra                        | Pixel | iPad       |
+| ----------------------------------------------- | -------------------------------- | ----- | ---------- |
+| Model and OS version                            | SM-S938U, One Ui 8.5, Android 16 | N/A   | No console |
+| Browser and version                             |                                  | N/A   | No console |
+| Screen refresh rate set (60 / 120 Hz, adaptive) |                                  | N/A   | No console |
+| Battery saver on?                               |                                  | N/A   | No console |
+| Wi-Fi band (2.4 / 5 GHz)                        |                                  | N/A   | No console |
+| Console path used (USB DevTools / none)         | USB DevTools                     | N/A   | No console |
 
-The Pixel follows the same steps as 1.1 (USB debugging on, `adb devices`, `chrome://inspect`). The iPad has no Chromium USB path: with a Mac at hand use Safari's **Develop** menu (Web Inspector over the cable); without one, fill only the feel column and write "no console".
+Model, OS, screen rate and browser come with the card (`./venv/bin/python tools/stats_table.py --devices`); fill battery saver and the Wi-Fi band by hand. "No console" is fine everywhere: the numbers arrive anyway.
 
 ### 1.3 Frame numbers per device
 
-Copy one `📈 [NetStats]` line per situation. Sit in each situation for at least 10 s so the line covers it.
+Sit in each situation for at least 10 s (two cards) and write the clock time. The rows come afterwards from `./venv/bin/python tools/stats_table.py --from HH:MM --to HH:MM`, one per device, every device at once (draw, phys, worst, hitches, proc, phys_cpu, rtt, puppets).
 
-**S25 Ultra** (USB DevTools)
-
-| Situation | `draw=` | `phys=` | `worst=` | `hitches=` | `proc=` | `phys_cpu=` | `rtt` ms | `puppets=` |
-|---|---|---|---|---|---|---|---|---|
-| Lobby, idle | | | | | | | | |
-| Round in play, 2 fighters | | | | | | | | |
-| Round in play, 4 fighters | | | | | | | | |
-| During an arena shift | | | | | | | | |
-| During the replay (`◄◄ REW`) | | | | | | | | |
-| Right after a page reload (rejoin) | | | | | | | | |
-| Spectating (not joined) | | | | | | | | |
-
-**Pixel** (USB DevTools)
-
-| Situation | `draw=` | `phys=` | `worst=` | `hitches=` | `proc=` | `phys_cpu=` | `rtt` ms | `puppets=` |
-|---|---|---|---|---|---|---|---|---|
-| Lobby, idle | | | | | | | | |
-| Round in play, 2 fighters | | | | | | | | |
-| Round in play, 4 fighters | | | | | | | | |
-| During an arena shift | | | | | | | | |
-| During the replay | | | | | | | | |
-| Right after a page reload | | | | | | | | |
-
-**iPad** (Safari Web Inspector, or feel only)
-
-| Situation | `draw=` | `phys=` | `worst=` | `hitches=` | `proc=` | `phys_cpu=` | Feel (smooth / stutters / slow) |
-|---|---|---|---|---|---|---|---|
-| Lobby, idle | | | | | | | |
-| Round in play, 2 fighters | | | | | | | |
-| Round in play, 4 fighters | | | | | | | |
-| During an arena shift | | | | | | | |
-| During the replay | | | | | | | |
-
-**PC, for comparison** (one line, 4 fighters)
-
-| `draw=` | `phys=` | `worst=` | `hitches=` | `proc=` | `phys_cpu=` |
-|---|---|---|---|---|---|
-| | | | | | |
+| Situation | Clock (HH:MM, 10 s or more) | Devices in it | Feel on the phone (smooth / stutters / slow) |
+|---|---|---|---|
+| Lobby, idle | | | |
+| Round in play, 2 fighters | | | |
+| Round in play, 4 fighters | | | |
+| During an arena shift | | | |
+| During the replay (`◄◄ REW`) | | | |
+| Right after a page reload (rejoin) | | | |
+| Spectating (not joined) | | | |
+| PC, for comparison (4 fighters) | | | |
 
 ### 1.4 Edge cases
-- [ ] Phone screen rotated during a round: `draw=` before and after the turn: 
-- [ ] Battery saver on (S25 Ultra): `draw=` and `proc=` with it on: 
-- [ ] The phone in the game and the DevTools window closed: `draw=` changes? 
-- [ ] `hitches=` above 0 during play (not at the arena load): paste the whole line: 
+- [ ] Phone screen rotated during a round: clock time before and after the turn: 
+- [ ] Battery saver on (S25 Ultra): clock time with it on: 
+- [ ] (only if 1.1 was used) the DevTools window closed: clock time, so `draw=` can be compared: 
+- [ ] A visible hitch during play (not at the arena load): clock time and what was happening: 
 
 ### 1.5 Verdict (section 1)
-- [ ] **`proc=` + `phys_cpu=` is under a third of the phone's budget and `draw=` holds the screen rate:** the scripts are not the phone's problem. Step C moves on to cut 2 (`history_status` on change) and cut 3 (packet count).
+- [ ] **`proc=` + `phys_cpu=` is under a third of the phone's budget and `draw=` holds the screen rate:** the scripts are not the phone's problem. v0.1.1 skips cut 1 and looks at the export settings or the native app instead ([[release-v0.1.0]]).
 - [ ] **`proc=` is the big number:** the draw-side scripts cost. Next cut: `_render_snapshots`, the `VhsOverlay` redraw and the HUD in `player.gd` / `arena.gd`.
 - [ ] **`phys_cpu=` is the big number:** the sim costs. Next cut: `_record_tape_frame` and the local branch of `player.gd` `_physics_process`.
 - [ ] **Both small, `draw=` low anyway:** the browser or the GPU. Next: the export settings (canvas size, the compatibility renderer), not the scripts.
@@ -228,7 +216,7 @@ Notes:
 
 **Why.** On 2026-09-04 the PC reloaded its page while the replay was playing. It got its seat back, the next round started on time, but the fighter could aim with the mouse and could not walk. A second reload did not help. The server and lobby parts were fixed in [[v0.0.28 - Rejoin in the Replay Gap]]. The walking part is still open because it never happens headless (scenario `reload_in_gap` walks fine). The suspect is the browser keyboard.
 
-In the browser the game only hears keys while the game canvas has the page focus. Every `📈 [NetStats]` line ends with `keys=N` (key presses the game heard since the last line, one line every 5 s) and `focus=1` or `focus=0` (does the canvas have the page focus now).
+In the browser the game only hears keys while the game canvas has the page focus. Every `📈 [NetStats]` line ends with `keys=N` (key presses the game heard since the last line, one line every 5 s) and `focus=1` or `focus=0` (does the canvas have the page focus now). Both numbers are also in the card the game sends to the server every 5 s (v0.0.37), so a clock time next to each try is enough when the console is closed: `./venv/bin/python tools/stats_table.py --from HH:MM --to HH:MM` prints `keys` (the sum) and `focus` (0 if it was lost at all) per device.
 
 | What you see while holding a key | What it means | Where to look next |
 |---|---|---|
@@ -365,13 +353,12 @@ Notes:
 |---|---|
 | Whole session | |
 
-`📈 [NetStats]` lines during and right after a shift (PC, and the phone from section 1 if the cable is in):
+Clock times of a shift and of the moment the stage locked again; the numbers (draw, worst, hitches, proc, keys, focus, every device) come from `./venv/bin/python tools/stats_table.py --from HH:MM --to HH:MM` afterwards:
 
-| Device | When | `draw=` | `phys=` | `worst=` | `hitches=` | `proc=` | `phys_cpu=` | `keys=` | `focus=` |
-|---|---|---|---|---|---|---|---|---|---|
-| PC | During a shift | | | | | | | | |
-| PC | Right after the stage locked | | | | | | | | |
-| Phone | During a shift | | | | | | | | |
+| When | Clock (HH:MM) | Devices in it | Felt like |
+|---|---|---|---|
+| During a shift | | | |
+| Right after the stage locked | | | |
 | Phone | Right after the stage locked | | | | | | | | |
 
 ### 4.10 Verdict (section 4)
@@ -388,9 +375,9 @@ Notes:
 **Why.** Until v0.0.35 the server sent every fighter's movement packet on its own: with 3 other fighters that was about 40 packets a second into every screen, and on the wire each one carries 40 to 50 B of headers around 11 B of game data ([[optimisation_step_b_profiles]], Profile 3). Since v0.0.36 the server holds the samples for up to 50 ms and sends them as ONE `sync_bundle` frame per screen, about 20 a second. The harness (`bundle` and `fleet` scenarios) says the puppets move as smoothly as before on the PC, with 25 ms more delay on average, hidden inside the 100 ms the puppets already render behind. Only a person can say whether it feels the same on a phone over Wi-Fi. Detail: [[v0.0.36 - Relay Packet Coalescing]].
 
 ### 5.1 Setup
-- [ ] Build in the lobby is v0.0.36 or later (an older build is refused with VERSION MISMATCH).
+- [ ] Build in the lobby is v0.0.37 or later (an older build is refused with VERSION MISMATCH).
 - [ ] At least three fighters: you on the PC, you on a phone, and one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). Four is better (add `--ai=rusher --name=Bot2`).
-- [ ] PC console open (F12, Console, filter `NetStats`). Phone console over USB if you can (section 1 says how); otherwise write "no console".
+- [ ] No console needed: write the clock time of the rounds in the match log (section 0.1).
 
 ### 5.2 Play two rounds and watch the other fighters
 - [ ] The bot and the other screen's fighter glide; no stutter, no rubber-banding, no sliding after a stop.
@@ -400,26 +387,63 @@ Notes:
 - [ ] Anything that felt late or wrong, in your words:
 
 ### 5.3 The numbers
-Paste one `📈 [NetStats]` line per device from the middle of a round. Read `IN … pkt/s`, then in the `in:` list `sync_bundle=N(…B)` and `sync_pos=M(…B)`, then the `puppets=` part. With 3 other fighters `IN` should be about 20 to 25 pkt/s (it was about 40), `sync_bundle` about 100 per 5 s line, `sync_pos` about 200.
+Nothing to paste. Write the match in the match log; afterwards `./venv/bin/python tools/stats_table.py --match N` prints one row per device. With 3 other fighters `IN pkt/s` should be about 20 to 25 (it was about 40) and `bundles/5s` about 100; `jitter`, `snaps`, `stall%` and `extrap%` as before. The server side is the `[STATS 10s]` line in `server.log`, ending in `bundles=20.0/s x2.9` (bundles a second, mean entries).
 
-| Device | Fighters in the game | `IN` pkt/s | `sync_bundle=` | `sync_pos=` | `jitter=` (mean/p95) | `snaps=` | `stall=` | `extrap=` | `dips=` | `keys=` | `focus=` |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| PC | | | | | | | | | | | |
-| Phone (model) | | | | | | | | | | | |
-| Second phone / tablet | | | | | | | | | | | |
-
-Server side, one `[STATS 10s]` line from `server.log` (it now ends with `bundles=20.0/s x2.9` = bundles a second and mean entries per bundle):
-
-| `OUT` pkt/s | `bundles=` | `in:` `sync_pos=` |
+| Match # (from 0.1) | Fighters | Devices that felt late, if any |
 |---|---|---|
 | | | |
 
 ### 5.4 Verdict (section 5)
 - [ ] **The puppets feel the same and `IN` is about half of 40 pkt/s:** the bundle stays. Step C cut 3 is closed.
 - [ ] **The puppets feel later or stutter (write where):** turn the bundle off without a client rebuild: `RELAY_BUNDLE_MS = 0` in `serve_game.py`, `systemctl --user restart towerbrawl`, play again; if the feel returns, the 50 ms window is too long for Wi-Fi, try 25.
-- [ ] **`IN` is still about 40 pkt/s and there is no `sync_bundle=` in the `in:` list:** the server is not bundling; check the `[STATS]` line for `bundles=` and that the service restarted after the build.
+- [ ] **`IN pkt/s` is still about 40 and `bundles/5s` is 0:** the server is not bundling; check the `[STATS]` line for `bundles=` and that the service restarted after the build.
 Notes:
 
 ---
 
-Related: [[PASSDOWN]] (backlog 1, 6, 13, 23; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).
+## 6. v0.1.0 release sign-off (one match, a spectator, everything on screen)
+
+**Why.** v0.1.0 is the first minor version: v0.0.37 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
+
+### 6.1 Setup
+- [ ] Section 0 filled. Build in the lobby is v0.0.37 (the release candidate).
+- [ ] Fighters: you on the PC, you on the S25 Ultra, at least one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). A fourth fighter (iPad, Pixel or `--ai=rusher --name=Bot2`) is better.
+- [ ] Spectator: a device that is NOT one of the fighters opens `https://192.168.4.21:8443/play` and does not press join (a second device or a second browser profile, never a second tab in the game PC's browser, backlog 3).
+- [ ] No console needed for the numbers. Write the match in the match log (section 0.1). PC console (F12) only for the tagged lines.
+
+### 6.2 Match stability (play one whole match to 5 crowns)
+- [ ] The lobby shows every fighter with the right name and class before the first round.
+- [ ] Every round starts within about 3 s of the last kill (the replay rounds within about 7 s); nobody is stuck in a gap.
+- [ ] No fighter froze, rubber-banded or fell through the floor. If one did, write the device and the round.
+- [ ] One deliberate reload on the S25 Ultra mid-match: the seat comes back with the same name, class and stocks within the 8 s grace. Clock time of the reload: 
+- [ ] The match ends on the fifth crown, the winner screen shows the right name, and the lobby is back with everyone in it.
+- [ ] `server.log` on the side: `grep -E "ROUND|MATCH|KILL" server.log | tail -30` shows one `ROUND` per round and one `MATCH` end; no `ERROR` line during the match: `grep -c ERROR server.log` before and after.
+
+### 6.3 Spectator connectivity
+- [ ] The spectator device sees the lobby, then the arena, without pressing anything.
+- [ ] It follows the fight: fighters move, arrows fly, kills show, the replay plays, the next round starts. Note anything it shows late or not at all.
+- [ ] It survives the match end and shows the winner and the lobby after.
+- [ ] Spectator joins mid-match (reload it during round 3): it lands in the running round, not in a blank arena.
+- [ ] The game tab on the PC did NOT stall while the spectator was connected (backlog 3 was a second tab on the same browser; a second device must be clean).
+
+### 6.4 Visual coherence (what is on screen matches what happened)
+- [ ] Name tags stay on the right fighter, readable, on every device including the phones.
+- [ ] The HUD (stocks, crowns, round number) agrees on every screen after each round.
+- [ ] The tape card (kill stamps) updates within about 10 s of a kill and at once at the replay (cut 2 in action).
+- [ ] The replay shows the closing kill from the right angle, with the right fighters, and skips or ends cleanly.
+- [ ] The arena flip and the free-fall shift look the same on the phone and the PC (no half-drawn frames, no fighter left behind).
+- [ ] Puppets on the phone glide like on the PC (this repeats the section 5 feel with a full match; tick the section 5 verdict from the same evening).
+- [ ] Anything that looked wrong, in your words (device, round, what):
+
+### 6.5 The numbers
+Nothing to paste. The match log (section 0.1) has the clock times; `./venv/bin/python tools/stats_table.py --match N` prints one row per device and `--by-round` one table per round. The S25 Ultra row is also the v0.1.1 baseline (cut 1, the phone main thread); section 1 asks for the same numbers per situation.
+
+### 6.6 Verdict (section 6)
+- [ ] **Ship v0.1.0:** the match ran to the crown, the spectator followed it, nothing on screen was wrong or was only a nit written above. Run the release runbook, [[release-v0.1.0]] step 2.
+- [ ] **Ship with the bundle off:** the match was clean but the puppets felt late on the phone: `RELAY_BUNDLE_MS = 0` in `serve_game.py`, restart the service, tick the second box of section 5.4 and say so on the patch page.
+- [ ] **Do not ship (write why):** a freeze, a lost seat, a spectator that stalled the game, or a wrong winner. Open a backlog item with the round and the `server.log` lines; fix it in a v0.0.x build, replay this section.
+Notes:
+
+---
+
+Related: [[release-v0.1.0]] (section 6), [[PASSDOWN]] (backlog 1, 6, 13, 23; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).

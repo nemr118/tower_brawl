@@ -13,7 +13,7 @@ var is_mobile: bool = false
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.0.36"
+const GAME_VERSION: String = "v0.0.37"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -25,6 +25,12 @@ var is_spectator: bool = true
 # per packet) and TCP/TLS overhead are not included.
 signal net_stats_updated(stats: Dictionary)
 var net_stats_enabled: bool = true
+# v0.0.37: every 5 s the same numbers go to the server as a `client_stats` card
+# (about 600 B), so a phone with no console still reports. The server keeps the
+# newest card per socket for status.json and appends every card to
+# client_stats.jsonl; tools/stats_table.py turns a time window into a table.
+var client_stats_enabled: bool = true
+var _device: Dictionary = {}
 const NET_STATS_INTERVAL: float = 5.0
 var _ns_bytes_in: int = 0
 var _ns_bytes_out: int = 0
@@ -391,6 +397,8 @@ func _ready():
 	if not OS.has_feature("web"):
 		_parse_test_args()
 	client_token = _load_or_create_token()
+
+	_device = _device_info()
 
 	if net_stats_enabled:
 		var stats_timer := Timer.new()
@@ -1107,6 +1115,49 @@ func _report_net_stats() -> void:
 	_ns_pkts_out = 0
 	_ns_types_in.clear()
 	_ns_types_out.clear()
+	if client_stats_enabled:
+		_send_client_stats(stats)
+
+
+# v0.0.37: the NetStats numbers as one small JSON card for the server. Same fields
+# as the printed line, rounded, plus the device block. Never relayed to anyone.
+func _device_info() -> Dictionary:
+	var d := {"os": OS.get_name(), "model": OS.get_model_name(), "web": OS.has_feature("web"),
+		"mobile": is_mobile, "hz": DisplayServer.screen_get_refresh_rate(),
+		"screen": [DisplayServer.screen_get_size().x, DisplayServer.screen_get_size().y],
+		"renderer": str(ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")),
+		"headless": ai_persona != "" or _autojoin, "ua": ""}
+	if OS.has_feature("web"):
+		d["ua"] = str(JavaScriptBridge.eval("navigator.userAgent", true)).left(120)
+	return d
+
+func _send_client_stats(stats: Dictionary) -> void:
+	var pj: Dictionary = stats["puppets"]
+	var ft: Dictionary = stats["fps"]
+	var bundle_n: int = _ns_type_count(stats["in_types"], "sync_bundle")
+	var sync_n: int = _ns_type_count(stats["in_types"], "sync_pos")
+	var win := DisplayServer.window_get_size()
+	var scene := get_tree().current_scene
+	var card := {
+		"type": "client_stats", "schema": 1, "v": GAME_VERSION,
+		"scene": scene.name if scene else "?", "spec": is_spectator,
+		"up": snappedf(stats["uptime"], 1.0), "rtt": stats["rtt_ms"],
+		"in_pps": snappedf(stats["in_pps"], 0.1), "in_bps": int(stats["in_bps"]),
+		"out_pps": snappedf(stats["out_pps"], 0.1), "out_bps": int(stats["out_bps"]),
+		"bundles": bundle_n, "sync": sync_n,
+		"pj": {"n": pj["puppets"], "jit": snappedf(pj["mean"], 0.1), "p95": snappedf(pj["p95"], 0.1),
+			"snaps": pj["snaps"], "wraps": pj["wraps"], "stall": snappedf(pj["stall_pct"], 0.1),
+			"extrap": snappedf(pj["extrap_pct"], 0.1), "dips": pj["dips"]},
+		"fps": {"draw": snappedf(ft["draw"], 0.1), "phys": snappedf(ft["phys"], 0.1),
+			"worst": snappedf(ft["worst_ms"], 0.1), "hitches": ft["hitches"],
+			"proc": snappedf(ft["proc_ms"], 0.01), "phys_cpu": snappedf(ft["phys_cpu_ms"], 0.01)},
+		"keys": stats["keys"], "focus": 1 if stats["focus"] else 0,
+		"win": [win.x, win.y], "dev": _device,
+	}
+	send_net_data(card)
+
+func _ns_type_count(table: Dictionary, type: String) -> int:
+	return int(table[type][0]) if table.has(type) else 0
 
 
 # ==============================================================================

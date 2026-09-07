@@ -198,6 +198,15 @@ def kd_text(seat):
     return f"{k}/{d} {ratio:.1f}"
 
 
+def screen_text(seat):
+    """v0.0.37: the screen's own numbers from its client_stats card: '60fps 1.2ms' (draw a second, proc ms)."""
+    card = seat.get("stats") or {}
+    fps = card.get("fps") or {}
+    if not fps or not seat.get("connected"):
+        return "-"
+    return f"{fps.get('draw', 0):.0f}fps {fps.get('proc', 0):.1f}ms"
+
+
 def tape_text(seat):
     """The Tape column (v0.0.25): what this screen's tape holds.
     ● 5.0s ·2 = recording, 5 s on the tape, 2 kills stamped this round.
@@ -243,6 +252,7 @@ def seat_rows(status, ping_hist=None):
             "trend": spark_line(hist, 8, relative=True) if seat["connected"] and sum(v is not None for v in hist) >= 3 else "",
             "health": seat_health(seat),
             "tape": tape_text(seat),
+            "screen": screen_text(seat),
             "link": f"{seat['transport']} {seat['ip']}" if seat["connected"] else "-",
             "pps": f"{seat['in_pps']:.0f}" if seat["connected"] else "-",
             "queue": f"{seat['queue']}/{seat['dropped']}" if seat["connected"] else "-",
@@ -254,7 +264,7 @@ def seat_rows(status, ping_hist=None):
 SEAT_COLS = (("Seat", "left", "seat"), ("Name", "left", "name"), ("Class", "left", "cls"),
              ("State", "left", "state"), ("Lives", "left", "lives"), ("Crowns", "right", "crowns"),
              ("K/D", "right", "kd"), ("Ping", "right", "ping"), ("Trend", "left", "trend"),
-             ("Health", "left", "health"), ("Tape", "left", "tape"), ("Link", "left", "link"), ("In/s", "right", "pps"),
+             ("Health", "left", "health"), ("Tape", "left", "tape"), ("Screen", "left", "screen"), ("Link", "left", "link"), ("In/s", "right", "pps"),
              ("Q/drop", "right", "queue"), ("Seen", "right", "seen"))
 
 
@@ -1129,11 +1139,14 @@ def render_plain(deck, n_events, width=100):
     rows = seat_rows(status, deck.ping_hist)
     show_tape = any(r["tape"] != "-" for r in rows)   # v0.0.25: only when a screen sent a tape card
     tape_head = f"{'Tape':<12}" if show_tape else ""
-    lines.append(f"{'Seat':<5}{'Name':<16}{'Class':<8}{'State':<11}{'Lives':<6}{'Crowns':>6} {'K/D':>8} {'Ping':>7} {'Trend':<9}{'Health':<8}{tape_head}{'Link':<26}{'In/s':>5} {'Q/drop':>7} {'Seen':>5}")
+    show_screen = any(r["screen"] != "-" for r in rows)   # v0.0.37: only when a screen sent a client_stats card
+    screen_head = f"{'Screen':<14}" if show_screen else ""
+    lines.append(f"{'Seat':<5}{'Name':<16}{'Class':<8}{'State':<11}{'Lives':<6}{'Crowns':>6} {'K/D':>8} {'Ping':>7} {'Trend':<9}{'Health':<8}{tape_head}{screen_head}{'Link':<26}{'In/s':>5} {'Q/drop':>7} {'Seen':>5}")
     for r in rows:
         tape_cell = f"{r['tape']:<12}" if show_tape else ""
+        screen_cell = f"{r['screen']:<14}" if show_screen else ""
         lines.append(f"{r['seat']:<5}{r['name']:<16}{r['cls']:<8}{r['state']:<11}{r['lives']:<6}{r['crowns']:>6} {r['kd']:>8} {r['ping']:>7} "
-                     f"{r['trend']:<9}{r['health']:<8}{tape_cell}{r['link']:<26}{r['pps']:>5} {r['queue']:>7} {r['seen']:>5}")
+                     f"{r['trend']:<9}{r['health']:<8}{tape_cell}{screen_cell}{r['link']:<26}{r['pps']:>5} {r['queue']:>7} {r['seen']:>5}")
     cells_w = max(10, width - LABEL_W - 7)
     strip = build_strip(status, deck.view(cells_w))
     deck.last_view = strip

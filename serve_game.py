@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.0.36"
+GAME_VERSION = "v0.0.37"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -301,6 +301,8 @@ def _build_status(prev_totals, prev_conns, dt):
     with lobby_lock:
         with conns_lock:
             conn_by_sock = dict(conns)
+        with client_stats_lock:
+            stats_by_sock = dict(client_stats)
         for i in range(4):
             pid = i + 1
             entry = player_slots[i]
@@ -329,6 +331,8 @@ def _build_status(prev_totals, prev_conns, dt):
                 "bot": player_bots.get(pid) if entry is not None or pend else None,
                 # v0.0.25: the screen's tape card (history_status), for the deck's Tape column.
                 "tape": player_tapes.get(pid) if entry is not None or pend else None,
+                # v0.0.37: the screen's own numbers (client_stats card), for the deck's Screen column.
+                "stats": stats_by_sock.get(id(entry["sock"])) if entry else None,
             }
             if conn is not None:
                 seat["rtt_ms"] = conn.rtt_ms
@@ -372,6 +376,7 @@ def _build_status(prev_totals, prev_conns, dt):
             "seats": seats,
             "bots": _bot_count(),
             "spectators": len(spectator_sockets),
+            "spectator_stats": [stats_by_sock[id(sp["sock"])] for sp in spectator_sockets if id(sp["sock"]) in stats_by_sock],
             "sockets": sum(1 for p in player_slots if p) + len(spectator_sockets),
             "harness": dict(harness_gate),   # v0.0.23: is the harness gate closed right now?
         }
@@ -489,6 +494,35 @@ match_timeline = {"started_at": None, "kills": [], "rounds": [], "ended_at": Non
 # a bot_status packet every 5 s with its numbers. The server keeps the last one
 # per seat here and copies it into status.json. It is never sent to the players.
 player_bots = {}                    # pid -> the last bot telemetry dict for that seat
+
+# v0.0.37: every client (seat or spectator, phone or PC or headless bot) mails its
+# NetStats numbers home every 5 s as a `client_stats` card. The newest card per
+# socket goes into status.json (the deck's Screen column); every card and every
+# match / round marker is appended to client_stats.jsonl, one JSON object per
+# line, so a playtest table is a time window, not a console hunt
+# (tools/stats_table.py). Never relayed to the players.
+client_stats = {}                   # id(sock) -> the last card from that socket
+client_stats_lock = threading.Lock()
+CLIENT_STATS_MAX_BYTES = 1024       # a card bigger than this is dropped
+CLIENT_STATS_FILE = os.path.join(BASE_DIR, "client_stats.jsonl")
+CLIENT_STATS_ROTATE_BYTES = 10 * 1024 * 1024   # then the file becomes client_stats.jsonl.1 (one copy kept)
+
+def _stats_log(rec):
+    """Append one record (a card or a marker) to client_stats.jsonl with the server clock."""
+    rec["t"] = round(time.time(), 3)
+    rec["clock"] = time.strftime("%H:%M:%S")
+    line = json.dumps(rec, separators=(",", ":"), default=str)
+    try:
+        with client_stats_lock:
+            try:
+                if os.path.getsize(CLIENT_STATS_FILE) > CLIENT_STATS_ROTATE_BYTES:
+                    os.replace(CLIENT_STATS_FILE, CLIENT_STATS_FILE + ".1")
+            except OSError:
+                pass
+            with open(CLIENT_STATS_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except OSError as e:
+        logger.debug(f"[NET] client_stats.jsonl not written: {type(e).__name__}: {e}")
 BOT_STATUS_MAX_BYTES = 1024         # a bot_status packet bigger than this is dropped
 player_tapes = {}                   # pid -> the last history_status card of that screen (Phase 3c, v0.0.25)
 TAPE_STATUS_MAX_BYTES = 1024        # a history_status packet bigger than this is dropped
@@ -1091,6 +1125,8 @@ def _setup_match():
     for i in range(1, 5):
         match_kd[i] = {"kills": 0, "deaths": 0}
     match_timeline["started_at"] = time.time()
+    _stats_log({"kind": "match", "event": "start", "players": list(present),
+                "names": {str(p): player_names.get(p, "Bot") for p in present}})
     player_tapes.clear()   # v0.0.25: no tape card from the last match
     match_timeline["kills"] = []
     match_timeline["rounds"] = [[1, 0.0, None, None]]
@@ -1150,6 +1186,8 @@ def _check_round_end(label):
                     f"crowns {dict(global_player_scores)}")
     else:
         logger.info(f"[ROUND] round {global_current_round} over: no winner")
+    _stats_log({"kind": "round", "event": "over", "round": global_current_round, "winner": winner,
+                "crowns": dict(global_player_scores), "match_over": global_match_over})
     broadcast(json.dumps({
         "type": "round_end",
         "winner": winner,
@@ -1186,6 +1224,8 @@ def _next_round_later(label, replay=False):
             else:
                 reason = f"only {len(present)} player(s) left"
             logger.info(f"[MATCH] over, back to the lobby ({reason})")
+            _stats_log({"kind": "match", "event": "end", "reason": reason,
+                        "winner": match_timeline["winner"], "rounds": global_current_round})
             _reset_match_state()
             broadcast(json.dumps({"type": "return_to_lobby"}))
         else:
@@ -1197,6 +1237,7 @@ def _next_round_later(label, replay=False):
                 global_player_stocks[i] = 3
             last_death.clear()
             match_timeline["rounds"].append([global_current_round, _match_t(), None, None])
+            _stats_log({"kind": "round", "event": "start", "round": global_current_round, "players": list(present)})
             _stamp_names(present)
             logger.info(f"[ROUND] round {global_current_round} starting with {present}"
                         + (f" (seat held for {held}, back within the grace or out)" if held else ""))
@@ -1207,6 +1248,8 @@ def _idle_reset_if_empty(label):
     watching the arena are sent back too."""
     if global_match_state == 'PLAYING' and not _present_players():
         logger.info(f"[MATCH] last player left mid-match, back to the lobby (idle reset)")
+        _stats_log({"kind": "match", "event": "end", "reason": "idle reset", "winner": None,
+                    "rounds": global_current_round})
         _reset_match_state()
         broadcast(json.dumps({"type": "return_to_lobby"}))
 
@@ -1490,6 +1533,26 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                         player_bots[assigned_id] = card
                     continue
 
+                if mtype == "client_stats":
+                    # v0.0.37: the client's NetStats card. Kept for status.json and the
+                    # jsonl only, never sent to the players.
+                    if len(msg) > CLIENT_STATS_MAX_BYTES:
+                        logger.debug(f"[NET] {_who(assigned_id)} client_stats too big ({len(msg)} B), dropped")
+                        continue
+                    card = {k: v for k, v in data.items() if k not in ("type", "sender")}
+                    card["seat"] = assigned_id or 0
+                    card["addr"] = _ip(addr)
+                    card["link"] = label
+                    with lobby_lock:
+                        card["name"] = player_names.get(assigned_id, "?") if assigned_id else "spectator"
+                        card["state"] = global_match_state
+                        card["round"] = global_current_round if global_match_state == 'PLAYING' else 0
+                    card["updated_at"] = time.time()
+                    with client_stats_lock:
+                        client_stats[id(sock)] = card
+                    _stats_log(dict(card, kind="card"))
+                    continue
+
                 if mtype == "history_status":
                     # Phase 3c (v0.0.25): the screen's tape card: how many frames it holds,
                     # the last kill it stamped, and whether it froze for the round. Kept for
@@ -1641,6 +1704,8 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
     # ── Cleanup ─────────────────────────────────────────────────────────────
     with conns_lock:
         conns.pop(id(sock), None)
+    with client_stats_lock:
+        client_stats.pop(id(sock), None)
     conn.close()
     with lobby_lock:
         spectator_sockets[:] = [s for s in spectator_sockets if s["sock"] is not sock]
@@ -1835,6 +1900,7 @@ if __name__ == "__main__":
         threading.Thread(target=stats_loop, daemon=True, name="stats").start()
     if STATUS_INTERVAL > 0:
         threading.Thread(target=status_loop, daemon=True, name="status").start()
+        _stats_log({"kind": "server", "event": "start", "version": get_game_version(), "pid": os.getpid()})
 
     try:
         start_https()
