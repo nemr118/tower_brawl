@@ -29,8 +29,9 @@ Keys:  ← →  pan the strip     + -  zoom (0.5 s .. 30 s per column)
        Home  match start      End or f  back to live and follow
        click a column  what happened that second      Esc  clear it
        1-9  hide / show a log tag    p  pause    s  save a text snapshot    q  quit
-       with --controls:  a  add a bot    r  remove a bot    x  clear bots    w  wifi help
-                         (or click the buttons in the SERVER panel; tools/tbbot.py does the work)
+       with --controls:  a  the bot menu (1-6 add that persona, a the next one, Esc closes)
+                         r  remove a bot    x  clear bots    w  wifi help
+                         (or click the buttons and the persona chips in the SERVER panel; tools/tbbot.py does the work)
 Mouse: wheel pans, Ctrl+wheel or Shift+wheel zooms around the pointer, wheel
 over the events panel scrolls it. --no-mouse turns the mouse off.
 
@@ -900,6 +901,7 @@ class Deck:
         self.strip_geom = None         # (y0, y1, x0, cells, start_t, bin_s) of the last drawn strip
         self.controls = False          # --controls: the SERVER panel with the play link and bot buttons
         self.show_wifi = False         # w: the wifi help panel
+        self.show_bots = False         # a: the bot menu (v0.0.41): pick a persona by key or click
         self.button_geom = []          # [(y, x0, x1, action)] of the last drawn buttons, 1-based cells
         self._ip = ("", 0.0)           # (address, time it was read)
         self.events_geom = None        # (y0, y1) of the last drawn events panel
@@ -987,10 +989,12 @@ class Deck:
             self._ip = (ip, self.now)
         return self._ip[0]
 
-    def bot_action(self, action):
-        """Run tools/tbbot.py add / remove / clear and show its first line."""
+    def bot_action(self, action, persona=None):
+        """Run tools/tbbot.py add [persona] / remove / clear and show its first line."""
         import subprocess
         cmd = [sys.executable, os.path.join(ROOT, "tools", "tbbot.py"), action]
+        if persona:
+            cmd.append(persona)
         try:
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
         except (OSError, subprocess.TimeoutExpired) as e:
@@ -1099,6 +1103,13 @@ class Deck:
                 if action == "wifi":
                     self.show_wifi = not self.show_wifi
                     continue
+                if action == "add":
+                    self.show_bots = not self.show_bots
+                    continue
+                if action and action.startswith("add:"):
+                    self.bot_action("add", action[4:])
+                    self.show_bots = False
+                    continue
                 if action:
                     self.bot_action(action)
                     continue
@@ -1110,6 +1121,24 @@ class Deck:
     def _key(self, key, width):
         lv = self.last_view
         cols = max(1, (lv["cells"] // 10) if lv else 5)
+        if self.controls and self.show_bots and key not in ("q", "Q", "ctrl-c"):
+            # v0.0.41: the bot menu owns the keys while it is open, so the digits do
+            # not reach the event filter. 1-6 = that persona, a = the next in the list.
+            if key in BOT_MENU_KEYS:
+                self.bot_action("add", BOT_MENU_KEYS[key])
+                self.show_bots = False
+            elif key == "a":
+                self.bot_action("add")
+                self.show_bots = False
+            elif key in ("esc", "r", "x", "w"):
+                self.show_bots = False
+                if key == "r":
+                    self.bot_action("remove")
+                elif key == "x":
+                    self.bot_action("clear")
+                elif key == "w":
+                    self.show_wifi = True
+            return
         if key in ("q", "Q", "ctrl-c"):
             self.quit = True
         elif key == "p":
@@ -1135,8 +1164,9 @@ class Deck:
         elif key == "esc":
             self.selected_t = None
             self.show_wifi = False
+            self.show_bots = False
         elif self.controls and key == "a":
-            self.bot_action("add")
+            self.show_bots = True
         elif self.controls and key == "r":
             self.bot_action("remove")
         elif self.controls and key == "x":
@@ -1291,6 +1321,10 @@ def render_rich(deck, height, width):
         deck._panel_top = used
         panel, lines = server_panel(deck, width)
         add(panel, lines)
+        if deck.show_bots:
+            deck._menu_top = used
+            panel, lines = bot_menu_panel(deck)
+            add(panel, lines)
         if deck.show_wifi:
             panel, lines = wifi_panel()
             add(panel, lines)
@@ -1442,8 +1476,42 @@ def server_panel(deck, width):
         x += 2
     bots = deck.status.get("bots", 0) if deck.status else 0
     body.append(f"bots: {bots}", style="magenta")
-    body.append("   keys: a add  r remove  x clear  w wifi", style="dim")
+    body.append("   keys: a bot menu  r remove  x clear  w wifi", style="dim")
     return Panel(body, title="server", title_align="left", border_style="green"), 4
+
+
+# v0.0.41: the bot menu. Opened with a or the + bot button; a key or a click adds that persona.
+BOT_MENU = (("1", "wanderer", "roams, random class"), ("2", "chaser", "knight, runs at the nearest fighter"),
+            ("3", "sniper", "mage, keeps its distance and shoots"), ("4", "turtle", "knight, shields and counters"),
+            ("5", "rusher", "rogue, dashes in for melee bursts"), ("6", "griefer", "druid, harasses: dashes into shots, air shield"))
+BOT_MENU_KEYS = {k: persona for k, persona, _ in BOT_MENU}
+
+
+def bot_menu_panel(deck):
+    """The persona menu (--controls, key a): one chip per persona, clickable, with its key.
+    Returns (panel, height) and records the chips for the mouse."""
+    from rich.panel import Panel
+    from rich.text import Text
+    body = Text(no_wrap=True, overflow="crop")
+    body.append("Add a bot: press its number or click it.  a = the next persona in the list.  Esc closes.", style="bold")
+    body.append("\n")
+    y = deck._menu_top + 2
+    x = 3
+    for key, persona, _ in BOT_MENU:
+        chip = f" {key} {persona} "
+        body.append(chip, style="bold black on cyan")
+        deck.button_geom.append((y, x, x + len(chip) - 1, f"add:{persona}"))
+        x += len(chip)
+        body.append("  ")
+        x += 2
+    body.append("\n")
+    body.append("   ".join(f"{persona}: {what}" for _, persona, what in BOT_MENU), style="dim")
+    seats = (deck.status or {}).get("seats") or []
+    bots = [f"P{st['id']} {st.get('name') or '-'} ({(st.get('bot') or {}).get('persona', '?')})"
+            for st in seats if st.get("bot")]
+    body.append("\n")
+    body.append("in the game: " + (", ".join(bots) if bots else "no bots yet") + "   (max 4)", style="magenta")
+    return Panel(body, title="bots (a or Esc closes this)", title_align="left", border_style="cyan"), 6
 
 
 def wifi_panel():

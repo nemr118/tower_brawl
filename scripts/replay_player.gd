@@ -339,11 +339,42 @@ func _ghost_projectile(i: int, wid: int):
 
 
 func _label() -> String:
+	# v0.0.41: the word only. The ◄◄ ► ■ marks used to be characters, and the
+	# font the web build ships has no glyph for them, so a browser drew boxes.
+	# The mark is now a shape from _draw_icon, which needs no font at all.
 	match _phase:
-		"rew": return "◄◄ REW"
-		"slow": return "► SLOW"
-		"stop": return "■ STOP"
-		_: return "► PLAY"
+		"rew": return "REW"
+		"slow": return "SLOW"
+		"stop": return "STOP"
+		_: return "PLAY"
+
+
+const ICON_H := 14.0            # the icon's height in px; it sits on the label's baseline
+const ICON_W := 12.0            # one triangle or the square; REW is two triangles
+
+func _draw_icon(c: CanvasItem, at: Vector2, col: Color) -> float:
+	# Draws the mark for the current phase with its bottom-left corner at `at`
+	# (the text baseline) and returns its width, so the word can follow it.
+	var y0 := at.y - ICON_H
+	var y1 := at.y
+	var ym := at.y - ICON_H / 2.0
+	var shapes: Array = []
+	match _phase:
+		"rew":
+			shapes.append(PackedVector2Array([Vector2(at.x + ICON_W, y0), Vector2(at.x, ym), Vector2(at.x + ICON_W, y1)]))
+			shapes.append(PackedVector2Array([Vector2(at.x + ICON_W * 2.0, y0), Vector2(at.x + ICON_W, ym), Vector2(at.x + ICON_W * 2.0, y1)]))
+		"stop":
+			shapes.append(PackedVector2Array([Vector2(at.x, y0), Vector2(at.x + ICON_W, y0), Vector2(at.x + ICON_W, y1), Vector2(at.x, y1)]))
+		_:
+			shapes.append(PackedVector2Array([Vector2(at.x, y0), Vector2(at.x + ICON_W, ym), Vector2(at.x, y1)]))
+	var outline := Color(0.0, 0.0, 0.0, 0.9)
+	for poly in shapes:
+		var closed := PackedVector2Array(poly)
+		closed.append(poly[0])
+		c.draw_polyline(closed, outline, 3.0, true)
+	for poly in shapes:
+		c.draw_colored_polygon(poly, col)
+	return ICON_W * 2.0 if _phase == "rew" else ICON_W
 
 
 func _caption() -> String:
@@ -386,8 +417,9 @@ func _draw_overlay(c: CanvasItem) -> void:
 	var row := ARENA_H - 12.0
 	var secs := float(_shown_seq - _kill) / TAPE_FPS
 	var counter := ("+%.1fs" if secs >= 0.0 else "%.1fs") % secs
-	_text(c, font, Vector2(12, row), _label(), 18, Color(1.0, 1.0, 1.0))
-	_text(c, font, Vector2(96, row), counter, 16, Color(0.9, 0.9, 0.9))
+	var icon_w := _draw_icon(c, Vector2(12, row - 1.0), Color(1.0, 1.0, 1.0))
+	_text(c, font, Vector2(12 + icon_w + 6.0, row), _label(), 18, Color(1.0, 1.0, 1.0))
+	_text(c, font, Vector2(104, row), counter, 16, Color(0.9, 0.9, 0.9))
 	# REPLAY and the blinking red dot, bottom right.
 	var w := font.get_string_size("REPLAY", HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
 	_text(c, font, Vector2(ARENA_W - 12 - w, row), "REPLAY", 18, Color(1.0, 1.0, 1.0))

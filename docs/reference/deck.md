@@ -30,6 +30,8 @@ python3 tools/deck_input.py                          # self-test of the key and 
 
 **Code shape:** `Deck` holds the view (zoom, pan, selection, filters, alerts, 60 s of ping and traffic), `build_strip` makes the fight strip (`tape_inspect` adds the tape state of a round-end column), `tape_text` fills the `Tape` seat column, `render_rich` / `render_plain` draw it with a height budget.
 
+**`--controls` (the laptop screen, v0.0.40):** a SERVER panel above the header with the play links and buttons **+ bot**, **- bot**, **clear bots**, **wifi help** (keys `a`, `r`, `x`, `w`; `tools/tbbot.py` does the work). `a` or **+ bot** opens the bot menu (v0.0.41): `1` to `6` or a click on a chip adds that persona, `a` adds the next in the list, Esc closes; while it is open the digits go to the menu, not the event filter.
+
 **Server log tags:** every `server.log` line starts with `[JOIN] [LEAVE] [CONN] [NAME] [LOCK] [MATCH] [ROUND] [KILL] [NET] [STATS] [GATE] [TAPE]`. `[STATS]` reads `players=4 (2 bots) spectators=M sockets=N+M`. The packet dumps (`[MSG]`, `[SEND]`) are debug level and go to `debug.log` only. Colours show only on a real terminal; the files stay plain (`HH:MM:SS | LEVEL | message`).
 
 Related: [[harness-deck-and-gate]], [[tape]], [[replay]].

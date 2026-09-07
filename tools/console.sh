@@ -17,7 +17,7 @@ cat <<BOX
     Wifi    nmcli device wifi list
             sudo nmcli device wifi connect "NAME" password "PASS"
             nmcli device         wlp3s0 should say connected
-    Deck    tbdash               the live deck (q quits, a/r/x bots, w wifi help)
+    Deck    tbdash               the live deck (q quits, a bot menu, r/x bots, w wifi help)
     Game    sudo systemctl restart towerbrawl      tblog (server log)
   ==================================================================
 
