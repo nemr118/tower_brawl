@@ -13,6 +13,12 @@ var powerup_node: Area2D = null
 var is_arena_rotating: bool = false
 var spin_tween: Tween = null   # the running arena spin, so a round start can finish it at once
 var platform_layers: Dictionary = {}   # v0.0.32: each platform's collision_layer while the stage turns (backlog 9)
+# v0.0.38: the platforms stay solid during the shift again (user decision: the
+# free-fall tumble of v0.0.32 felt terrible). false = the v0.0.31 ride, a fighter
+# stands on its platform through the turn and may pass about 30 px above the top
+# edge for a second (backlog 9, reopened). true = the v0.0.32 free fall. Kept as
+# a switch so a future arena configuration can pick either per layout.
+const SHIFT_SOFT_PLATFORMS: bool = false
 
 const PlayerScene = preload("res://scenes/player.tscn")
 const BotBrainScript = preload("res://scripts/bot_brain.gd")
@@ -763,7 +769,8 @@ func _activate_rotation():
 		return
 		
 	is_arena_rotating = true
-	_set_platforms_solid(false)
+	if SHIFT_SOFT_PLATFORMS:
+		_set_platforms_solid(false)
 	Global.arena_flips += 1
 	_show_banner("** ARENA SHIFT! **", 2.5)
 	

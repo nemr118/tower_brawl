@@ -1,14 +1,14 @@
 ---
 tags: [playtest]
-build: v0.0.37
-backlog: 1, 6, 13, 23 (the feel), optimisation Step C (build 1 and build 3), v0.1.0 release sign-off
+build: v0.0.38
+backlog: 1, 6, 13, 9 (reopened, the feel), optimisation Step C (build 1 and build 3), v0.1.0 release sign-off
 result: not played yet
 ---
 # Playtest — Master Validation Suite
 
 **Result: not played yet. Tick the boxes, paste the console lines into the tables, tick one verdict per section.**
 
-One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.37 with a new number, so a pass here on v0.0.37 counts for the release ([[release-v0.1.0]]).
+One sheet for everything a person still has to check. It replaces the three old sheets (Backlog 1 ranger quiver, Backlog 13 PC reload probe, v0.0.32 free-fall shift), which were deleted in v0.0.34. Each section stands alone and has its own verdict, so you can do one section per evening. Section 1 reads the phone's own frame numbers (since v0.0.37 they reach the server on their own, no cable). Section 5 (v0.0.36) checks that the puppets still feel right now that the server sends movement in bundles. Section 4 (rewritten 2026-09-07) checks the arena shift with solid platforms again. Section 6 (added 2026-09-07) is the release sign-off for v0.1.0: one whole match, a spectator, and a look at everything on screen. v0.1.0 is v0.0.38 with a new number, so a pass here on v0.0.38 counts for the release ([[release-v0.1.0]]).
 
 **No console needed anywhere (v0.0.37).** Every device, phone or PC or tablet, sends its NetStats numbers to the server every 5 s; the server stamps every match and round. You write clock times (the PC clock, HH:MM), nothing else. Afterwards `./venv/bin/python tools/stats_table.py --list` shows the matches and `--match N` (or `--from HH:MM --to HH:MM`) prints one row per device, all devices at once. A console is only where the tagged lines (`Quiver`, `Spawn`, `TopEdge`) print, and only the PC needs it.
 
@@ -17,7 +17,7 @@ One sheet for everything a person still has to check. It replaces the three old 
 | Field | Your answer |
 |---|---|
 | Date and time (so the `server.log` lines can be found) | |
-| Build shown in the lobby (must be v0.0.37 or later: the numbers reach the server from that build) | |
+| Build shown in the lobby (must be v0.0.38, the release candidate) | |
 | PC: operating system, browser and version (`chrome://version`) | |
 | Phones and tablets in the game (model, browser) | |
 | Number of players, bots in the game (yes / no, how many) | |
@@ -299,59 +299,43 @@ Notes:
 
 ---
 
-## 4. Free-fall arena shift and tumble feel (backlog 23, the feel)
+## 4. Arena shift: the ride is back (backlog 9 reopened, the feel)
 
-**Why.** Since v0.0.32 the platforms are not solid while the arena shift turns the stage (2.5 s). A fighter standing on a platform when the shift starts falls through the turning stage, drops out of the bottom, comes back in at the top, three or four times, and lands on the new layout when it locks. Before, that fighter rode a platform out of the top of the screen (backlog 9). The harness proves the ride is gone (0 `🧗 [TopEdge]` lines on the heavy fleet) and, since v0.0.33, no longer counts the tumble as a fall loop. What it cannot judge is how the free fall and the tumble feel in a real game, on a phone and on a PC.
+**Why.** v0.0.32 made the platforms soft while the arena shift turns the stage, so a standing fighter fell through and tumbled out of the bottom three or four times. That fixed backlog 9 (a fighter riding an outer platform out of the top of the screen for about a second) but it felt terrible, so v0.0.38 puts the platforms back to solid during the turn (`SHIFT_SOFT_PLATFORMS = false` in `arena.gd`). The ride is back and backlog 9 is open again; the long-term fix comes with the arena configurations. This section checks that the old shift feels right and how bad the ride is in a real game.
 
-Two players at least, four is best. Filter `TopEdge` on the PC console.
+Two players at least, four is best. Filter `TopEdge` on the PC console for the tagged line; every shift also gets a clock time in the match log.
 
-### 4.1 Standing on a ledge when the shift starts
+### 4.1 Standing on a platform when the shift starts
 - [ ] Stand on `LedgeLeft` or `LedgeRight` (the outer ledges). Let another player grab the power-up.
-- [ ] You fall as soon as the banner `** ARENA SHIFT! **` shows.
-- [ ] You never leave the top of the screen.
-- [ ] You fall out of the bottom and come back in at the top, three or four times, then land on the new layout when the stage locks.
+- [ ] You stay on the ledge and ride it through the turn; you do not fall through it.
+- [ ] Near the middle of the turn you pass above the top of the screen for up to a second. How did that feel (fine / confusing / unfair)?
+- [ ] You come back into view on the new layout, still standing, when the stage locks.
 Notes:
 
-### 4.2 Standing on the ground slab when the shift starts
-- [ ] Stand on `GroundLeft` or `GroundRight`. Let another player grab the power-up.
-- [ ] You fall through the slab as it starts to turn.
-- [ ] You never leave the top of the screen.
+### 4.2 Standing on the ground slab or the centre tower when the shift starts
+- [ ] Stand on `GroundLeft` or `GroundRight`: you ride the slab and stay on it.
+- [ ] Stand on the centre tower: it turns under you and you stay on it.
 Notes:
 
-### 4.3 Standing on the centre tower when the shift starts
-- [ ] Stand on the centre tower. Let another player grab the power-up.
-- [ ] You fall through the tower (it is soft too), then land when the stage locks.
+### 4.3 In the air when the shift starts
+- [ ] Jump just before the banner `** ARENA SHIFT! **`: you land on whatever turning platform is under you; the platforms are solid.
+- [ ] Fall out of the bottom during the turn: you wrap to the top and land on a passing platform or fall again. Did you land somewhere strange (write where)?
 Notes:
 
-### 4.4 Grabbing the power-up yourself
-- [ ] Grab the power-up while standing on a platform. You fall right away, same as the others.
-Notes:
-
-### 4.5 Jumping and dashing during the turn
-- [ ] During the turn, jump and dash across the screen. Nothing catches you mid-air; you pass through the turning platforms.
-- [ ] You can still be hit and can still hit others during the turn.
-Notes:
-
-### 4.6 A round start during the turn
+### 4.4 A round start during the turn
 - [ ] Have the last fighter of a round die while the stage turns (the next round comes 2.6 s after the last kill).
-- [ ] The new round starts with everyone on solid platforms. Nobody falls through the floor at the spawn.
+- [ ] The new round starts with everyone on solid platforms at the spawn.
 Notes:
 
-### 4.7 Other screens
-- [ ] Watch another player fall through the turning stage on your screen. They fall the same way on their own screen (ask them).
+### 4.5 Other screens
+- [ ] Watch another player ride the turn on your screen. They see the same on theirs (ask them).
 Notes:
 
-### 4.8 Edge cases
-- [ ] Shield up when the shift starts: you still fall.
-- [ ] Egg form (druid stomp) when the shift starts: you still fall.
-- [ ] Two shifts in a row (a new power-up right after the stage locks): the second shift also drops you, and the platforms are solid in between.
-Notes:
+### 4.6 Telemetry
 
-### 4.9 Telemetry
-
-| When | `🧗 [TopEdge]` line (full) or "none" |
-|---|---|
-| Whole session | |
+| When | `🧗 [TopEdge]` line (full) or "none" | Clock (HH:MM) |
+|---|---|---|
+| Whole session | | |
 
 Clock times of a shift and of the moment the stage locked again; the numbers (draw, worst, hitches, proc, keys, focus, every device) come from `./venv/bin/python tools/stats_table.py --from HH:MM --to HH:MM` afterwards:
 
@@ -359,13 +343,11 @@ Clock times of a shift and of the moment the stage locked again; the numbers (dr
 |---|---|---|---|
 | During a shift | | | |
 | Right after the stage locked | | | |
-| Phone | Right after the stage locked | | | | | | | | |
 
-### 4.10 Verdict (section 4)
-- [ ] The free fall and the tumble through the bottom feel fair. Keep it as it is; backlog 23 stays closed.
-- [ ] The fall through the platforms is fine but the tumble through the bottom is too much (write why). Reopen backlog 23 as a feel change, for example a slower fall during the turn.
-- [ ] The free fall feels bad (write why). Reopen backlog 9 and look at option B (wrap at the top during a turn).
-- [ ] A `🧗 [TopEdge]` line showed during a shift. Reopen backlog 9 with the line pasted above.
+### 4.7 Verdict (section 4)
+- [ ] **The old shift feels right and the ride out of the top is a nit:** ship v0.1.0 with it. Backlog 9 stays open for the arena configurations (option B, wrap a fighter carried above the top edge to the bottom).
+- [ ] **The ride out of the top is unfair (write why):** do option B before v0.1.0, as a v0.0.x build; play this section again.
+- [ ] **Something else felt wrong during the turn (write what):** open a backlog item with the clock time.
 Notes:
 
 ---
@@ -375,7 +357,7 @@ Notes:
 **Why.** Until v0.0.35 the server sent every fighter's movement packet on its own: with 3 other fighters that was about 40 packets a second into every screen, and on the wire each one carries 40 to 50 B of headers around 11 B of game data ([[optimisation_step_b_profiles]], Profile 3). Since v0.0.36 the server holds the samples for up to 50 ms and sends them as ONE `sync_bundle` frame per screen, about 20 a second. The harness (`bundle` and `fleet` scenarios) says the puppets move as smoothly as before on the PC, with 25 ms more delay on average, hidden inside the 100 ms the puppets already render behind. Only a person can say whether it feels the same on a phone over Wi-Fi. Detail: [[v0.0.36 - Relay Packet Coalescing]].
 
 ### 5.1 Setup
-- [ ] Build in the lobby is v0.0.37 or later (an older build is refused with VERSION MISMATCH).
+- [ ] Build in the lobby is v0.0.38 or later (an older build is refused with VERSION MISMATCH).
 - [ ] At least three fighters: you on the PC, you on a phone, and one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). Four is better (add `--ai=rusher --name=Bot2`).
 - [ ] No console needed: write the clock time of the rounds in the match log (section 0.1).
 
@@ -403,10 +385,10 @@ Notes:
 
 ## 6. v0.1.0 release sign-off (one match, a spectator, everything on screen)
 
-**Why.** v0.1.0 is the first minor version: v0.0.37 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
+**Why.** v0.1.0 is the first minor version: v0.0.38 with a new number and no code change ([[release-v0.1.0]]). Sections 1 to 5 each look at one feature. This section looks at the whole game the way a player does: one full match from lobby to the crown, with a spectator watching, on the devices you have. The harness cannot judge this, a person can. There is no sound in this build (sound is on the v0.1.0 ideas list, unscheduled), so this is a visual check only.
 
 ### 6.1 Setup
-- [ ] Section 0 filled. Build in the lobby is v0.0.37 (the release candidate).
+- [ ] Section 0 filled. Build in the lobby is v0.0.38 (the release candidate).
 - [ ] Fighters: you on the PC, you on the S25 Ultra, at least one bot (`godot --headless --path . -- --autojoin --ai=chaser --name=Bot1`). A fourth fighter (iPad, Pixel or `--ai=rusher --name=Bot2`) is better.
 - [ ] Spectator: a device that is NOT one of the fighters opens `https://192.168.4.21:8443/play` and does not press join (a second device or a second browser profile, never a second tab in the game PC's browser, backlog 3).
 - [ ] No console needed for the numbers. Write the match in the match log (section 0.1). PC console (F12) only for the tagged lines.
@@ -431,7 +413,7 @@ Notes:
 - [ ] The HUD (stocks, crowns, round number) agrees on every screen after each round.
 - [ ] The tape card (kill stamps) updates within about 10 s of a kill and at once at the replay (cut 2 in action).
 - [ ] The replay shows the closing kill from the right angle, with the right fighters, and skips or ends cleanly.
-- [ ] The arena flip and the free-fall shift look the same on the phone and the PC (no half-drawn frames, no fighter left behind).
+- [ ] The arena shift looks the same on the phone and the PC (no half-drawn frames, no fighter left behind); the platforms stay solid (section 4).
 - [ ] Puppets on the phone glide like on the PC (this repeats the section 5 feel with a full match; tick the section 5 verdict from the same evening).
 - [ ] Anything that looked wrong, in your words (device, round, what):
 
@@ -446,4 +428,4 @@ Notes:
 
 ---
 
-Related: [[release-v0.1.0]] (section 6), [[PASSDOWN]] (backlog 1, 6, 13, 23; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).
+Related: [[release-v0.1.0]] (section 6), [[PASSDOWN]] (backlog 1, 6, 9, 13; Step C), [[optimisation_step_b_profiles]], [[v0.0.34 - Mobile Frame Telemetry]], [[v0.0.36 - Relay Packet Coalescing]], [[v0.0.30 - Ranger Rejoin Quiver]], [[v0.0.28 - Rejoin in the Replay Gap]], [[v0.0.32 - Free-Fall Arena Shift]], [[v0.0.33 - Shift Tumble Kept]], [[Commands]] (the console lines and the USB console).
