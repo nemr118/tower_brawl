@@ -21,7 +21,7 @@ ssh nemr@<laptop ip>                              # find it: ip neigh | grep -i 
 ## Build, bump and cache-bust (every GDScript change)
 ```bash
 ./bump_build.sh --title "Short Title"   # compile-check with autoloads live, bump v0.0.x, export, version the pck, make the patch page
-./bump_build.sh minor --title "Release" # v0.0.x -> v0.1.0; the runbook: [[release-v0.1.0]]
+./bump_build.sh minor --title "Release" # the next minor (v0.1.x -> v0.2.0); the runbook: [[release-v0.1.0]]
 ./bump_build.sh none                    # re-export the current version (no cache bust)
 ./bump_build.sh --clean                 # also delete older index_v*.pck
 godot --headless --path . --script tools/check_scripts.gd -- --no-net   # the compile check

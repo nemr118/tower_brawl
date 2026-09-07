@@ -5,13 +5,13 @@ tags: [handoff]
 
 Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the Obsidian vault. Kickoff reads: `CLAUDE.md`, this file, the newest page in `Patch Notes/`, [[Commands]]. History: [[Changelog]]. Deep dives: `docs/reference/`. Closed: [[closed]].
 
-## Now (2026-09-07)
-- **Tagged `v0.0.41`** on `master`, tree clean. **Harness 24/24 with `--restart-each`, no Minor**, report `harness_report_v0.0.41.json`. **The family plays on the laptop** ([[laptop-server]]): `tools/deploy_laptop.sh <ip>` pushes a build, `tools/pull_laptop_logs.sh <ip>` pulls the night's data.
-- **Next: tag `v0.1.0` = v0.0.41 with a new number, no code change (decided 2026-09-07).** Runbook: [[release-v0.1.0]]. Gate: sheet section 6 on v0.0.41, then `release/v0.1.0`, `./bump_build.sh minor`, suite 24/24, tag, ff-merge, deploy to the laptop. **v0.1.1** = cut 1 (the phone main thread) or the Android export + PCK loader; decide at the tag (runbook §5). Bundle feels late? `RELAY_BUNDLE_MS = 0`.
-- **Waiting on a human: one sheet, [[Playtest — Master Validation Suite]]** (v0.0.41). No console: clock times only (match log 0.1); `tools/stats_table.py --match N` prints the rows. Sections: 1 phone frames, 2 ranger quiver (backlog 1, 6), 3 PC reload keys (backlog 13), 4 shift feel with the anchored floor (backlog 9, 24), 5 bundle feel, 6 v0.1.0 sign-off. Stays in `docs/` until every verdict is ticked.
+## Now (2026-09-07, evening)
+- **Tagged `v0.1.0`**, the first minor release, on `master`, tree clean. **Harness 24/24 with `--restart-each`, no Minor**, report `harness_report_v0.1.0.json`. Deployed on the laptop ([[laptop-server]]): `TB_SUDO_PASS=... tools/deploy_laptop.sh <ip>` pushes a build, `tools/pull_laptop_logs.sh <ip>` pulls a night's data.
+- **Next: the v0.1.1 decision.** Either optimisation Step C cut 1 (the phone main thread, from the S25 Ultra rows of `tools/stats_table.py` once a phone has played) or the Android export + a PCK loader (the app downloads `index_<version>.pck` from the server; runbook §5). Then the arena configurations (backlog 9, 24; ideas: outer ledges inside 165 px of the pivot, a quarter-turn walls layout, per-layout `SHIFT_SOFT_PLATFORMS`). Bundle feels late? `RELAY_BUNDLE_MS = 0`.
+- **Waiting on a human: nothing.** The master sheet is archived with every verdict ticked ([[Playtest — Master Validation Suite]], 2026-09-07): the afternoon's free play on the laptop was the v0.1.0 sign-off. Any future game records itself; write clock times only when something feels off, then `tools/stats_table.py --from HH:MM --to HH:MM`.
 - **Ideas, not scheduled:** replay skip key, virtual stick, touch buttons, spawn shield, death animations, zoomed replay, sound; later a headless Godot sim server replaces the relay, native apps + PCK loader, Dead Cells style 3D fighters, a quarter-turn walls layout. Detail: [[PASSDOWN-2026-09-05]].
+- **v0.1.0 "Release":** v0.0.41 with a new number and nothing else; signed off by the free play on the laptop (six matches, three to five crowns, PC on Chrome vs bots, 240 fps, 0 hitches, rtt 4 ms). Sheet sections 1 to 3 closed without a play (numbers are automatic now; backlog 1, 6 covered by the harness; 13 a seen-once line). See [[v0.1.0 - Release]].
 - **v0.0.41 "Drawn Replay Icons":** the replay overlay's ◄◄ ► ■ marks were font glyphs the web build's font does not have (boxes in a browser); `replay_player.gd` `_draw_icon` draws them as outlined shapes. Deck `--controls`: `a` opens a bot menu (1 to 6 = a persona). See [[v0.0.41 - Drawn Replay Icons]].
-- **v0.0.40 "LAN Server Kit":** the laptop server tools ([[laptop-server]]): `tbbot.py` (headless bots, backlog 19 closed), `tbdash --controls`, `deploy_laptop.sh`, `pull_laptop_logs.sh`; `serve_game.py` writes join / name / lock / kill / leave records to `client_stats.jsonl`; `stats_table.py --summary` (K/D, classes, weapons, devices) and `--events`. See [[v0.0.40 - LAN Server Kit]].
 
 ## Open backlog
 `N. **Title** — state — next action — where the detail lives`. Numbers are never reused; closed items are in [[closed]].
@@ -21,7 +21,7 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 9. **An outer ledge carries a fighter out of the top of the screen mid-shift** — open (only the ledges swing past the edge since v0.0.39) — arena configurations: outer ledges inside 165 px of the pivot, or option B (wrap a fighter above the top edge to the bottom) — [[v0.0.31 - Top Edge Probe]].
 11. **Arena voids are a mechanic, not a bug** — user decision (v0.0.11) — nothing to do (`bot_brain.gd` routes through the seams).
 12. **One-off `fleet.client-silent`** — seen once (v0.0.27) — if it shows again keep `.harness_logs/godot2.log`.
-13. **PC keyboard dead after a reload in the replay gap** — waiting on a human — run sheet section 3, read `keys= focus=` — [[Playtest — Master Validation Suite]], [[v0.0.28 - Rejoin in the Replay Gap]].
+13. **PC keyboard dead after a reload in the replay gap** — open, low (seen once, June) — every card carries `keys=` and `focus=`; a clock time is enough next time — [[v0.0.28 - Rejoin in the Replay Gap]].
 14. **Stall report from the playtest** — open, vague — ask for exact steps at the next playtest — [[Playtest v0.0.26]].
 16. **The stomp-egg has no author over the network** — design call — a `player_hit` event from the observer, relayed like `player_died` — [[v0.0.29 - Egg-Form Puppet]].
 17. **Seam hiding** — design call — a fighter is drawn on one side of the seam only; draw a second copy near the edge — [[Playtest v0.0.17]].

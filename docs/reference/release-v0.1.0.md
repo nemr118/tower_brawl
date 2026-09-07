@@ -5,6 +5,8 @@ decided: 2026-09-07
 ---
 # Release v0.1.0 — criteria and runbook
 
+> **Executed 2026-09-07.** The sign-off was the afternoon's free play on the laptop server, not the planned evening (cancelled); the sheet is archived with every verdict ticked. The steps below were run as written from step 2, plus the laptop deploy. Kept as the template for v0.2.0.
+
 **What ships.** v0.1.0 is v0.0.41 with a new version number and nothing else. It carries optimisation Step C cuts 2 (tape card on change, [[v0.0.35 - Tape Card on Change]]) and 3 (relay `sync_bundle`, [[v0.0.36 - Relay Packet Coalescing]]) the client stats cards ([[v0.0.37 - Client Stats Reporting]]), the solid shift again ([[v0.0.38 - Solid Shift Restored]]), the anchored floor ([[v0.0.39 - Anchored Ground]]; backlog 9 and 24 open by decision) the LAN server kit ([[v0.0.40 - LAN Server Kit]]) and the drawn replay icons ([[v0.0.41 - Drawn Replay Icons]]). Cut 1 (the phone main thread) is NOT in it: it moves to v0.1.1 as the first post-release optimisation. Decided 2026-09-07.
 
 **How it is verified.** One playtest on the v0.0.41 build, section 6 of [[Playtest — Master Validation Suite]], is the final human check of v0.1.0. The same evening's S25 Ultra rows from `tools/stats_table.py` (section 1) become the baseline for v0.1.1. Because v0.1.0 has no code change over v0.0.41, a pass on v0.0.41 counts for v0.1.0. If any code changes between the playtest and the tag, the playtest no longer counts and section 6 is played again.
