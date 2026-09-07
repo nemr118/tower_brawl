@@ -8,7 +8,7 @@ interactive since v0.0.24).
     ./venv/bin/python tools/watch_server.py --once      # one picture and exit (colour, or --plain)
     ./venv/bin/python tools/watch_server.py --no-mouse  # keyboard only
     tbdash                                              # the shell alias for the first line
-    ./venv/bin/python tools/watch_server.py --controls  # server laptop: play link, bot buttons, wifi help
+    ./venv/bin/python tools/watch_server.py --no-controls  # without the SERVER panel (play link, bot menu, wifi, info); it is on by default since v0.0.41
 
 The story: to watch a match from the terminal you had to read raw log lines.
 Now serve_game.py writes a small file, status.json, once a second, and the test
@@ -1625,8 +1625,10 @@ def main():
     ap.add_argument("--plain", action="store_true", help="plain text, no colours, no keys")
     ap.add_argument("--once", action="store_true", help="print one picture and exit")
     ap.add_argument("--no-mouse", action="store_true", help="keyboard only, no mouse reporting")
-    ap.add_argument("--controls", action="store_true",
-                    help="server laptop: a SERVER panel with the play link, bot buttons (tools/tbbot.py) and wifi help")
+    ap.add_argument("--no-controls", dest="controls", action="store_false",
+                    help="hide the SERVER panel (on by default since v0.0.41; the laptop and the PC show the same deck)")
+    ap.add_argument("--controls", action="store_true", default=True,
+                    help="show the SERVER panel (the default since v0.0.41; kept so old aliases and the laptop's console still work)")
     args = ap.parse_args()
 
     use_rich = not args.plain
@@ -1640,7 +1642,7 @@ def main():
 
     zoom = min(range(len(ZOOM_LADDER)), key=lambda i: abs(ZOOM_LADDER[i] - args.zoom))
     deck = Deck(args.file, args.harness_file, zoom=zoom)
-    deck.controls = args.controls
+    deck.controls = args.controls   # default True; --no-controls turns the panel off
 
     if args.once or not use_rich:
         size = shutil.get_terminal_size((100, 40))

@@ -50,7 +50,7 @@ Console lines (headless stdout = the browser console):
 
 ## The deck, the client cards and the logs
 ```bash
-tbdash                                            # = ./venv/bin/python tools/watch_server.py; --plain --once --no-mouse; Screen = fps, proc ms
+tbdash                                            # = ./venv/bin/python tools/watch_server.py; SERVER panel on by default (a bot menu, i info); --no-controls --plain --once
 ./venv/bin/python tools/stats_table.py --list     # the matches in client_stats.jsonl (every client's NetStats card, every 5 s)
 ./venv/bin/python tools/stats_table.py --match 3  # one row per device (fps, proc, rtt, pkt/s, jitter, keys, focus); --by-round --devices
 ./venv/bin/python tools/stats_table.py --summary --last 3        # seats, classes, kills, K/D, weapons, devices per match; --events lists every marker
