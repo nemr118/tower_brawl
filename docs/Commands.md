@@ -30,8 +30,8 @@ godot --headless --path . --script tools/check_scripts.gd -- --no-net   # the co
 
 ## The harness (`tools/chaos_bots.py`)
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                   # the 24 scenarios (fuzz, lag, bundle, tape, replay, fleet ...)
-setsid nohup ./venv/bin/python tools/chaos_bots.py --restart-each --json docs/harness_report_<ver>.json > <scratch>/harness.log 2>&1 &   # the full gate, detached; wait for "24/24 scenarios passed"
+./venv/bin/python tools/chaos_bots.py --list                   # the 25 scenarios (fuzz, lag, bundle, tape, replay, fleet ...)
+setsid nohup ./venv/bin/python tools/chaos_bots.py --restart-each --json docs/harness_report_<ver>.json > <scratch>/harness.log 2>&1 &   # the full gate, detached; wait for "25/25 scenarios passed"
 ./venv/bin/python tools/chaos_bots.py --scenario fleet --godot 4 --ai chaser,sniper,turtle,rusher --duration 90 --latency-ms 120 --jitter-ms 40   # the fleet gate; 150 = heavy; --loss 0.05
 ```
 Knobs: `--seed`, `--die-rate`, `--ai-difficulty 0.3`, `--no-state`. Levels: `PASS`, `FAIL`, `MINOR` (passed, but the server logged an `ERROR` or a client a `WARNING:`). Client logs: `.harness_logs/godot<N>.log`.

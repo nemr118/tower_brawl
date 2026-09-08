@@ -467,7 +467,13 @@ TCP_KEEPALIVE = (10, 5, 3)          # idle s, probe interval s, probes: a dead p
 REJOIN_GRACE = 8.0                  # s a fighter's seat is held after a mid-match disconnect (page reload, Wi-Fi blip)
 FORFEIT_GRACE = 1.5                 # s after an explicit leave before the round is decided (two leaving together = no winner)
 RECENT_SLOT_S = 120.0               # s a client token may reclaim its previous lobby slot
-DEATH_DEDUPE_S = 1.5                # any client may report a death; repeats inside this window are the same death
+DEATH_DEDUPE_S = 0.6                # any client may report a death; repeats inside this window are the same death.
+                                    # Backlog 27: was 1.5, over the client's 1.2 s respawn delay. A fighter that
+                                    # respawned, popped its bubble and died again 1.2 to 1.5 s after the first death
+                                    # was dropped as a duplicate: dead on its screen, alive here, the round never ended.
+                                    # One hit reaches the server from every screen within the 100 ms puppet delay plus
+                                    # the latency spread (the lag gate is 150 +/- 50 ms), so 0.6 folds them and stays
+                                    # under the earliest real second death.
 slot_tokens = {}                    # pid -> client token currently holding the slot
 recent_slots = {}                   # token -> (pid, time left)
 pending_rejoin = {}                 # pid -> {"token", "seq", "until"}: seat held, not counted alive

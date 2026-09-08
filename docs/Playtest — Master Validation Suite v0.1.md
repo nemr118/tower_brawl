@@ -1,7 +1,7 @@
 ---
 tags: [playtest]
 build: v0.1.1 (the phone controller)
-backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp
+backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix)
 result: open (started 2026-09-08)
 ---
 # Playtest — Master Validation Suite v0.1
@@ -93,4 +93,20 @@ The night soak of 2026-09-08 (four bots, 190 rounds) printed 520 Speed lines, al
 ### 3.1 Verdict (section 3)
 - [ ] **Seen again with a clock time:** next build sends the `🏃 [Speed]` line to the server like the NetStats card, so it can be read from the PC.
 - [ ] **Not seen in two evenings:** close backlog 25 as fixed by the new button hit test (the dash-chain theory: the old drag handler re-pressed DASH whenever a thumb wobbled on its edge).
+Notes:
+
+---
+
+## 4. The respawn death (backlog 27, server fix of 2026-09-08)
+
+The bug. When a fighter died, came back 1.2 s later and was killed again right away (the first attack pops the spawn bubble), the server threw the second death away as a repeat of the first. The fighter stayed dead on its own screen and alive on the server, so the round could never end. Four bots hit it once in the night and the round ran 13 h. The server's repeat window is now 0.6 s (was 1.5 s), and a harness test does exactly this. This section is the human version: the way a real thumb does it.
+
+- [ ] For one whole round, the moment you come back after a death, mash ATK and run at the other fighter. Try to die again as fast as you can. How many times did you die within a second or two of coming back: 
+- [ ] Did the lives number on the HUD go down every time you died? (yes / no, write the clock time): 
+- [ ] Did anyone stay dead on their screen while the round kept going? (no / yes, clock time and who): 
+- [ ] Afterwards, from the PC: `grep "\[KILL\]" playtest_logs/<folder>/server.log` shows one line per death that counted, with the lives going down one at a time, and `grep "\[ROUND\]" playtest_logs/<folder>/server.log` shows every round ending.
+
+### 4.1 Verdict (section 4)
+- [ ] **Pass:** every quick second death took a life and no one stayed dead. Close it; backlog 27 stays closed.
+- [ ] **Fail:** write the clock time and who. Next: a client self-respawn when its own death is not echoed within a second (`scripts/arena.gd`), and backlog 28 (a round clock) moves up.
 Notes:

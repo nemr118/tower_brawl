@@ -64,7 +64,7 @@ MATCH_END_DELAY = 7.0       # serve_game.py MATCH_END_DELAY (banner and replay t
 MATCH_SCORE_LIMIT = 5       # serve_game.py MATCH_SCORE_LIMIT
 REJOIN_GRACE = 8.0          # serve_game.py REJOIN_GRACE: a fighter's seat is held after a disconnect
 FORFEIT_GRACE = 1.5         # serve_game.py FORFEIT_GRACE: explicit leave, round decided after this
-DEATH_DEDUPE_S = 1.5        # serve_game.py DEATH_DEDUPE_S
+DEATH_DEDUPE_S = 0.6        # serve_game.py DEATH_DEDUPE_S (backlog 27: was 1.5, over RESPAWN_DELAY)
 
 # ── Schema ───────────────────────────────────────────────────────────────────
 NUM = "num"
@@ -1922,6 +1922,55 @@ def sc_observer_death(ctx):
         ctx.fail("server.observer-death-stock", f"stock after the second death = {d2['stock']}, expected 1")
     else:
         ctx.note("observer-reported deaths: counted once, deduped, stocks 3 -> 2 -> 1")
+
+
+@scenario("respawn_death", "backlog 27: a fighter dies, respawns 1.2 s later, pops its bubble by attacking and dies again at once (1.25 s after the first death); the second death must be counted (stock 2 -> 1), while a repeat of the first death from another screen 0.2 s later is still folded into it")
+def sc_respawn_death(ctx):
+    # The night soak of 2026-09-08: Bot4 died, respawned 1.2 s later, attacked (the bubble pops on the
+    # first key) and a firebolt in flight killed it again 1.48 s after the first death. The server's
+    # DEATH_DEDUPE_S was 1.5, so the real second death was dropped as a duplicate: the fighter stayed
+    # dead on its own screen (a respawn only follows a relayed player_died) and alive on the server,
+    # and the round ran for 13 h. Harness bots never hit this because they wait SPAWN_INVULN after a
+    # respawn; a Godot client pops the bubble the moment it attacks.
+    bots = [ctx.bot(i) for i in range(1, 4)]
+    lobby_join(ctx, bots)
+    start_match(ctx, bots, bots[0])
+    for b in bots:
+        b.die_rate = 0.0
+    time.sleep(1.5)
+    a, victim, observer = bots
+    if DEATH_DEDUPE_S >= RESPAWN_DELAY:
+        ctx.fail("harness.dedupe-over-respawn", f"DEATH_DEDUPE_S {DEATH_DEDUPE_S} is not under RESPAWN_DELAY {RESPAWN_DELAY}")
+    m = victim.mark()
+    t0 = time.monotonic()
+    victim.report_death(victim.slot, observer.slot, "Firebolt")     # the victim's own screen sees the hit
+    time.sleep(0.2)
+    a.report_death(victim.slot, observer.slot, "Firebolt")          # the same hit seen from another screen
+    _, first = victim.wait_for("player_died", 2.0, since=m, pred=lambda p: int(p["victim"]) == victim.slot)
+    if first is None:
+        ctx.fail("server.death-not-echoed", "the first death was never broadcast")
+        return
+    if int(first["stock"]) != 2:
+        ctx.fail("server.respawn-death-stock", f"stock after the first death = {first['stock']}, expected 2")
+    # The screen respawns the fighter RESPAWN_DELAY after the relayed death. The earliest a real second
+    # death can be reported is one physics tick after that. Report it then.
+    time.sleep(max(0.0, RESPAWN_DELAY + 0.03 - (time.monotonic() - t0)))
+    m2 = victim.mark()
+    t_second = time.monotonic() - t0
+    victim.report_death(victim.slot, observer.slot, "Firebolt")     # popped the bubble, hit again
+    _, second = victim.wait_for("player_died", 2.0, since=m2, pred=lambda p: int(p["victim"]) == victim.slot)
+    if second is None:
+        ctx.fail("server.respawn-death-dropped",
+                 f"a real second death {t_second:.2f} s after the first was dropped as a duplicate (DEATH_DEDUPE_S={DEATH_DEDUPE_S})")
+    elif int(second["stock"]) != 1:
+        ctx.fail("server.respawn-death-stock", f"stock after the second death = {second['stock']}, expected 1")
+    # Bookkeeping: exactly two broadcasts for the victim in all (the repeat from screen `a` was folded).
+    time.sleep(0.5)
+    deaths = [pkt for _, t, pkt in list(victim.events[m:]) if t == "player_died" and int(pkt["victim"]) == victim.slot]
+    if len(deaths) != 2:
+        ctx.fail("server.respawn-death-count", f"{len(deaths)} player_died broadcasts for the victim, expected 2 (first + the real second)")
+    elif second is not None:
+        ctx.note(f"respawn death: the second death {t_second:.2f} s after the first counted (stocks 3 -> 2 -> 1), the 0.2 s repeat folded")
 
 
 @scenario("slow_reader", "a client stops reading; the others must keep receiving (no head-of-line blocking) and the stalled client must be dropped within ~35 s")
