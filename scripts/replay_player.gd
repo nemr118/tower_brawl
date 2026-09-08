@@ -69,6 +69,13 @@ var _powerup: Array = [0.0, 0.0, false]
 var _frozen_live: Array = []    # [[node, was_visible, process_mode]] the paused live world
 var _overlay: Node2D = null
 var _victim_pos: Vector2 = Vector2.INF
+# v0.1.2 probe (cut 1): what the start cost. start_ms = start() itself, tick_ms = the
+# whole freeze tick (set by arena.gd), first_ms = the slowest of the first three
+# drawn frames (the one that drew the overlay for the first time).
+var start_ms: float = 0.0
+var tick_ms: float = 0.0
+var first_ms: float = 0.0
+var _first_frames: int = 0
 
 
 # The overlay draws above the ghosts. A child with a higher z_index, so its
@@ -88,12 +95,15 @@ func _ready() -> void:
 	_overlay.z_index = 30
 	add_child(_overlay)
 	set_process(false)
+	if Global.warm_enabled:
+		prepare_ghosts()
 
 
 # Start playing `ring` (frozen, with a closing kill). `live` = the nodes to pause
 # (fighters and projectiles). Returns "" when the replay started, else the reason
 # it could not (the skipped= word on the 📼 [Replay] line).
 func start(ring, platforms: Node2D, live: Array, round_end_msec: int) -> String:
+	var t0 := Time.get_ticks_usec()
 	if playing:
 		return "already-playing"
 	if ring == null or not ring.frozen:
@@ -119,6 +129,10 @@ func start(ring, platforms: Node2D, live: Array, round_end_msec: int) -> String:
 	_fade = 0.0
 	_track_y = -20.0
 	_victim_pos = Vector2.INF
+	start_ms = 0.0
+	tick_ms = 0.0
+	first_ms = 0.0
+	_first_frames = 0
 	_phase = "rew"
 	_pos = float(_last - _first)
 	# Pause the live world. Nothing moves or draws under the ghosts.
@@ -136,6 +150,7 @@ func start(ring, platforms: Node2D, live: Array, round_end_msec: int) -> String:
 	set_process(true)
 	_show_frame(_last)
 	_overlay.queue_redraw()
+	start_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	return ""
 
 
@@ -148,17 +163,16 @@ func stop(cut: bool) -> void:
 	var now := Time.get_ticks_msec()
 	var result := {"playing": false, "played": true, "round": tape.round_num, "frames": _last - _first + 1,
 		"drawn": _drawn.size(), "dur_ms": now - _started_msec, "late_ms": _started_msec - _round_end_msec,
-		"cut": cut, "skipped": null, "kill_seq": _kill, "from": _first, "to": _last}
+		"cut": cut, "skipped": null, "kill_seq": _kill, "from": _first, "to": _last,
+		"start_ms": snappedf(start_ms, 0.1), "tick_ms": snappedf(tick_ms, 0.1), "first_ms": snappedf(first_ms, 0.1)}
 	tape.replay = result
-	# Ghosts away, live world back.
+	# Ghosts hidden (kept for the next replay, v0.1.2), live world back.
 	for pid in _ghosts:
 		if is_instance_valid(_ghosts[pid]):
-			_ghosts[pid].queue_free()
-	_ghosts.clear()
+			_ghosts[pid].visible = false
 	for entry in _ghost_proj:
 		if is_instance_valid(entry["node"]):
-			entry["node"].queue_free()
-	_ghost_proj.clear()
+			entry["node"].visible = false
 	for entry in _frozen_live:
 		var node = entry[0]
 		if is_instance_valid(node):
@@ -178,6 +192,9 @@ func _process(delta: float) -> void:
 	if not playing:
 		return
 	_clock += delta
+	if _first_frames < 3:
+		_first_frames += 1
+		first_ms = maxf(first_ms, delta * 1000.0)
 	var slow_start := float(_kill - SLOW_FRAMES - _first)
 	var slow_end := float(_kill + SLOW_FRAMES - _first)
 	var end_pos := float(_last - _first)
@@ -293,9 +310,24 @@ func _show_frame(seq: int) -> void:
 	_powerup = [pu[0], pu[1], pu[2] >= 0.5]
 
 
+# One hidden ghost per seated fighter, made at the arena's load (v0.1.2, cut 1).
+# The first replay used to instantiate them inside the freeze tick.
+func prepare_ghosts() -> void:
+	for pid in Global.active_players:
+		if pid >= 1 and pid <= 4:
+			var g = _ghost_for(pid)
+			if g != null:
+				g.visible = false
+
+
 func _ghost_for(pid: int):
 	if pid in _ghosts and is_instance_valid(_ghosts[pid]):
-		return _ghosts[pid]
+		var kept = _ghosts[pid]
+		var want = Global.player_configs.get(pid, {}).get("class", kept.class_type)
+		if kept.class_type != want:   # a seat that changed hands mid-match
+			kept.class_type = want
+			kept._apply_class_defaults()
+		return kept
 	var cfg: Dictionary = Global.player_configs.get(pid, {})
 	var g = PlayerScene.instantiate()
 	g.is_ghost = true
@@ -451,8 +483,10 @@ static func status_line(ring, result: Dictionary) -> String:
 	var last: Dictionary = ring.report_stamp() if ring != null else {}
 	var weapon: String = str(last.get("weapon", "-")).replace(" ", "_") if not last.is_empty() else "-"
 	var skipped = result.get("skipped")
-	return "📼 [Replay] round=%d killer=%d victim=%d weapon=%s from=%d to=%d frames=%d drawn=%d dur_ms=%d late_ms=%d cut=%d skipped=%s" % [
+	return ("📼 [Replay] round=%d killer=%d victim=%d weapon=%s from=%d to=%d frames=%d drawn=%d dur_ms=%d late_ms=%d cut=%d skipped=%s" % [
 		int(result.get("round", 0)), int(last.get("killer", 0)), int(last.get("victim", 0)), weapon,
 		int(result.get("from", -1)), int(result.get("to", -1)), int(result.get("frames", 0)),
 		int(result.get("drawn", 0)), int(result.get("dur_ms", 0)), int(result.get("late_ms", 0)),
-		1 if bool(result.get("cut", false)) else 0, str(skipped) if skipped != null else "-"]
+		1 if bool(result.get("cut", false)) else 0, str(skipped) if skipped != null else "-"]) + (
+		" start_ms=%.1f tick_ms=%.1f first_ms=%.0f" % [float(result.get("start_ms", 0.0)),
+		float(result.get("tick_ms", 0.0)), float(result.get("first_ms", 0.0))])

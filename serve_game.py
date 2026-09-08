@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.1.1"
+GAME_VERSION = "v0.1.2"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -1586,6 +1586,14 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     # v0.0.26: the replay card: {playing, played, round, frames, drawn, dur_ms, late_ms, cut, skipped}
                     rp = card.get("replay")
                     card["replay"] = rp if isinstance(rp, dict) else None
+                    # v0.1.2 (cut 1): a played or cut replay leaves one record in client_stats.jsonl,
+                    # so a phone's replay start cost (start_ms, tick_ms, first_ms) is readable the next day.
+                    if isinstance(rp, dict) and rp.get("played"):
+                        _stats_log({"kind": "replay", "seat": assigned_id, "round": _as_int(rp.get("round"), 0),
+                                    "frames": _as_int(rp.get("frames"), 0), "drawn": _as_int(rp.get("drawn"), 0),
+                                    "dur_ms": _as_int(rp.get("dur_ms"), 0), "late_ms": _as_int(rp.get("late_ms"), 0),
+                                    "cut": bool(rp.get("cut")), "start_ms": rp.get("start_ms"),
+                                    "tick_ms": rp.get("tick_ms"), "first_ms": rp.get("first_ms")})
                     card["updated_at"] = time.time()
                     with lobby_lock:
                         player_tapes[assigned_id] = card
@@ -1813,7 +1821,8 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
         # versioned page. The version is read live from global.gd, so this follows
         # every bump_build.sh run and survives an editor F5 re-export, which rewrites
         # the plain index.html without the mainPack patch.
-        path = self.path.split('?', 1)[0].rstrip('/') or '/'
+        path, _, query = self.path.partition('?')
+        path = path.rstrip('/') or '/'
         # A refresh of an old versioned page (pruned by bump_build.sh --clean) lands
         # on the current one instead of a 404.
         stale_versioned = (re.fullmatch(r"/index_v\d+\.\d+\.\d+\.html", path)
@@ -1822,7 +1831,9 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
             target = f"/index_{get_game_version()}.html"
             if os.path.exists(os.path.join(BUILD_DIR, target.lstrip('/'))):
                 self.send_response(302)
-                self.send_header("Location", target)
+                # v0.1.2: the query string rides along (?arg=... is how tools/webbot.sh
+                # hands the headless flags to a browser client).
+                self.send_header("Location", target + (('?' + query) if query else ''))
                 self.end_headers()
                 return
         super().do_GET()

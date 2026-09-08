@@ -1,7 +1,7 @@
 ---
 tags: [playtest]
-build: v0.1.1 (the phone controller)
-backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix)
+build: v0.1.2 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later)
+backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2)
 result: open (started 2026-09-08)
 ---
 # Playtest — Master Validation Suite v0.1
@@ -108,5 +108,25 @@ The bug. When a fighter died, came back 1.2 s later and was killed again right a
 
 ### 4.1 Verdict (section 4)
 - [ ] **Pass:** every quick second death took a life and no one stayed dead. Close it; backlog 27 stays closed.
-- [ ] **Fail:** write the clock time and who. Next: a client self-respawn when its own death is not echoed within a second (`scripts/arena.gd`), and backlog 28 (a round clock) moves up.
+- [ ] **Fail:** write the clock time and who. v0.1.2 adds the client's own safety net: a fighter whose death got no answer for one second comes back by itself (`🩹 [SelfRespawn]` in the console). If someone still stayed dead on v0.1.2, backlog 28 (a round clock) moves up.
+Notes:
+
+---
+
+## 5. Cut 1: the first replay and the lobby (v0.1.2)
+
+What was seen. On the first night the first replay of the match stuttered on both phones (an 89 ms frame on the S25 Ultra, 52 ms on the Pixel), and the S25's lobby froze for a moment when the other phone joined and when both locked in (two frames over 50 ms). Later replays and the fight itself were smooth.
+
+What changed. The lobby's icons were 1024 px pictures drawn at 30 px, loaded fresh on every join, lock and reveal; they are 256 px now and loaded once. The letters the replay overlay and the "knocked out" banner use are drawn once, off-screen, when the arena loads, so the first time they show on screen costs nothing. The replay's ghost fighters are built when the arena loads, not when the first replay starts. Every replay now reports three numbers to the server: `start_ms`, `tick_ms` (how long the replay took to start, script side) and `first_ms` (the slowest of its first three drawn frames).
+
+- [ ] Play one full match on both phones. Clock time of the match start (HH:MM): 
+- [ ] The first replay of the match: did it start with a visible stutter? (no / yes, on which phone): 
+- [ ] In the lobby, when the other phone joined and when both locked in: did the screen freeze for a moment? (no / yes, when): 
+- [ ] Afterwards, from the PC: `tools/pull_laptop_logs.sh <laptop ip>`, then `grep '"kind":"replay"' playtest_logs/<folder>/client_stats.jsonl`: one line per replay per phone. Write the round 1 numbers: S25 `first_ms` / `tick_ms`:  · Pixel `first_ms` / `tick_ms`: 
+- [ ] `./venv/bin/python tools/stats_table.py --file playtest_logs/<folder>/client_stats.jsonl --match N --by-round`: round 1 `hitches` on both phones (was 2 and 1):  · the lobby cards' `proc` around the join and the locks (`--from HH:MM --to HH:MM`; was 21 to 22 ms): 
+
+### 5.1 Verdict (section 5)
+- [ ] **Pass:** round 1 has no hitch on either phone (`hitches=0`, every `first_ms` under 34, two frames), and the lobby cards at the join and the locks stay under 12 ms `proc`. Cut 1 is done.
+- [ ] **The replay still stutters:** write `first_ms` and `tick_ms`. A big `tick_ms` is the script side (the freeze and the tape card); a big `first_ms` with a small `tick_ms` is the draw side (next suspect: the ghost fighters' first draw, then a shader).
+- [ ] **The lobby still freezes:** write which moment (join / lock / reveal) and the `proc`. Next: the label text (`scripts/font_warmup.gd` pairs) or the roster rebuild in `scripts/character_select.gd`.
 Notes:

@@ -43,6 +43,12 @@ var _tape_weapon_ids := {}   # projectile instance id -> weapon id, so a name lo
 # The replay (v0.0.26): plays the frozen tape back when the server's round_end says
 # "replay": true (the round ended on a kill). See replay_player.gd. Made in code.
 const ReplayPlayerScript = preload("res://scripts/replay_player.gd")
+const FontWarmupScript = preload("res://scripts/font_warmup.gd")
+# v0.1.2 (backlog 27's other half): a fighter whose own death report got no echo
+# comes back on its own after this. The server dropped a real second death as a
+# repeat once (fixed on the server, DEATH_DEDUPE_S 0.6); should it ever happen
+# again, or a report get lost, the fighter is not stuck dead for the round.
+const SELF_RESPAWN_S := 1.0
 var replay = null
 var _replay_due: bool = false    # round_end said replay: true and no replay has started or been skipped yet
 var _round_end_msec: int = 0     # when round_end arrived, for the late_ms number
@@ -274,6 +280,11 @@ func _ready():
 	replay.name = "Replay"
 	add_child(replay)
 	replay.finished.connect(_on_replay_finished)
+	# v0.1.2 (cut 1): draw the glyphs of the banner (20/4), the HUD and name tags
+	# (10/3) and the replay overlay (18/3, 16/3, 12/3) once now, off-screen, so the
+	# first "knocked out" banner and the first replay do not rasterize them mid-fight.
+	if Global.warm_enabled:
+		add_child(FontWarmupScript.new([[20, 4], [18, 3], [16, 3], [12, 3]]))
 	Global.focus_canvas()   # v0.0.28: the browser keys go to the canvas only while it has the focus
 	_start_new_match()
 
@@ -284,9 +295,28 @@ func _ready():
 # now, plus the arena spin. history_ring.gd keeps the last 360 frames.
 # ------------------------------------------------------------------------------
 func _physics_process(_delta: float) -> void:
+	_self_respawn_check()
 	if tape == null or not tape.recording:
 		return
 	_record_tape_frame()
+
+
+func _self_respawn_check() -> void:
+	# v0.1.2: my fighter reported its own death and nothing came back for SELF_RESPAWN_S.
+	# The server thinks it is alive (the report was folded into an older death, or lost),
+	# so a local respawn puts both sides in step. The mark is cleared by the echo
+	# (_on_net_player_died) and by respawn() itself.
+	if is_round_over or Global.my_player_id <= 0:
+		return
+	var p = player_instances.get(Global.my_player_id)
+	if p == null or not is_instance_valid(p) or not p.is_dead or p.death_report_msec <= 0:
+		return
+	var waited: int = Time.get_ticks_msec() - int(p.death_report_msec)
+	if waited < int(SELF_RESPAWN_S * 1000.0):
+		return
+	p.death_report_msec = 0
+	print("🩹 [SelfRespawn] slot=%d round=%d waited_ms=%d stock=%d" % [Global.my_player_id, current_round, waited, int(player_stocks.get(Global.my_player_id, -1))])
+	p.respawn(_spawn_spot(Global.my_player_id))
 
 
 func _record_tape_frame() -> void:
@@ -336,9 +366,12 @@ func _record_tape_frame() -> void:
 	else:
 		pu[2] = 0.0
 	if tape.commit(Time.get_ticks_msec()):
+		var t0 := Time.get_ticks_usec()
 		_tape_report()   # the tail is recorded: the tape just froze; the card goes now
 		if _replay_due:
 			_start_replay()
+		if replay != null and replay.playing:
+			replay.tick_ms = (Time.get_ticks_usec() - t0) / 1000.0   # v0.1.2 probe: the freeze tick's script cost
 	elif _tape_card_dirty and Time.get_ticks_msec() - _tape_card_sent_msec >= int(TAPE_CARD_MIN_S * 1000.0):
 		_send_tape_card()   # a stamp happened since the last card and the floor has passed
 
@@ -582,6 +615,8 @@ func _clear_projectiles():
 
 func _on_net_player_died(killer_id: int, victim_id: int, new_stock: int, weapon: String = "?"):
 	player_stocks[victim_id] = new_stock
+	if victim_id == Global.my_player_id and victim_id in player_instances and is_instance_valid(player_instances[victim_id]):
+		player_instances[victim_id].death_report_msec = 0   # the echo came: the normal 1.2 s respawn below
 	# Phase 3c: stamp the tape with this kill (the server's word, so every screen stamps the same).
 	if tape != null and not tape.stamp(killer_id, victim_id, weapon).is_empty():
 		_tape_report(false)   # v0.0.35: the line now, the card within TAPE_CARD_MIN_S

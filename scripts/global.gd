@@ -18,7 +18,7 @@ var touch_aim: Vector2 = Vector2.ZERO
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.1.1"
+const GAME_VERSION: String = "v0.1.2"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -65,6 +65,7 @@ var _autojoin_class: int = 0
 var _autojoin_class_given: bool = false
 var _server_override: String = ""
 var _no_net: bool = false
+var warm_enabled: bool = true      # v0.1.2: --no-warm skips the font warm-up and the ghost pool (the A/B for cut 1)
 const BotBrainScript = preload("res://scripts/bot_brain.gd")
 var ai_persona: String = ""          # "" = no brain; see bot_brain.gd PERSONAS
 var ai_seed: int = 0                 # 0 = random
@@ -399,8 +400,8 @@ func _ready():
 		if ua:
 			is_mobile = true
 
-	if not OS.has_feature("web"):
-		_parse_test_args()
+	if not OS.has_feature("web") or not OS.get_cmdline_user_args().is_empty():
+		_parse_test_args()   # v0.1.2: a page opened with ?arg=... (tools/webbot.sh) takes the flags too
 	client_token = _load_or_create_token()
 
 	_device = _device_info()
@@ -1039,6 +1040,8 @@ func _parse_test_args() -> void:
 			net_stats_enabled = false
 		elif a == "--no-net":
 			_no_net = true
+		elif a == "--no-warm":
+			warm_enabled = false
 		elif a.begins_with("--ai="):
 			ai_persona = a.substr(5).to_lower()
 		elif a.begins_with("--ai-seed="):

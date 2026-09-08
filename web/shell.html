@@ -210,6 +210,13 @@ body {
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
+// Test hook (v0.1.2): ?arg=--autojoin&arg=--ai=chaser hands the headless flags to the
+// game (scripts/global.gd), so Chromium on the PC can be a real web client with a bot
+// brain (tools/webbot.sh). Normal play has no ?arg= and nothing changes.
+(function () {
+	const q = new URLSearchParams(window.location.search).getAll('arg');
+	if (q.length > 0) { GODOT_CONFIG.args = ['--'].concat(q); }
+})();
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 const engine = new Engine(GODOT_CONFIG);
 

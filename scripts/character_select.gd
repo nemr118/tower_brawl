@@ -80,6 +80,53 @@ const NET_SIGNAL_HANDLERS = {
 }
 
 const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
+const FontWarmupScript = preload("res://scripts/font_warmup.gd")
+
+# v0.1.2 (cut 1): every icon this screen can show, loaded once with the script.
+# The story: _update_player_card() called load() on a 1024 px icon every time the
+# roster changed. An icon no card held yet (the "locked" one at the first lock,
+# the other player's class at the reveal) was read out of the .pck and pushed to
+# the GPU on that frame: the S25 Ultra's 21 to 35 ms lobby frames and its two
+# 50 ms+ hitches at the locks. Now the icons are 256 px (assets/icons/*.import,
+# size_limit) and already in memory, and a card's texture is only swapped when
+# it changes.
+const ICON_TEX := {
+	"res://assets/icons/empty.jpg": preload("res://assets/icons/empty.jpg"),
+	"res://assets/icons/locked.jpg": preload("res://assets/icons/locked.jpg"),
+	"res://assets/icons/waiting.jpg": preload("res://assets/icons/waiting.jpg"),
+	"res://assets/icons/ranger.jpg": preload("res://assets/icons/ranger.jpg"),
+	"res://assets/icons/knight.jpg": preload("res://assets/icons/knight.jpg"),
+	"res://assets/icons/pyro.jpg": preload("res://assets/icons/pyro.jpg"),
+	"res://assets/icons/rogue.jpg": preload("res://assets/icons/rogue.jpg"),
+	"res://assets/icons/druid.jpg": preload("res://assets/icons/druid.jpg"),
+	"res://assets/icons/primary.jpg": preload("res://assets/icons/primary.jpg"),
+	"res://assets/icons/special.jpg": preload("res://assets/icons/special.jpg"),
+	"res://assets/icons/skill_ranger_1.jpg": preload("res://assets/icons/skill_ranger_1.jpg"),
+	"res://assets/icons/skill_ranger_2.jpg": preload("res://assets/icons/skill_ranger_2.jpg"),
+	"res://assets/icons/skill_knight_1.jpg": preload("res://assets/icons/skill_knight_1.jpg"),
+	"res://assets/icons/skill_knight_2.jpg": preload("res://assets/icons/skill_knight_2.jpg"),
+	"res://assets/icons/skill_mage_1.jpg": preload("res://assets/icons/skill_mage_1.jpg"),
+	"res://assets/icons/skill_mage_2.jpg": preload("res://assets/icons/skill_mage_2.jpg"),
+	"res://assets/icons/skill_pyro_1.jpg": preload("res://assets/icons/skill_pyro_1.jpg"),
+	"res://assets/icons/skill_pyro_2.jpg": preload("res://assets/icons/skill_pyro_2.jpg"),
+	"res://assets/icons/skill_rogue_1.jpg": preload("res://assets/icons/skill_rogue_1.jpg"),
+	"res://assets/icons/skill_rogue_2.jpg": preload("res://assets/icons/skill_rogue_2.jpg"),
+	"res://assets/icons/skill_druid_1.jpg": preload("res://assets/icons/skill_druid_1.jpg"),
+	"res://assets/icons/skill_druid_2.jpg": preload("res://assets/icons/skill_druid_2.jpg"),
+}
+
+
+func _tex(path: String) -> Texture2D:
+	if path in ICON_TEX:
+		return ICON_TEX[path]
+	push_warning("character_select: icon not in ICON_TEX, loading now: " + path)
+	return load(path)
+
+
+func _set_tex(node: TextureRect, path: String) -> void:
+	var t := _tex(path)
+	if node.texture != t:
+		node.texture = t
 
 func _exit_tree():
 	for sig_name in NET_SIGNAL_HANDLERS:
@@ -97,7 +144,7 @@ func _ready():
 	p_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	p_icon.size = Vector2(18, 18)
 	p_icon.position = Vector2(-28, -2)
-	p_icon.texture = load("res://assets/icons/primary.jpg")
+	_set_tex(p_icon, "res://assets/icons/primary.jpg")
 	primary_label.add_child(p_icon)
 
 	# Special Icon
@@ -107,7 +154,7 @@ func _ready():
 	s_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	s_icon.size = Vector2(18, 18)
 	s_icon.position = Vector2(-28, -2)
-	s_icon.texture = load("res://assets/icons/special.jpg")
+	_set_tex(s_icon, "res://assets/icons/special.jpg")
 	special_label.add_child(s_icon)
 	# UI Hooks for IconTex
 	var show_tr = TextureRect.new()
@@ -139,6 +186,9 @@ func _ready():
 	_sync_global_configs()
 	_update_showcase()
 	_update_roster()
+	# v0.1.2 (cut 1): draw the glyphs the lobby's labels use once, off-screen, now.
+	if Global.warm_enabled:
+		add_child(FontWarmupScript.new([[16, 4], [10, 2], [18, 0], [16, 0]]))
 
 	# Force Start button for Host
 	force_start_btn = Button.new()
@@ -286,7 +336,7 @@ func _update_showcase():
 	
 	name_label.text = c_info["name"].to_upper()
 	if c_info.has("icon_tex"):
-		name_label.get_parent().get_node("IconTex").texture = load(c_info["icon_tex"])
+		_set_tex(name_label.get_parent().get_node("IconTex"), c_info["icon_tex"])
 	name_label.modulate = c_info["color"]
 	desc_label.text = c_info["desc"]
 	primary_label.text = s_info["primary"]
@@ -294,11 +344,11 @@ func _update_showcase():
 	
 	var p_icon = primary_label.get_node_or_null("PrimaryIcon")
 	if p_icon and c_info.has("primary_icon"):
-		p_icon.texture = load(c_info["primary_icon"])
+		_set_tex(p_icon, c_info["primary_icon"])
 		
 	var s_icon = special_label.get_node_or_null("SpecialIcon")
 	if s_icon and c_info.has("special_icon"):
-		s_icon.texture = load(c_info["special_icon"])
+		_set_tex(s_icon, c_info["special_icon"])
 
 func _lock_in_champion():
 	if local_player_id <= 0:
@@ -358,7 +408,7 @@ func _update_player_card(card: Control, p_id: int):
 		card.color = Color(0.08, 0.08, 0.12, 0.4)
 		name_lbl.text = "Player " + str(p_id)
 		name_lbl.modulate = Color(0.4, 0.4, 0.4)
-		if card.has_node("IconTex"): card.get_node("IconTex").texture = load("res://assets/icons/empty.jpg")
+		if card.has_node("IconTex"): _set_tex(card.get_node("IconTex"), "res://assets/icons/empty.jpg")
 		status_lbl.text = "Empty Slot"
 		status_lbl.modulate = Color(0.35, 0.35, 0.35)
 		return
@@ -371,22 +421,22 @@ func _update_player_card(card: Control, p_id: int):
 		if (p_id == local_player_id and not Global.is_spectator) or is_revealing:
 			var c_type = Global.locked_opponents[p_id]
 			var c_info = Global.CLASS_INFO[c_type]
-			if card.has_node("IconTex"): card.get_node("IconTex").texture = load(c_info["icon_tex"])
+			if card.has_node("IconTex"): _set_tex(card.get_node("IconTex"), c_info["icon_tex"])
 			status_lbl.text = c_info["name"].to_upper()
 			status_lbl.modulate = c_info["color"]
 		else:
-			if card.has_node("IconTex"): card.get_node("IconTex").texture = load("res://assets/icons/locked.jpg")
+			if card.has_node("IconTex"): _set_tex(card.get_node("IconTex"), "res://assets/icons/locked.jpg")
 			status_lbl.text = "READY (SECRET)"
 			status_lbl.modulate = Color(1.0, 0.85, 0.3)
 	else:
 		if p_id == local_player_id and not Global.is_spectator:
 			var cur_c_type = CHAMPION_KEYS[selected_class_idx]
 			var cur_c_info = Global.CLASS_INFO[cur_c_type]
-			if card.has_node("IconTex"): card.get_node("IconTex").texture = load(cur_c_info["icon_tex"])
+			if card.has_node("IconTex"): _set_tex(card.get_node("IconTex"), cur_c_info["icon_tex"])
 			status_lbl.text = "Selecting..."
 			status_lbl.modulate = Color(0.9, 0.9, 0.9)
 		else:
-			if card.has_node("IconTex"): card.get_node("IconTex").texture = load("res://assets/icons/waiting.jpg")
+			if card.has_node("IconTex"): _set_tex(card.get_node("IconTex"), "res://assets/icons/waiting.jpg")
 			status_lbl.text = "Choosing..."
 			status_lbl.modulate = Color(0.6, 0.6, 0.6)
 
@@ -568,4 +618,3 @@ func _on_spectate_pressed():
 	if s_btn:
 		s_btn.visible = false
 	_update_roster()
-

@@ -91,6 +91,7 @@ var aim_direction: Vector2 = Vector2.RIGHT
 
 # Network state
 var is_local_player: bool = true
+var death_report_msec: int = 0   # v0.1.2: when this screen sent its own player_died and waits for the echo; 0 = none
 # v0.0.26: a ghost is a fighter drawn from the tape by replay_player.gd. No physics,
 # no collision, not in the "players" group (arrows and bot brains never see it).
 # _draw() is shared with the live fighter; only the floor test and the ammo row differ.
@@ -946,6 +947,8 @@ func take_hit(killer_id: int, _knockback_dir: Vector2, weapon_name: String = "Me
 			"victim": player_id,
 			"weapon": weapon_name
 	})
+	if is_local_player:
+		death_report_msec = Time.get_ticks_msec()   # arena.gd clears it on the echo, or respawns us (v0.1.2 safety net)
 
 func _persist_combat_state() -> void:
 	# Written only when something changed (a few times per round), read back by
@@ -1015,6 +1018,7 @@ func respawn(spawn_pos: Vector2, on_ground: bool = false):
 	_last_sync_bytes = PackedByteArray()
 	velocity = Vector2.ZERO
 	is_dead = false
+	death_report_msec = 0
 	visible = true
 	is_dashing = false
 	is_shielding = false
