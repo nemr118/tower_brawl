@@ -88,6 +88,8 @@ What was seen. "At the start of one round my character seemed to go into super s
 - [ ] Which way did the fighter go, and did it stop on its own or when you let go of the stick: 
 - [ ] It did not happen in the whole evening (how many rounds): 
 
+The night soak of 2026-09-08 (four bots, 190 rounds) printed 520 Speed lines, all short slides on tilted pieces, none longer than half a second. So a bot does not do it; the touch layer or the phone is still the suspect.
+
 ### 3.1 Verdict (section 3)
 - [ ] **Seen again with a clock time:** next build sends the `🏃 [Speed]` line to the server like the NetStats card, so it can be read from the PC.
 - [ ] **Not seen in two evenings:** close backlog 25 as fixed by the new button hit test (the dash-chain theory: the old drag handler re-pressed DASH whenever a thumb wobbled on its edge).
