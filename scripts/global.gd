@@ -10,10 +10,15 @@
 extends Node
 
 var is_mobile: bool = false
+# The phone stick's aim (v0.1.1): a unit vector while the stick is tilted past its
+# noise radius, kept after the thumb lifts, ZERO until the first touch. Written by
+# touch_controls.gd, read by player.gd _update_aim on a phone. Movement still goes
+# through the p<N>_left/right/up/down actions, so every other reader is unchanged.
+var touch_aim: Vector2 = Vector2.ZERO
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.1.0"
+const GAME_VERSION: String = "v0.1.1"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true

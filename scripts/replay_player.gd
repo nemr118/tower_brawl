@@ -102,7 +102,7 @@ func start(ring, platforms: Node2D, live: Array, round_end_msec: int) -> String:
 		return "no-closing-stamp"
 	tape = ring
 	_platforms = platforms
-	_stamp = ring.last_stamp()
+	_stamp = ring.report_stamp()   # the closing kill, not a death stamped in the tail (v0.1.1)
 	_kill = ring.closing_seq
 	_first = maxi(_kill - BEFORE_FRAMES, ring.oldest_seq())
 	_last = mini(_kill + AFTER_FRAMES, ring.newest_seq())
@@ -448,7 +448,7 @@ func _text(c: CanvasItem, font: Font, at: Vector2, s: String, size: int, col: Co
 # The log line the harness reads: one per replay, printed by arena.gd when the
 # replay ends or is skipped.
 static func status_line(ring, result: Dictionary) -> String:
-	var last: Dictionary = ring.last_stamp() if ring != null else {}
+	var last: Dictionary = ring.report_stamp() if ring != null else {}
 	var weapon: String = str(last.get("weapon", "-")).replace(" ", "_") if not last.is_empty() else "-"
 	var skipped = result.get("skipped")
 	return "📼 [Replay] round=%d killer=%d victim=%d weapon=%s from=%d to=%d frames=%d drawn=%d dur_ms=%d late_ms=%d cut=%d skipped=%s" % [

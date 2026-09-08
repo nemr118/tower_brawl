@@ -58,6 +58,21 @@ const BUBBLE_SIDE_SPEED = 160.0  # px/s, left and right while floating
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var _jump_fired_last_frame: bool = false   # for the jump trap (v0.0.18)
+
+# Speed probe (v0.1.1). The story: on a phone a fighter "went into super speed
+# for a second or two at the start of a round", then was normal. Run speed is
+# 220 px/s and a dash is 550 for 0.14 s, so nothing in the code allows more for
+# that long. This probe measures how far the fighter really moved sideways each
+# tick and prints one 🏃 [Speed] line per second while it is faster than
+# SPEED_PROBE_CAP outside a dash, with the dash count, so the next report needs
+# only a clock time. A wrap across the seam (a jump of 400+ px) is skipped.
+const SPEED_PROBE_CAP = 300.0
+var _sp_prev_x: float = INF
+var _sp_window: float = 0.0
+var _sp_fast_ticks: int = 0
+var _sp_ticks: int = 0
+var _sp_peak: float = 0.0
+var _sp_dash_msec: Array = []   # when each dash started, for dashes(2s)=
 # Top-edge probe (v0.0.31, backlog 9). A fighter was seen stuck above the top
 # edge with its feet "on the floor" and no platform up there. This prints one
 # line a second, with the collider names, whenever a local fighter touches
@@ -374,9 +389,45 @@ func _physics_process(delta: float):
 
 	move_and_slide()
 	_check_screen_wrap()
+	_probe_speed(delta)
 	_check_head_stomp()
 	_sync_network_state(delta)
 	queue_redraw()
+
+func _probe_speed(delta: float) -> void:
+	var x := global_position.x
+	var prev := _sp_prev_x
+	_sp_prev_x = x
+	if is_inf(prev) or delta <= 0.0:
+		return
+	var dx := absf(x - prev)
+	if dx > 400.0:
+		return   # the seam wrap, not speed
+	var vx := dx / delta
+	var settled := not is_dashing and dash_cooldown_timer < DASH_COOLDOWN - 0.35
+	_sp_window += delta
+	_sp_ticks += 1
+	if settled and vx > SPEED_PROBE_CAP:
+		_sp_fast_ticks += 1
+		_sp_peak = maxf(_sp_peak, vx)
+	if _sp_window < 1.0:
+		return
+	if _sp_fast_ticks > 0:
+		var now := Time.get_ticks_msec()
+		var dashes := 0
+		for t in _sp_dash_msec:
+			if now - int(t) <= 2000:
+				dashes += 1
+		print("🏃 [Speed] P", player_id, " sideways ", int(_sp_peak), " px/s peak, ",
+			_sp_fast_ticks, " of ", _sp_ticks, " ticks over ", int(SPEED_PROBE_CAP),
+			" in the last second, dashes(2s)=", dashes, " dash=", is_dashing,
+			" bubble=", is_bubble, " shield=", is_shielding, " floor=", is_on_floor(),
+			" vel=", velocity.round(), " pos=", global_position.round(),
+			" aim=", aim_direction.snapped(Vector2(0.01, 0.01)), " round=", Global.current_round)
+	_sp_window = 0.0
+	_sp_fast_ticks = 0
+	_sp_ticks = 0
+	_sp_peak = 0.0
 
 func _update_aim(input_x: float, input_y: float) -> void:
 	# "Where am I looking?" (v0.0.20). The story: inside the spawn bubble the
@@ -391,11 +442,15 @@ func _update_aim(input_x: float, input_y: float) -> void:
 			is_facing_right = raw_aim.x > 0
 	else:
 		var raw_aim = Vector2(input_x, input_y)
+		if Global.is_mobile and Global.touch_aim != Vector2.ZERO:
+			# v0.1.1: the phone stick aims in a full circle, inside its aim ring
+			# too (no walking), and the aim stays where the thumb left it.
+			raw_aim = Global.touch_aim
 		if raw_aim.length_squared() > 0.08:
 			aim_direction = raw_aim.normalized()
-			if input_x > 0.15:
+			if raw_aim.x > 0.15:
 				is_facing_right = true
-			elif input_x < -0.15:
+			elif raw_aim.x < -0.15:
 				is_facing_right = false
 		else:
 			aim_direction = Vector2.RIGHT if is_facing_right else Vector2.LEFT
@@ -658,6 +713,10 @@ func _start_dash(input_x: float, input_y: float):
 	is_dashing = true
 	dash_timer = DASH_DURATION
 	dash_cooldown_timer = DASH_COOLDOWN
+	var now := Time.get_ticks_msec()
+	_sp_dash_msec.append(now)
+	while _sp_dash_msec.size() > 0 and now - int(_sp_dash_msec[0]) > 2000:
+		_sp_dash_msec.pop_front()
 	
 	var dir = Vector2(input_x, input_y)
 	if dir.length_squared() < 0.1:
@@ -947,6 +1006,7 @@ func respawn(spawn_pos: Vector2, on_ground: bool = false):
 	# on_ground = false after a death: float down from the sky in the glide bubble.
 	global_position = spawn_pos
 	target_net_pos = spawn_pos
+	_sp_prev_x = INF   # a spawn is a teleport, not speed
 	_last_rx_tick = -1
 	_clear_snapshots()
 	_pj_last_pos = Vector2.INF

@@ -177,6 +177,25 @@ func last_stamp() -> Dictionary:
 	return stamps[-1] if not stamps.is_empty() else {}
 
 
+# The kill that ended the round (the stamp close_round() marked), or {} before then.
+func closing_stamp() -> Dictionary:
+	for i in range(stamps.size() - 1, -1, -1):
+		if bool(stamps[i]["closing"]):
+			return stamps[i]
+	return {}
+
+
+# The stamp the card, the log line and the replay talk about (v0.1.1). The story:
+# a fighter who threw the winning kunai could die to that same kunai inside the
+# one-second tail after round_end. That death was stamped after the closing kill,
+# so last_stamp() named the winner as the victim: the replay drew its red circle
+# on the winner and the server line said "no closing kill". Once the round is
+# closed, the closing kill is the one that matters; before that, the newest stamp.
+func report_stamp() -> Dictionary:
+	var c := closing_stamp()
+	return c if not c.is_empty() else last_stamp()
+
+
 func _drop_old_stamps() -> void:
 	var oldest := oldest_seq()
 	while not stamps.is_empty() and int(stamps[0]["seq"]) < oldest:
@@ -201,7 +220,7 @@ func _fighters_at(s: int) -> Dictionary:
 # One card with the tape's state: sent to the server as history_status and printed
 # as the 📼 [Tape] line. The server keeps it in status.json as seats[].tape.
 func status_card() -> Dictionary:
-	var last := last_stamp()
+	var last := report_stamp()
 	var card := {"type": "history_status", "schema": 1, "frames": count, "span_ms": span_ms(),
 		"fps": snappedf(fps(), 0.1), "recording": recording, "frozen": frozen, "round": round_num,
 		"stamps": stamps_total, "closing_seq": closing_seq, "last": null,
@@ -216,7 +235,7 @@ func status_card() -> Dictionary:
 
 # The log line the harness reads. One line per stamp and one per freeze.
 func status_line() -> String:
-	var last := last_stamp()
+	var last := report_stamp()
 	var s: int = int(last["seq"]) if not last.is_empty() else -1
 	var weapon: String = str(last.get("weapon", "-")).replace(" ", "_") if not last.is_empty() else "-"
 	return "📼 [Tape] round=%d frozen=%d closing=%d killer=%d victim=%d weapon=%s seq=%d before=%d after=%d span_ms=%d fps=%.1f stamps=%d frames=%d" % [
