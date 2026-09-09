@@ -9,12 +9,12 @@ godot --editor project.godot &                    # open the Godot editor
 ./venv/bin/python serve_game.py                   # the backend + file server, by hand
 systemctl --user restart towerbrawl               # the service; needed after any serve_game.py change
 ```
-Play: `https://192.168.4.21:8443/play` (redirects to the current build; plain http is not a secure context).
+Play: `https://192.168.4.21:8443/play` (redirects to the current build; http is not a secure context).
 
 ## The laptop server (family nights, [[laptop-server]])
 ```bash
 tools/deploy_laptop.sh <laptop ip>                # push build + source, restart there (TB_SUDO_PASS=... skips the prompt)
-tools/pull_laptop_logs.sh <laptop ip>             # pull the night's client_stats.jsonl + server.log into playtest_logs/<date>_<ip>/
+tools/pull_laptop_logs.sh <laptop ip>             # pull client_stats.jsonl + server.log into playtest_logs/<date>_<ip>/
 ssh nemr@<laptop ip>                              # find it: ip neigh | grep -i 08:60:6e. On it: tbdash, tbbot add [persona], tbbot clear, tblog
 ```
 
@@ -23,40 +23,44 @@ ssh nemr@<laptop ip>                              # find it: ip neigh | grep -i 
 ./bump_build.sh --title "Short Title"   # check, bump v0.0.x, export, version the pck, patch page
 ./bump_build.sh minor --title "Release" # the next minor (v0.1.x -> v0.2.0); the runbook: [[release-v0.1.0]]
 ./bump_build.sh none                    # re-export the current version, no cache bust
-./bump_build.sh --clean                 # also drop older index_v*.pck
 godot --headless --path . --script tools/check_scripts.gd -- --no-net   # the check: scripts compile, scenes load (run after a .tscn edit)
 ```
-`GAME_VERSION` lives in `scripts/global.gd`, mirrored into `serve_game.py` (re-read on every join).
+`GAME_VERSION`: `scripts/global.gd`, mirrored into `serve_game.py`.
 
 ## The harness (`tools/chaos_bots.py`)
 ```bash
-./venv/bin/python tools/chaos_bots.py --list                   # the 25 scenarios (fuzz, lag, bundle, tape, replay, fleet ...)
+./venv/bin/python tools/chaos_bots.py --list                   # the 25 scenarios
 setsid nohup ./venv/bin/python tools/chaos_bots.py --restart-each --json docs/harness_report_<ver>.json > <scratch>/harness.log 2>&1 &   # the full gate, detached; wait for "25/25 scenarios passed"
-./venv/bin/python tools/chaos_bots.py --scenario fleet --godot 4 --ai chaser,sniper,turtle,rusher --duration 90 --latency-ms 120 --jitter-ms 40   # the fleet gate; --loss 0.05
+./venv/bin/python tools/chaos_bots.py --scenario fleet --godot 4 --ai chaser,sniper,turtle,rusher --duration 90 --latency-ms 120   # the fleet gate; --jitter-ms 40 --loss 0.05
 ```
 Knobs: `--seed`, `--die-rate`, `--ai-difficulty 0.3`, `--no-state`. `MINOR` = passed with a server `ERROR` or a client `WARNING:`. Logs: `.harness_logs/godot<N>.log`.
 
-The tower (v0.1.3): the layout is `scripts/arena_layouts.gd`, the numbers [[arena-tower]]; the shift is off (`ARENA_SHIFT_ENABLED`).
+The tower: `scripts/arena_layouts.gd`, the numbers in [[arena-tower]]; the shift is off (`ARENA_SHIFT_ENABLED`).
 
 ## Headless Godot as a real client
 ```bash
-godot --headless --path . -- --autojoin --name=Bot --ai=sniper --ai-seed=7 --ai-difficulty=0.7 --latency-ms=120 --reclaim=2   # or: tbbot add sniper; --reclaim = that seat back (a reload)
-tools/webbot.sh --url https://192.168.4.21:8443/ --ai chaser --minutes 5 [--arg --no-warm]   # a real WEB client: Chromium headless with a brain; console -> .bots/web<N>.log
+godot --headless --path . -- --autojoin --name=Bot --ai=sniper --ai-seed=7 --latency-ms=120 --reclaim=2   # or: tbbot add sniper; --reclaim = that seat back (a reload)
+tools/webbot.sh --ai chaser --minutes 5 [--arg --no-warm]   # a real WEB client (Chromium headless with a brain); console -> .bots/web<N>.log
 ```
 Personas: `wanderer`, `chaser`, `sniper`, `turtle`, `rusher`, `griefer`.
+```bash
+./venv/bin/python tools/webshot.py --seq sticks --layout twin --out /tmp/shot   # web build screenshots over CDP (idle|sticks|moves|duck|keys); not while the harness runs
+godot --headless --path . --script tools/duck_probe.gd -- --no-net   # the duck must hold 40 frames on a floor
+```
 
 Console lines (headless stdout = the browser console):
-- `📈 [NetStats]` every 5 s: packets and bytes in / out per type, `puppets= jitter=<mean>/<p95>px/s snaps wraps stall extrap dips=`, `fps draw=59.8 phys=60.0 worst=21ms hitches=0 proc=0.6ms phys_cpu=0.4ms`, `| keys=N focus=1` (`focus=0` = the canvas lost the page focus). The same numbers go to the server as the `client_stats` card.
-- `🏹 [Quiver] rejoin slot=2 round=2 saved_round=2 arrows=0->1 charges=3 kunai=4 bear=0 tick=612` once per rejoin (save = `localStorage` key `towerbrawl_combat`).
-- `🔤 [FontWarm] pairs=5 ms=17` once per scene load (`--no-warm` skips it and the ghost pool). `🩹 [SelfRespawn] slot= round= waited_ms=` when my own death got no echo for 1 s. `📼 [Replay] ... start_ms= tick_ms= first_ms=` = the replay's start cost.
+- `📈 [NetStats]` every 5 s: packets and bytes in / out per type, `puppets= jitter=<mean>/<p95>px/s snaps wraps stall extrap dips=`, `fps draw= phys= worst= hitches= proc= phys_cpu=`, `| keys=N focus=1` (`focus=0` = the canvas lost the page focus); the same numbers are the `client_stats` card.
+- `🎮 [Layout] twin saved=true` once per scene load (the phone layout).
+- `🏹 [Quiver] rejoin slot= round= arrows= charges= kunai= bear=` once per rejoin (`localStorage` `towerbrawl_combat`).
+- `🔤 [FontWarm] pairs= ms=` once per scene load (`--no-warm` skips it). `🩹 [SelfRespawn] slot= round= waited_ms=` when my death got no echo for 1 s. `📼 [Replay] start_ms= tick_ms= first_ms=` the replay's start cost.
 - `🏃 [Speed]` while moving sideways over 300 px/s outside a dash (backlog 25). `🧭 [Spawn]` per round, `🪤 [JumpTrap]` on an ignored floor jump, `🧠 [Bot ...]` every 5 s, `📼 [Tape]` / `📼 [Replay]` ([[tape]]).
 
 ## The deck, the cards and the logs
 ```bash
-tbdash                                            # = ./venv/bin/python tools/watch_server.py; SERVER panel on by default (a bot menu, i info); --no-controls --plain --once
+tbdash                                            # = tools/watch_server.py; SERVER panel on by default (a: bot menu, i: info); --no-controls --plain --once
 ./venv/bin/python tools/stats_table.py --list     # the matches in client_stats.jsonl (every client's NetStats card, every 5 s)
 ./venv/bin/python tools/stats_table.py --match 3  # one row per device; --by-round --devices
-./venv/bin/python tools/stats_table.py --summary --last 3        # seats, classes, kills, K/D, weapons, devices per match; --events lists every marker
+./venv/bin/python tools/stats_table.py --summary --last 3        # seats, classes, kills, K/D, weapons, devices per match; --events: every marker
 ./venv/bin/python tools/stats_table.py --from 20:41 --to 20:52   # a clock window; --file playtest_logs/<f>/client_stats.jsonl reads a pulled night
 grep "\[GATE\]\|\[TAPE\]\|\[NET\]" server.log | tail   # tags: JOIN LEAVE CONN NAME LOCK MATCH ROUND KILL NET STATS GATE TAPE
 ```

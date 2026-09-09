@@ -24,4 +24,8 @@ godot --headless --path . --script tools/check_scripts.gd -- --no-net
 ## Mobile caching
 Mobile browsers (iOS Safari most of all) cache hard. If a phone does not see an update, the `.pck` version must change (`index_v<version>.pck`); `bump_build.sh` does that on every bump (rule 2 in `CLAUDE.md`). Phones need `https://192.168.4.21:8443` (a secure context for `SharedArrayBuffer`); `http://192.168.4.21:8000` is PC only.
 
+## A collision shape change costs one floor frame (v0.1.4)
+**The bug:** the v0.1.3 duck swapped the fighter's `CollisionShape2D` shape while `is_on_floor()` and down were held. At exact rest on a floor, the frame a shape changes `move_and_slide()` reports no floor, whatever the change (a new resource, the same one resized, a polygon with the same origin, with or without `apply_floor_snap()`). So the duck went off the next frame, on the one after, for ever; the look-down timer never reached 1.5 s.
+**The fix:** `DUCK_GRACE_S` 0.1 in `player.gd`: a ducked fighter keeps the duck that long without a floor. Any state tied to `is_on_floor()` across a shape change needs the same grace. `tools/duck_probe.gd` shows it in 10 s.
+
 Related: [[handoff_to_claude]] and [[anti_gravity_session_log]] in `archive/passdown/` (the original write-ups).

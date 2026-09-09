@@ -1,7 +1,7 @@
 ---
 tags: [playtest]
-build: v0.1.3 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, section 6 on v0.1.3 or later)
-backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3)
+build: v0.1.4 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, sections 6 and 7 on v0.1.4 or later: the v0.1.3 duck flickered)
+backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3), the twin sticks and the duck fix (v0.1.4)
 result: open (started 2026-09-08)
 ---
 # Playtest — Master Validation Suite v0.1
@@ -135,7 +135,7 @@ Notes:
 
 ## 6. The tower (v0.1.3)
 
-What changed. The arena is a tower now: one screen wide, three screens tall, with hard walls just outside the screen. A hole in the middle of the floor drops you out of the bottom and in through the ceiling; a hole in the ceiling does the reverse (a jump plus an upward dash from the top ledges). Two passages through the side walls, one in the upper part (just under the two long ledges near the top) and one in the lower part: out of one wall, in at the other. The ledges are one-way: jump up through them, and press down plus jump to drop through. The camera follows you up and down. Hold down for 1.5 s to look below you, hold the aim straight up for 1.5 s to look above (on the phone: the stick straight down, or straight up inside the aim ring). Down on the floor ducks: the hitbox is the bottom half, so a shot at head height passes over. A fighter above or below your screen shows as a small bubble with its class icon at the top or bottom edge, at its real left-right spot. The arena shift is gone. Everything is slower: run 220 to 170, the dash cooldown 0.65 to 1.2 s, attacks about a third slower, specials about twice the wait, shots about 15 percent slower. The design page: `docs/reference/arena-tower.md`.
+What changed. The arena is a tower now: one screen wide, three screens tall, with hard walls just outside the screen. A hole in the middle of the floor drops you out of the bottom and in through the ceiling; a hole in the ceiling does the reverse (a jump plus an upward dash from the top ledges). Two passages through the side walls, one in the upper part (just under the two long ledges near the top) and one in the lower part: out of one wall, in at the other. The ledges are one-way: jump up through them, and press down plus jump to drop through. The camera follows you up and down. Hold down for 1.5 s to look below you, hold the aim straight up for 1.5 s to look above (on the phone: the stick straight down, or straight up inside the aim ring). Down on the floor ducks: the hitbox is the bottom half, so a shot at head height passes over. A fighter above or below your screen shows as a small bubble with its class icon at the top or bottom edge, at its real left-right spot. The arena shift is gone. Everything is slower: run 220 to 170, the dash cooldown 0.65 to 1.2 s, attacks about a third slower, specials about twice the wait, shots about 15 percent slower. The design page: `docs/reference/arena-tower.md`. Note (v0.1.4): the v0.1.3 duck went on and off every frame, so 6.2's look-down and 6.3's duck need v0.1.4 or later ([[v0.1.4 - Twin Sticks]]).
 
 ### 6.1 Moving around (both phones, one match at least)
 - [ ] Climb from the floor to the top ledges using only jumps. Did every row feel reachable? (yes / write the row that was not): 
@@ -162,4 +162,55 @@ What changed. The arena is a tower now: one screen wide, three screens tall, wit
 - [ ] **The pace is off:** write which numbers felt wrong (run, dash, attacks, specials, shots). Next: the table in `docs/reference/arena-tower.md` section 7, one build.
 - [ ] **The map is off:** write the row, hole or passage. Next: `scripts/arena_layouts.gd`, one build.
 - [ ] **Look fires by accident:** write when. Next: `LOOK_HOLD_S` and `LOOK_UP_COS` in `scripts/player.gd`.
+Notes:
+
+---
+
+## 7. Twin sticks (v0.1.4)
+
+What changed. The phone has a second layout. Tap the small SWAP button under the top bar (top left) to switch; the choice is remembered on that phone. Twin sticks: the LEFT circle walks where you point. Push past its rim: a dash that way. Tilt it above 45 degrees (the gold arc): a jump; bring it back under the arc to jump again. Straight down (the blue arc): duck, and after 1.5 s the view slides down. Straight down and past the rim: drop through the ledge you stand on. The RIGHT circle aims (the gold line stays where you left it). Push past its rim: one shot that way; pull back inside and push again for the next. Hold it straight up 1.5 s: the view slides up. SPEC is the round button in the bottom right corner. The arc layout (section 1) is unchanged.
+
+### 7.1 The swap (both phones)
+- [ ] Tap SWAP. Did the layout change at once, with nothing stuck (no fighter walking on its own)? (yes / no): 
+- [ ] Reload the page. Is the layout still the one you picked? (yes / no): 
+- [ ] Did SWAP ever fire by accident while playing? (no / yes, write when): 
+
+### 7.2 The left stick
+- [ ] Walk left and right inside the circle. Does the fighter go where the stick points, and stop when you come back to the middle? (yes / it creeps / it stops late): 
+- [ ] Push past the rim ten times. Count the dashes: 
+- [ ] Walk at full tilt for ten seconds without meaning to dash. Count the dashes you did not want: 
+- [ ] Tilt up-right to jump while running, ten times. Count the misses: 
+- [ ] Wobble the stick near 45 degrees. Did it double-jump? (no / yes): 
+- [ ] Straight down: does the fighter duck and, after 1.5 s, does the view slide down? (yes / no): 
+- [ ] Straight down past the rim on a ledge: did you drop through? (yes / no / it jumped): 
+- [ ] Do you miss the straight-down dash in the air? (no / yes): 
+
+### 7.3 The right stick
+- [ ] Turn the aim all the way round. Smooth? (yes / no): 
+- [ ] Walk left while aiming right. Did the fighter face right and walk backward? (yes / no): 
+- [ ] Push past the rim ten times. Count the shots: 
+- [ ] Hold the thumb past the rim. Does it keep firing? (no, one shot / yes): 
+- [ ] Hold straight up. Does the view slide up after 1.5 s? Did it ever slide by accident while you were shooting upward? (yes and no / write what happened): 
+- [ ] Rogue only: deaths to your own kunai over one match: 
+
+### 7.4 SPEC and the thumbs
+- [ ] Can you reach SPEC without moving your grip? (yes / a stretch / no): 
+- [ ] Did a thumb ever land on the wrong thing (SPEC instead of the aim, SWAP instead of the stick, the aim circle instead of the move circle)? (no / write which): 
+- [ ] Do the circles appear where your thumbs land, or do you have to look? (they follow / I look): 
+
+### 7.5 Feel
+| Question | S25 Ultra | Pixel |
+|---|---|---|
+| Left circle size (too small / right / too big) | | |
+| Right circle size (too small / right / too big) | | |
+| The rims (too easy to cross / right / too far) | | |
+| The jump angle (too low / right / too high) | | |
+| Which layout you keep (arc / twin) and why | | |
+
+### 7.6 Verdict (section 7)
+- [ ] **Pass:** 7.1 all yes, the counts in 7.2 and 7.3 are 9 or 10 out of ten with 0 or 1 unwanted, no double jump. Both layouts stay; each phone keeps its choice.
+- [ ] **The rims are wrong:** too easy (unwanted dashes or shots) or too far. Next: `RIM_PAD` (10) and `RIM_REARM` (0.85) in `scripts/touch_controls.gd`.
+- [ ] **The jump angle is wrong:** misses or double jumps. Next: `JUMP_DEG` (45) and `JUMP_REARM_DEG` (35).
+- [ ] **A circle is wrong:** too small or too big. Next: `MOVE_RADIUS` (80), `AIM_RADIUS` (70).
+- [ ] **The thumbs miss:** write what in the notes. Next: move SPEC or SWAP (`SPECIAL_TWIN`, `SWAP_CENTER`), or a bigger dead zone (`NOISE_RADIUS`).
 Notes:

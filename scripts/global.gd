@@ -18,7 +18,7 @@ var touch_aim: Vector2 = Vector2.ZERO
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.1.3"
+const GAME_VERSION: String = "v0.1.4"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true

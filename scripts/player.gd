@@ -37,6 +37,7 @@ static var arena_h: float = 1080.0
 # Duck and look (v0.1.3, docs/reference/arena-tower.md sections 3 and 4).
 const DUCK_SHAPE := Vector2(14.0, 12.0)   # the bottom half of the standing 14 x 24
 const DUCK_SHAPE_Y := 2.0                 # the shape's centre while ducked (standing: -4)
+const DUCK_GRACE_S := 0.1                 # a ducked fighter keeps the duck this long without a floor
 const LEDGE_LAYER := 6                    # one-way ledges live on this physics layer
 const DROP_THROUGH_S := 0.3               # the ledge layer is ignored this long after down + jump
 const LOOK_HOLD_S := 1.5                  # hold down (or aim up) this long before the view moves
@@ -45,6 +46,7 @@ const LOOK_SPEED := 700.0                 # px/s, there and back (about 0.3 s)
 const LOOK_UP_COS := 0.866                # aim within 30 degrees of straight up
 var is_ducking: bool = false
 var look_offset_y: float = 0.0            # what arena.gd adds to the camera's target
+var _duck_grace: float = 0.0
 var _look_down_t: float = 0.0
 var _look_up_t: float = 0.0
 var _drop_timer: float = 0.0
@@ -358,7 +360,15 @@ func _physics_process(delta: float):
 	# Duck (v0.1.3): down held on the floor with no sideways push. No walking
 	# while ducked; the hitbox is the bottom half (a shot at head height passes).
 	var down_held: bool = input_y > 0.5
-	_set_duck(is_on_floor() and down_held and absf(input_x) < 0.5)
+	# A shape change costs one floor frame at exact rest (the duck used to flicker
+	# on and off every frame, and the look never came): a ducked fighter keeps
+	# the duck through DUCK_GRACE_S without a floor.
+	if is_on_floor():
+		_duck_grace = DUCK_GRACE_S
+	else:
+		_duck_grace -= delta
+	var grounded: bool = is_on_floor() or (is_ducking and _duck_grace > 0.0)
+	_set_duck(grounded and down_held and absf(input_x) < 0.5)
 
 	if abs(input_x) > 0.1 and not is_ducking:
 		velocity.x = move_toward(velocity.x, sign(input_x) * SPEED, ACCEL * delta)
