@@ -18,7 +18,7 @@ var touch_aim: Vector2 = Vector2.ZERO
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.1.2"
+const GAME_VERSION: String = "v0.1.3"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -253,6 +253,7 @@ const FLAG_SHIELD := 4
 const FLAG_BEAR := 8
 const FLAG_EGG := 16
 const FLAG_FLOOR := 32            # feet on the ground (v0.0.17: stops a landed puppet from sinking)
+const FLAG_DUCK := 64             # v0.1.3: ducking (the hitbox is the bottom half; every screen must agree)
 
 # Timers that replaced per-frame checks in _process (Phase 1).
 var _ping_timer: Timer          # 1 Hz keepalive while connected
@@ -619,7 +620,7 @@ func _u16_to_dir(a: int) -> Vector2:
 func _q10(v: float) -> int:
 	return clampi(roundi(v * 10.0), -32768, 32767)
 
-func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool, on_floor: bool = false) -> PackedByteArray:
+func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: bool, shield: bool, bear: bool, egg: bool, on_floor: bool = false, duck: bool = false) -> PackedByteArray:
 	var b := PackedByteArray()
 	b.resize(BIN_SYNC_SIZE)
 	b.encode_u8(0, BIN_SYNC_POS)
@@ -635,6 +636,7 @@ func encode_sync_pos(tick: int, pos: Vector2, aim: Vector2, facing: bool, dash: 
 	if bear: flags |= FLAG_BEAR
 	if egg: flags |= FLAG_EGG
 	if on_floor: flags |= FLAG_FLOOR
+	if duck: flags |= FLAG_DUCK
 	b.encode_u8(10, flags)
 	return b
 
@@ -710,6 +712,7 @@ func _emit_sync_entry(pkt: PackedByteArray, base: int) -> void:
 		"bear": (flags & FLAG_BEAR) != 0,
 		"egg": (flags & FLAG_EGG) != 0,
 		"floor": (flags & FLAG_FLOOR) != 0,
+		"duck": (flags & FLAG_DUCK) != 0,
 	})
 
 func _handle_net_packet(msg_str: String, byte_size: int = 0):

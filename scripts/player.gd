@@ -14,16 +14,40 @@ signal player_died(killer_id, victim_id)
 @export var player_id: int = 1
 @export var class_type: Global.ClassType = Global.ClassType.RANGER
 
-const SPEED = 220.0
-const ACCEL = 1900.0
-const FRICTION = 1500.0
-const JUMP_VELOCITY = -430.0
+# v0.1.3 (the tower): the pacing table lives in docs/reference/arena-tower.md
+# section 7. Slower run, longer cooldowns, a top fall speed for a three-screen drop.
+const SPEED = 170.0              # was 220
+const ACCEL = 1500.0             # was 1900
+const FRICTION = 1300.0          # was 1500
+const JUMP_VELOCITY = -430.0     # the tower's rows are built on this 80 px jump
 const GRAVITY = 1150.0
 const FALL_GRAVITY = 1600.0
+const MAX_FALL_SPEED = 600.0     # new: 1080 px of free fall would reach 1860 px/s, 93 px a packet
 
-const DASH_SPEED = 550.0
-const DASH_DURATION = 0.14
-const DASH_COOLDOWN = 0.65
+const DASH_SPEED = 480.0         # was 550; x 0.16 s = the same 77 px reach
+const DASH_DURATION = 0.16       # was 0.14
+const DASH_COOLDOWN = 1.2        # was 0.65
+
+# The arena box (v0.1.3): the wrap seams. The walls, the floor and the ceiling
+# stop a fighter everywhere but the holes and the passages, so the wrap only
+# ever fires there. arena.gd sets these from the layout at load.
+static var arena_w: float = 640.0
+static var arena_h: float = 1080.0
+
+# Duck and look (v0.1.3, docs/reference/arena-tower.md sections 3 and 4).
+const DUCK_SHAPE := Vector2(14.0, 12.0)   # the bottom half of the standing 14 x 24
+const DUCK_SHAPE_Y := 2.0                 # the shape's centre while ducked (standing: -4)
+const LEDGE_LAYER := 6                    # one-way ledges live on this physics layer
+const DROP_THROUGH_S := 0.3               # the ledge layer is ignored this long after down + jump
+const LOOK_HOLD_S := 1.5                  # hold down (or aim up) this long before the view moves
+const LOOK_PX := 200.0                    # how far the view moves
+const LOOK_SPEED := 700.0                 # px/s, there and back (about 0.3 s)
+const LOOK_UP_COS := 0.866                # aim within 30 degrees of straight up
+var is_ducking: bool = false
+var look_offset_y: float = 0.0            # what arena.gd adds to the camera's target
+var _look_down_t: float = 0.0
+var _look_up_t: float = 0.0
+var _drop_timer: float = 0.0
 
 # Movement states
 var is_dashing: bool = false
@@ -234,7 +258,7 @@ func _physics_process(delta: float):
 			spawn_invuln_timer = 1.0
 			_squash_and_stretch(1.5, 1.5)
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
-		velocity.y += GRAVITY * delta
+		velocity.y = minf(velocity.y + GRAVITY * delta, MAX_FALL_SPEED)
 		move_and_slide()
 		_check_screen_wrap()   # an egg falling past the seam used to keep falling
 		_sync_network_state(delta)
@@ -250,12 +274,12 @@ func _physics_process(delta: float):
 	
 	if class_type == Global.ClassType.MAGE and mage_charges < 3:
 		mage_recharge_timer += delta
-		if mage_recharge_timer >= 1.4:
+		if mage_recharge_timer >= 1.8:   # was 1.4 (v0.1.3 pacing)
 			mage_charges += 1
 			mage_recharge_timer = 0.0
 	elif class_type == Global.ClassType.ROGUE and rogue_kunai < 4:
 		rogue_recharge_timer += delta
-		if rogue_recharge_timer >= 0.9:
+		if rogue_recharge_timer >= 1.2:   # was 0.9 (v0.1.3 pacing)
 			rogue_kunai += 1
 			rogue_recharge_timer = 0.0
 			
@@ -317,7 +341,7 @@ func _physics_process(delta: float):
 	if is_shielding:
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
 		if not is_on_floor():
-			velocity.y += GRAVITY * delta
+			velocity.y = minf(velocity.y + GRAVITY * delta, MAX_FALL_SPEED)
 		move_and_slide()
 		_check_screen_wrap()   # a druid air-shielding while falling dropped to y > 500
 		_sync_network_state(delta)
@@ -331,7 +355,12 @@ func _physics_process(delta: float):
 	
 	_update_aim(input_x, input_y)
 
-	if abs(input_x) > 0.1:
+	# Duck (v0.1.3): down held on the floor with no sideways push. No walking
+	# while ducked; the hitbox is the bottom half (a shot at head height passes).
+	var down_held: bool = input_y > 0.5
+	_set_duck(is_on_floor() and down_held and absf(input_x) < 0.5)
+
+	if abs(input_x) > 0.1 and not is_ducking:
 		velocity.x = move_toward(velocity.x, sign(input_x) * SPEED, ACCEL * delta)
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, FRICTION * delta)
@@ -343,12 +372,27 @@ func _physics_process(delta: float):
 	else:
 		coyote_timer -= delta
 		var current_gravity = FALL_GRAVITY if velocity.y > 0 else GRAVITY
-		velocity.y += current_gravity * delta
+		velocity.y = minf(velocity.y + current_gravity * delta, MAX_FALL_SPEED)
 		
-	if Input.is_action_just_pressed(prefix + "jump"):
+	# Drop through a one-way ledge: down + jump while standing on one. The ledge
+	# layer is ignored for DROP_THROUGH_S so the fighter falls out of it.
+	if _drop_timer > 0.0:
+		_drop_timer -= delta
+		if _drop_timer <= 0.0:
+			set_collision_mask_value(LEDGE_LAYER, true)
+	if Input.is_action_just_pressed(prefix + "jump") and down_held and is_on_floor() and _on_ledge():
+		_drop_timer = DROP_THROUGH_S
+		set_collision_mask_value(LEDGE_LAYER, false)
+		_set_duck(false)
+		coyote_timer = 0.0
+		jump_buffer_timer = 0.0
+		velocity.y = 60.0
+	elif Input.is_action_just_pressed(prefix + "jump"):
 		jump_buffer_timer = 0.12
 	else:
 		jump_buffer_timer -= delta
+
+	_update_look(delta, down_held)
 		
 	var jumped_now = false
 	if jump_buffer_timer > 0.0 and coyote_timer > 0.0:
@@ -471,7 +515,7 @@ func _sync_network_state(delta: float):
 	# packet (position at 0.1 px, aim at 0.1 deg, flags), skip it, but repeat the
 	# state every NET_IDLE_RESEND so a late joiner or a lost packet is corrected.
 	var pkt := Global.encode_sync_pos(net_tick, global_position, aim_direction,
-		is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg, is_on_floor())
+		is_facing_right, is_dashing, is_shielding, is_bear_form, is_egg, is_on_floor(), is_ducking)
 	var body := pkt.slice(4)   # everything after type, sender, tick
 	if body == _last_sync_bytes and _idle_since_send < Global.NET_IDLE_RESEND:
 		# v0.0.17 hotfix: the first quiet slot after a moving one still goes out.
@@ -543,7 +587,7 @@ func _on_player_state_received(p_id: int, data: Dictionary):
 			"facing": bool(data.get("facing", true)), "dash": bool(data.get("dash", false)),
 			"shield": bool(data.get("shield", false)), "bear": bool(data.get("bear", false)),
 			"egg": bool(data.get("egg", false)), "floor": bool(data.get("floor", false)),
-			"at_msec": _pj_last_rx_msec})
+			"duck": bool(data.get("duck", false)), "at_msec": _pj_last_rx_msec})
 		while _snaps.size() > Global.SNAP_RING:
 			_snaps.pop_front()
 
@@ -602,32 +646,37 @@ func _render_snapshots(delta: float) -> void:
 # Displacement from sample a to sample b, unwrapped across the horizontal seam
 # (640 px) and the bottom seam (386 px): a crossing becomes a few-pixel step.
 func _unwrapped_delta(a: Dictionary, b: Dictionary) -> Vector2:
+	# v0.1.3: the seams are the tower's (x 640 + 26 = 666, y 1080 + 26 = 1106).
 	var d: Vector2 = b["pos"] - a["pos"]
-	if d.x > 320.0:
-		d.x -= 640.0
-	elif d.x < -320.0:
-		d.x += 640.0
-	if d.y > 193.0:
-		d.y -= 386.0
-	elif d.y < -193.0:
-		d.y += 386.0
+	var sx := arena_w + 26.0
+	var sy := arena_h + 26.0
+	if d.x > sx * 0.5:
+		d.x -= sx
+	elif d.x < -sx * 0.5:
+		d.x += sx
+	if d.y > sy * 0.5:
+		d.y -= sy
+	elif d.y < -sy * 0.5:
+		d.y += sy
 	return d
 
 
 func _wrap_into_arena(p: Vector2) -> Vector2:
-	if p.x > 652.0:
-		p.x -= 640.0
+	var sx := arena_w + 26.0
+	var sy := arena_h + 26.0
+	if p.x > arena_w + 12.0:
+		p.x -= sx
 	elif p.x < -12.0:
-		p.x += 640.0
-	if p.y > 376.0:
-		p.y -= 386.0
-	elif p.y < -193.0:
+		p.x += sx
+	if p.y > arena_h + 16.0:
+		p.y -= sy
+	elif p.y < -40.0:
 		# v0.0.17: was -10. A fighter can really be above the top edge (a jump
 		# from the apex platform, a mage blink, an upward dash). The sender never
 		# wraps at the top, so neither may we: only a delta that crossed the
-		# bottom seam (unwrapped in _unwrapped_delta, half a seam = 193 px) may
-		# land here. Drawing a fighter at y = -50 down at y = 336 was wrong.
-		p.y += 386.0
+		# bottom seam (unwrapped in _unwrapped_delta) may land here. v0.1.3: the
+		# ceiling hole wraps a rising fighter at y -16, so -40 is safely past it.
+		p.y += sy
 	return p
 
 
@@ -685,6 +734,7 @@ func _apply_state(a: Dictionary, b: Dictionary, u: float) -> void:
 	is_shielding = st["shield"]
 	is_bear_form = st["bear"]
 	is_egg = st["egg"]
+	_set_duck(bool(st.get("duck", false)))
 
 func _on_remote_projectile(data: Dictionary):
 	var p_id = int(data.get("sender", 1))
@@ -737,7 +787,7 @@ func _perform_attack(aim_dir: Vector2):
 		Global.ClassType.RANGER:
 			if current_arrows > 0:
 				current_arrows -= 1
-				attack_cooldown = 0.32
+				attack_cooldown = 0.45   # was 0.32 (v0.1.3 pacing)
 				var spawn_pos = global_position + aim_dir * 18.0
 				var arrow = ArrowScene.instantiate()
 				get_parent().add_child(arrow)
@@ -745,12 +795,12 @@ func _perform_attack(aim_dir: Vector2):
 				_squash_and_stretch(0.85, 1.15)
 				Global.send_net_binary(Global.encode_projectile("arrow", spawn_pos, aim_dir))
 		Global.ClassType.KNIGHT:
-			attack_cooldown = 0.38
+			attack_cooldown = 0.5   # was 0.38 (v0.1.3 pacing)
 			_execute_sword_slash(aim_dir)
 		Global.ClassType.MAGE:
 			if mage_charges > 0:
 				mage_charges -= 1
-				attack_cooldown = 0.35
+				attack_cooldown = 0.5   # was 0.35 (v0.1.3 pacing)
 				var spawn_pos = global_position + aim_dir * 18.0
 				var bolt = FireboltScene.instantiate()
 				get_parent().add_child(bolt)
@@ -759,11 +809,11 @@ func _perform_attack(aim_dir: Vector2):
 				Global.send_net_binary(Global.encode_projectile("firebolt", spawn_pos, aim_dir))
 		Global.ClassType.DRUID:
 			if is_bear_form:
-				attack_cooldown = 0.5
+				attack_cooldown = 0.6   # was 0.5 (v0.1.3 pacing)
 				_squash_and_stretch(1.2, 0.8)
 				_execute_shadow_slash()
 			else:
-				attack_cooldown = 0.35
+				attack_cooldown = 0.5   # was 0.35 (v0.1.3 pacing)
 				var spawn_pos = global_position + aim_dir * 18.0
 				var thorn = ThornScene.instantiate()
 				get_parent().add_child(thorn)
@@ -774,7 +824,7 @@ func _perform_attack(aim_dir: Vector2):
 		Global.ClassType.ROGUE:
 			if rogue_kunai > 0:
 				rogue_kunai -= 1
-				attack_cooldown = 0.22
+				attack_cooldown = 0.35   # was 0.22 (v0.1.3 pacing)
 				var spawn_pos = global_position + aim_dir * 18.0
 				var kunai = KunaiScene.instantiate()
 				get_parent().add_child(kunai)
@@ -785,7 +835,7 @@ func _perform_special(aim_dir: Vector2):
 	match class_type:
 		Global.ClassType.RANGER:
 			if current_arrows > 0:
-				special_cooldown = 0.8
+				special_cooldown = 1.5   # was 0.8 (v0.1.3 pacing)
 				current_arrows -= 1
 				var arrow = ArrowScene.instantiate()
 				get_parent().add_child(arrow)
@@ -794,17 +844,17 @@ func _perform_special(aim_dir: Vector2):
 				_squash_and_stretch(0.7, 1.3)
 				Global.send_net_binary(Global.encode_projectile("arrow", global_position + aim_dir * 18.0, aim_dir))
 		Global.ClassType.KNIGHT:
-			special_cooldown = 0.75
+			special_cooldown = 1.2   # was 0.75 (v0.1.3 pacing)
 			is_shielding = true
-			shield_timer = 0.38
+			shield_timer = 0.45      # was 0.38
 			_squash_and_stretch(1.25, 0.8)
 		Global.ClassType.MAGE:
-			special_cooldown = 1.0
+			special_cooldown = 2.0   # was 1.0 (v0.1.3 pacing)
 			global_position += aim_dir * 95.0
 			velocity = aim_dir * 80.0
 			_squash_and_stretch(0.5, 1.5)
 		Global.ClassType.DRUID:
-			special_cooldown = 1.0
+			special_cooldown = 1.5   # was 1.0 (v0.1.3 pacing)
 			if is_on_floor():
 				is_bear_form = not is_bear_form
 				_squash_and_stretch(1.5, 0.7)
@@ -814,7 +864,7 @@ func _perform_special(aim_dir: Vector2):
 				velocity = Vector2.ZERO
 				_squash_and_stretch(0.8, 1.2)
 		Global.ClassType.ROGUE:
-			special_cooldown = 1.1
+			special_cooldown = 2.0   # was 1.1 (v0.1.3 pacing)
 			_start_dash(aim_dir.x, aim_dir.y)
 			_execute_shadow_slash()
 
@@ -907,17 +957,65 @@ func _probe_top_edge() -> void:
 		" | ", " ; ".join(parts) if parts.size() > 0 else "no contact data")
 
 func _check_screen_wrap():
-	_probe_top_edge()   # runs right after every local move_and_slide()
-	var screen_w = 640.0
-	var screen_h = 360.0
+	# v0.1.3 (the tower): the same rule as before with the tower's numbers. The
+	# walls, the ceiling and the floor stop a fighter everywhere but the holes
+	# and the passages, so this only fires there: out of a side passage and in
+	# at the other wall, out of the floor hole and in at the ceiling hole, and
+	# up through the ceiling hole (the speed kept) and in at the floor hole.
 	if global_position.x < -12.0:
-		global_position.x = screen_w + 10.0
-	elif global_position.x > screen_w + 12.0:
+		global_position.x = arena_w + 10.0
+	elif global_position.x > arena_w + 12.0:
 		global_position.x = -10.0
 		
-	if global_position.y > screen_h + 16.0:
+	if global_position.y > arena_h + 16.0:
 		global_position.y = -10.0
-		velocity.y = 80.0
+		velocity.y = maxf(velocity.y, 80.0)
+	elif global_position.y < -16.0 and velocity.y < 0.0:
+		global_position.y = arena_h + 10.0
+
+
+func _on_ledge() -> bool:
+	# Standing on a one-way ledge (the ledge physics layer)?
+	for i in get_slide_collision_count():
+		var col := get_slide_collision(i)
+		var body = col.get_collider()
+		if body is CollisionObject2D and body.get_collision_layer_value(LEDGE_LAYER) and col.get_normal().y < -0.5:
+			return true
+	return false
+
+
+func _set_duck(on: bool) -> void:
+	# Local fighters and puppets alike: the hitbox has to match on every screen,
+	# because whoever sees a hit reports it.
+	if on == is_ducking:
+		return
+	is_ducking = on
+	if collision_shape == null or not collision_shape.shape is RectangleShape2D:
+		return
+	if on:
+		collision_shape.shape = RectangleShape2D.new()
+		collision_shape.shape.size = DUCK_SHAPE
+		collision_shape.position = Vector2(0.0, DUCK_SHAPE_Y)
+		if is_local_player:
+			_squash_and_stretch(1.3, 0.6)
+	else:
+		collision_shape.shape = RectangleShape2D.new()
+		collision_shape.shape.size = Vector2(14.0, 24.0)
+		collision_shape.position = Vector2(0.0, -4.0)
+
+
+func _update_look(delta: float, down_held: bool) -> void:
+	# Look down: duck for LOOK_HOLD_S. Look up: aim near straight up for the
+	# same hold (the mouse, or the phone stick inside its aim ring). The view
+	# eases LOOK_PX that way and back when the hold ends (arena.gd moves the camera).
+	_look_down_t = _look_down_t + delta if (is_ducking and down_held) else 0.0
+	_look_up_t = _look_up_t + delta if (aim_direction.y < -LOOK_UP_COS and not is_ducking) else 0.0
+	var target := 0.0
+	if _look_down_t >= LOOK_HOLD_S:
+		target = LOOK_PX
+	elif _look_up_t >= LOOK_HOLD_S:
+		target = -LOOK_PX
+	look_offset_y = move_toward(look_offset_y, target, LOOK_SPEED * delta)
 
 func take_hit(killer_id: int, _knockback_dir: Vector2, weapon_name: String = "Melee"):
 	if is_dead or spawn_invuln_timer > 0.0 or is_dashing or is_bubble:
@@ -1024,6 +1122,12 @@ func respawn(spawn_pos: Vector2, on_ground: bool = false):
 	is_shielding = false
 	is_egg = false
 	is_bear_form = false
+	_set_duck(false)
+	_drop_timer = 0.0
+	set_collision_mask_value(LEDGE_LAYER, true)
+	look_offset_y = 0.0
+	_look_down_t = 0.0
+	_look_up_t = 0.0
 	# v0.0.18: the bubble replaces the old one-second glow. The shield bit goes
 	# out in every movement packet, so every screen draws the bubble and every
 	# weapon bounces off it, just like a knight's shield.
@@ -1032,7 +1136,7 @@ func respawn(spawn_pos: Vector2, on_ground: bool = false):
 	bubble_timer = BUBBLE_GROUND_TIME if on_ground else BUBBLE_TIME
 	if on_ground:
 		# Look at the middle of the arena, so the fight is in front of you.
-		is_facing_right = spawn_pos.x < 320.0
+		is_facing_right = spawn_pos.x < arena_w / 2.0
 		aim_direction = Vector2.RIGHT if is_facing_right else Vector2.LEFT
 	is_shielding = true
 	shield_timer = 0.0

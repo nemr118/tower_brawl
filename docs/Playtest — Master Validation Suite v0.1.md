@@ -1,7 +1,7 @@
 ---
 tags: [playtest]
-build: v0.1.2 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later)
-backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2)
+build: v0.1.3 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, section 6 on v0.1.3 or later)
+backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3)
 result: open (started 2026-09-08)
 ---
 # Playtest — Master Validation Suite v0.1
@@ -129,4 +129,37 @@ What changed. The lobby's icons were 1024 px pictures drawn at 30 px, loaded fre
 - [ ] **Pass:** round 1 has no hitch on either phone (`hitches=0`, every `first_ms` under 34, two frames), and the lobby cards at the join and the locks stay under 12 ms `proc`. Cut 1 is done.
 - [ ] **The replay still stutters:** write `first_ms` and `tick_ms`. A big `tick_ms` is the script side (the freeze and the tape card); a big `first_ms` with a small `tick_ms` is the draw side (next suspect: the ghost fighters' first draw, then a shader).
 - [ ] **The lobby still freezes:** write which moment (join / lock / reveal) and the `proc`. Next: the label text (`scripts/font_warmup.gd` pairs) or the roster rebuild in `scripts/character_select.gd`.
+Notes:
+
+---
+
+## 6. The tower (v0.1.3)
+
+What changed. The arena is a tower now: one screen wide, three screens tall, with hard walls just outside the screen. A hole in the middle of the floor drops you out of the bottom and in through the ceiling; a hole in the ceiling does the reverse (a jump plus an upward dash from the top ledges). Two passages through the side walls, one in the upper part (just under the two long ledges near the top) and one in the lower part: out of one wall, in at the other. The ledges are one-way: jump up through them, and press down plus jump to drop through. The camera follows you up and down. Hold down for 1.5 s to look below you, hold the aim straight up for 1.5 s to look above (on the phone: the stick straight down, or straight up inside the aim ring). Down on the floor ducks: the hitbox is the bottom half, so a shot at head height passes over. A fighter above or below your screen shows as a small bubble with its class icon at the top or bottom edge, at its real left-right spot. The arena shift is gone. Everything is slower: run 220 to 170, the dash cooldown 0.65 to 1.2 s, attacks about a third slower, specials about twice the wait, shots about 15 percent slower. The design page: `docs/reference/arena-tower.md`.
+
+### 6.1 Moving around (both phones, one match at least)
+- [ ] Climb from the floor to the top ledges using only jumps. Did every row feel reachable? (yes / write the row that was not): 
+- [ ] Drop through a ledge with down + jump. Did it work first time? (yes / no): 
+- [ ] Walk off the floor into the middle hole. Did you come back in through the ceiling and land on the ledge under it? (yes / no, write where you landed): 
+- [ ] Find a side passage and go through it. Did you come out of the other wall at the same height? (yes / no): 
+- [ ] Did anything ever get stuck in a wall, a floor corner or a ledge? (no / yes, clock time and where): 
+
+### 6.2 The camera, the look and the markers
+- [ ] Does the view follow you smoothly, with no jump when you land? (yes / it snaps): 
+- [ ] Hold down for 1.5 s. Does the view slide down, and back when you let go? (yes / no): 
+- [ ] Aim straight up and hold. Does the view slide up? (yes / no / it fires by accident while I play, write when): 
+- [ ] When the other phone is above or below you, is the marker at the right left-right spot? (yes / no): 
+- [ ] Could you find the other fighter within a few seconds every time? (yes / no, write how long it took): 
+
+### 6.3 Duck and the pace
+- [ ] Duck under an arrow or a kunai on purpose. Did it pass over you? (yes / no): 
+- [ ] The dash and the teleport: could you find a moment to use them? (yes, easier / same as before / worse): 
+- [ ] The fight: does it feel like a brawl still, but with time to think? (yes / too slow / still a hairball): 
+- [ ] Kills by accident (own kunai, walked into a shot) over one match, both phones: 
+
+### 6.4 Verdict (section 6)
+- [ ] **Pass:** every row reachable, the holes and passages work, nothing stuck, the camera and the markers are fine, the pace feels right. The tower stays; next: themes, moving platforms, traps (build 2).
+- [ ] **The pace is off:** write which numbers felt wrong (run, dash, attacks, specials, shots). Next: the table in `docs/reference/arena-tower.md` section 7, one build.
+- [ ] **The map is off:** write the row, hole or passage. Next: `scripts/arena_layouts.gd`, one build.
+- [ ] **Look fires by accident:** write when. Next: `LOOK_HOLD_S` and `LOOK_UP_COS` in `scripts/player.gd`.
 Notes:

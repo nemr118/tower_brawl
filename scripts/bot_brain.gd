@@ -27,18 +27,19 @@ const IMPLEMENTED := ["wanderer", "chaser", "sniper", "turtle", "rusher", "grief
 # Class a persona picks when the client was started without --class.
 # Sniper plays mage: firebolt charges regenerate, the ranger's three arrows do not.
 const DEFAULT_CLASS := {"wanderer": -1, "chaser": 1, "sniper": 2, "turtle": 1, "rusher": 3, "griefer": 4}
-const PROJECTILE_SPEED := {0: 650.0, 2: 520.0, 3: 720.0, 4: 550.0}   # by ClassType: ranger, mage, rogue, druid
+const PROJECTILE_SPEED := {0: 560.0, 2: 460.0, 3: 600.0, 4: 480.0}   # by ClassType: ranger, mage, rogue, druid (v0.1.3 pacing)
 const PROJECTILE_GRAVITY := {0: 180.0, 2: 0.0, 3: 0.0, 4: 200.0}
 const THINK_HZ := 10.0                   # decisions per second
 const STATUS_EVERY := 5.0                # seconds between "🧠 [Bot]" status lines
+const PlayerScript := preload("res://scripts/player.gd")
 const ARENA_W := 640.0
-const ARENA_H := 360.0
+const ARENA_H := 1080.0                  # v0.1.3: the tower, three screens
 const ACTIONS := ["left", "right", "up", "down", "jump", "dash", "attack", "special"]
 # Movement numbers from player.gd, for route planning.
-const SPEED := 220.0
+const SPEED := PlayerScript.SPEED         # v0.1.3: read from the fighter, not a copy
 const FALL_G := 1600.0
 const JUMP_H := 80.0                     # jump apex: 430^2 / (2 * 1150)
-const SEAM_Y := 376.0                    # bottom wrap: y > 360 + 16 comes back out at y = -10
+const SEAM_Y := ARENA_H + 16.0           # bottom wrap: out of the floor hole, in at the ceiling hole (y = -10)
 
 var persona := "wanderer"
 var seed_value := 0
@@ -210,7 +211,7 @@ func _track_wraps() -> void:
 		_wrap_at = -1.0
 	_was_rotating = rotating
 	if fighter.spawn_invuln_timer < 0.99 and _last_pos != Vector2.ZERO:
-		if _last_pos.y > 300.0 and pos.y < 40.0:
+		if _last_pos.y > ARENA_H - 60.0 and pos.y < 40.0:
 			if rotating:
 				_stats["shift_wraps"] += 1
 			else:
@@ -306,10 +307,11 @@ func _perceive() -> Dictionary:
 	return snap
 
 
-# Shortest displacement from a to b across the horizontal wrap seam.
+# Displacement from a to b. v0.1.3: the tower has walls, so there is no
+# horizontal seam to cross any more (the side passages are a route, not a
+# wrap the brain plans through); the plain difference is the shortest way.
 func _wrapped_delta(a: Vector2, b: Vector2) -> Vector2:
 	var d := b - a
-	d.x = wrapf(d.x, -ARENA_W * 0.5, ARENA_W * 0.5)
 	return d
 
 

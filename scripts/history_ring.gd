@@ -30,6 +30,7 @@ const TAIL_FRAMES := int(TAIL_S * FPS)          # 60 frames
 const MAX_STAMPS := 32                          # stamps kept; older ones fall off with their frames
 const FLAG_BUBBLE := 64                         # inside the spawn bubble
 const FLAG_DEAD := 128                          # dead or hidden on this frame
+const FLAG_DUCK := 256                          # v0.1.3: ducking (the packet bit 64 is FLAG_BUBBLE here)
 
 var frames: Array = []          # CAPACITY slots, reused
 var head: int = 0               # the slot the next frame goes into

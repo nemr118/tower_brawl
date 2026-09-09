@@ -1,6 +1,6 @@
 extends Area2D
 
-@export var speed: float = 720.0
+@export var speed: float = 600.0   # was 720 (v0.1.3 pacing)
 var velocity: Vector2 = Vector2.ZERO
 var shooter_id: int = 1
 var lifetime: float = 0.0
@@ -16,17 +16,24 @@ func init(shooter: int, pos: Vector2, dir: Vector2):
 
 func _physics_process(delta: float):
 	lifetime += delta
-	if lifetime > 1.2:
+	if lifetime > 1.5:   # was 1.2 (v0.1.3: a taller room)
 		queue_free()
 		return
 		
 	global_position += velocity * delta
 	
-	var screen_w = 640.0
+	# The tower's seams (v0.1.3): the walls stop a projectile everywhere but the
+	# passages and the holes, so this only fires there.
+	var aw: float = preload("res://scripts/player.gd").arena_w
+	var ah: float = preload("res://scripts/player.gd").arena_h
 	if global_position.x < -10.0:
-		global_position.x = screen_w + 10.0
-	elif global_position.x > screen_w + 10.0:
+		global_position.x = aw + 10.0
+	elif global_position.x > aw + 10.0:
 		global_position.x = -10.0
+	if global_position.y > ah + 10.0:
+		global_position.y = -10.0
+	elif global_position.y < -10.0 and velocity.y < 0.0:
+		global_position.y = ah + 10.0
 	# Collisions arrive through body_entered (wired in kunai.tscn).
 
 func _handle_body_collision(body: Node2D):

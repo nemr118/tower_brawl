@@ -9,6 +9,19 @@
 extends Node2D
 
 @onready var platforms_node = $Platforms
+@onready var cam: Camera2D = $Cam                 # v0.1.3: follows my fighter up and down the tower
+@onready var markers_layer: CanvasLayer = $Markers
+const ArenaLayouts = preload("res://scripts/arena_layouts.gd")
+const PlayerScript = preload("res://scripts/player.gd")
+const LAYOUT_NAME := "tower"
+var layout: Dictionary = {}
+var _marker_canvas: Node2D = null
+# v0.1.3: the arena shift is off (user decision, the tower replaces it). The
+# powerup timer is not started; the relay, the flip count, the tape's rot and
+# the replay's turn all stay in place and read zero. Backlog 9 and 24 closed.
+const ARENA_SHIFT_ENABLED := false
+const VIEW_H := 360.0                             # the screen is 640 x 360; the camera shows one screen of the tower
+const MARKER_R := 11.0                            # the off-screen marker bubble
 var powerup_node: Area2D = null
 var is_arena_rotating: bool = false
 var spin_tween: Tween = null   # the running arena spin, so a round start can finish it at once
@@ -82,9 +95,9 @@ const CLASS_ICON_TEX = {
 # x in the middle half of the arena, inside a bubble (see player.gd). The random
 # number is seeded from things every screen already knows (round, player, lives,
 # flips), so every screen picks the same spot without a new network packet.
-const SPAWN_MIN_X = 160.0
-const SPAWN_MAX_X = 480.0
-const SPAWN_Y = 40.0   # v0.0.19: was 70. Higher up, so the bubble floats in above the top plank.
+const SPAWN_MIN_X = 300.0   # v0.1.3: inside the ceiling hole (x 256..384)
+const SPAWN_MAX_X = 340.0
+const SPAWN_Y = -10.0       # v0.1.3: the bubble drops in through the ceiling hole
 
 func _spawn_spot(p_id: int) -> Vector2:
 	var lives = int(player_stocks.get(p_id, Global.max_stocks))
@@ -102,53 +115,76 @@ const FEET_OFFSET = 8.0     # the fighter's feet sit 8 px below its middle point
 const SPOT_MIN_Y = 30.0     # a top edge above this line is out of view
 const SPOT_MAX_Y = 340.0    # a top edge below this line is too close to the bottom
 
-func _anchor_ground() -> void:
-	# v0.0.39. Runs first thing in _ready, while Platforms is still unturned
-	# (rotation 0 from the scene), so reparent() keeps the global transform and
-	# the local position with it. The rejoin rotation below then turns only
-	# what is left under Platforms.
-	ground_node = Node2D.new()
-	ground_node.name = "Ground"
-	ground_node.position = platforms_node.position
-	add_child(ground_node)
-	for plat_name in ANCHORED_PLATFORMS:
-		var plat := platforms_node.get_node_or_null(plat_name)
-		if plat != null:
-			plat.reparent(ground_node)
+func _build_layout() -> void:
+	# v0.1.3 (the tower): the pieces come from scripts/arena_layouts.gd, not the
+	# scene. One StaticBody2D per piece under $Platforms (the node keeps its name:
+	# the tape, the replay and the bot brain read it). Walls and bumps are solid
+	# on the World layer; ledges are one-way and live on the ledge layer, so a
+	# fighter can drop through one (player.gd LEDGE_LAYER).
+	layout = ArenaLayouts.get_layout(LAYOUT_NAME)
+	PlayerScript.arena_w = float(layout["width"])
+	PlayerScript.arena_h = float(layout["height"])
+	cam.limit_left = 0
+	cam.limit_right = int(layout["width"])
+	cam.limit_top = 0
+	cam.limit_bottom = int(layout["height"])
+	for piece in layout["pieces"]:
+		var kind: String = str(piece["kind"])
+		var w := float(piece["w"])
+		var h := float(piece["h"])
+		var body := StaticBody2D.new()
+		body.name = str(piece["name"])
+		body.position = Vector2(float(piece["x"]) + w / 2.0, float(piece["y"]) + h / 2.0)
+		var shape := CollisionShape2D.new()
+		shape.shape = RectangleShape2D.new()
+		shape.shape.size = Vector2(w, h)
+		shape.name = "CollisionShape2D"
+		if kind == "ledge":
+			body.collision_layer = 1 << (PlayerScript.LEDGE_LAYER - 1)
+			shape.one_way_collision = true
+			shape.one_way_collision_margin = 6.0
+		else:
+			body.collision_layer = 1
+		body.collision_mask = 0
+		body.add_child(shape)
+		body.add_child(_piece_visual(kind, w, h))
+		platforms_node.add_child(body)
+
+
+func _piece_visual(kind: String, w: float, h: float) -> Control:
+	var base := ColorRect.new()
+	base.name = "VisualBase"
+	base.offset_left = -w / 2.0
+	base.offset_top = -h / 2.0
+	base.offset_right = w / 2.0
+	base.offset_bottom = h / 2.0
+	# The trim is a child of the base, so its offsets count from the base's
+	# top-left corner: a strip along the top edge.
+	var trim := ColorRect.new()
+	trim.name = "Trim"
+	trim.offset_left = 0.0
+	trim.offset_top = 0.0
+	trim.offset_right = w
+	if kind == "ledge":
+		base.color = Color(0.35, 0.25, 0.2)
+		trim.color = Color(0.65, 0.5, 0.35)
+		trim.offset_bottom = 2.0
+	elif kind == "bump":
+		base.color = Color(0.24, 0.24, 0.3)
+		trim.color = Color(0.45, 0.45, 0.55)
+		trim.offset_bottom = 3.0
+	else:
+		base.color = Color(0.16, 0.16, 0.21)
+		trim.color = Color(0.22, 0.22, 0.28)
+		trim.offset_bottom = 2.0
+	base.add_child(trim)
+	return base
+
 
 func _platform_tops() -> Array:
-	# One point per platform: the middle of its top edge, where a fighter stands.
-	# A half turn of the arena moves a platform to the mirror spot around the
-	# middle. We use the server's count of half turns, not the live angle
-	# (v0.0.20: the live angle switched its answer halfway through a spin, and
-	# two screens could disagree). The count is the same on every screen.
-	var tops: Array = []
-	var flipped := (Global.arena_flips % 2) != 0
-	# v0.0.39: the anchored ground never mirrors; the rest mirrors on an odd flip count.
-	var groups: Array = [[platforms_node, flipped]]
-	if ground_node != null:
-		groups.append([ground_node, false])
-	var bodies: Array = []
-	for g in groups:
-		for plat in g[0].get_children():
-			bodies.append([plat, g[0], g[1]])
-	for entry in bodies:
-		var plat = entry[0]
-		if not plat is StaticBody2D:
-			continue
-		var shape_node = plat.get_node_or_null("CollisionShape2D")
-		if shape_node == null or not shape_node.shape is RectangleShape2D:
-			continue
-		var half_h: float = shape_node.shape.size.y / 2.0
-		var local: Vector2 = plat.position
-		if entry[2]:
-			local = -local
-		var center: Vector2 = entry[1].position + local
-		var top_y := center.y - half_h
-		if top_y < SPOT_MIN_Y or top_y > SPOT_MAX_Y:
-			continue
-		tops.append(Vector2(center.x, top_y - FEET_OFFSET))
-	return tops
+	# v0.1.3: the round-start spots are the layout's spawn ledges (the middle of
+	# each top edge, the feet offset taken off). The same list on every screen.
+	return ArenaLayouts.spawn_spots(layout, FEET_OFFSET)
 
 func _ground_spawn_spots(count: int) -> Array:
 	# Pick "count" spots that are far apart. Start with the leftmost top edge.
@@ -212,7 +248,7 @@ const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
 # level first loads. It's like setting up a board game before you start playing.
 # ------------------------------------------------------------------------------
 func _ready():
-	_anchor_ground()
+	_build_layout()
 	var leave_btn = Button.new()
 	leave_btn.text = "LEAVE MATCH"
 	leave_btn.add_theme_font_size_override("font_size", 16)
@@ -227,7 +263,7 @@ func _ready():
 	for sig_name in NET_SIGNAL_HANDLERS:
 		Global.connect(sig_name, Callable(self, NET_SIGNAL_HANDLERS[sig_name]))
 
-	if Global.my_player_id == 1:
+	if Global.my_player_id == 1 and ARENA_SHIFT_ENABLED:
 		var pt = Timer.new()
 		pt.wait_time = 15.0
 		pt.autostart = true
@@ -238,7 +274,7 @@ func _ready():
 	pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	pause_overlay.z_index = 100
 	pause_overlay.visible = false
-	add_child(pause_overlay)
+	$HUD.add_child(pause_overlay)   # v0.1.3: on the HUD layer, so it does not scroll with the camera
 	
 	var spectate_btn = Button.new()
 	spectate_btn.text = "SPECTATE (LEAVE MATCH)"
@@ -254,7 +290,7 @@ func _ready():
 	join_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	join_btn.connect("pressed", Callable(self, "_on_arena_join_pressed"))
 	join_btn.z_index = 100
-	add_child(join_btn)
+	$HUD.add_child(join_btn)   # v0.1.3: on the HUD layer
 	
 	if Global.my_player_id > 0 or bool(Global.harness_info.get("active", false)):
 		join_btn.visible = false
@@ -286,7 +322,90 @@ func _ready():
 	if Global.warm_enabled:
 		add_child(FontWarmupScript.new([[20, 4], [18, 3], [16, 3], [12, 3]]))
 	Global.focus_canvas()   # v0.0.28: the browser keys go to the canvas only while it has the focus
+	_marker_canvas = MarkerCanvas.new()
+	_marker_canvas.arena = self
+	markers_layer.add_child(_marker_canvas)
+	cam.position = Vector2(float(layout["width"]) / 2.0, VIEW_H / 2.0)
+	cam.reset_smoothing()
 	_start_new_match()
+
+
+# ------------------------------------------------------------------------------
+# THE CAMERA AND THE MARKERS (v0.1.3, docs/reference/arena-tower.md sections 3 and 5)
+# The camera follows my fighter up and down (never sideways: the tower is one
+# screen wide), plus the look offset player.gd keeps. A spectator sees the
+# middle of the living fighters. During a replay it follows the closing kill.
+# A fighter above or below the view gets a small marker at the top or bottom
+# edge, at its real x.
+# ------------------------------------------------------------------------------
+class MarkerCanvas extends Node2D:
+	var arena = null
+	func _draw() -> void:
+		if arena != null:
+			arena._draw_markers(self)
+
+
+func _process(_delta: float) -> void:
+	var target := _camera_target()
+	if target != Vector2.INF:
+		cam.global_position = target
+	if _marker_canvas != null:
+		_marker_canvas.queue_redraw()
+
+
+func _camera_target() -> Vector2:
+	if replay != null and replay.playing:
+		var fp: Vector2 = replay.focus_point()
+		if fp != Vector2.INF:
+			return fp
+		return Vector2.INF
+	var me = player_instances.get(Global.my_player_id)
+	if me != null and is_instance_valid(me):
+		if me.is_dead:
+			return Vector2.INF   # stay where the fighter fell until the respawn
+		return me.global_position + Vector2(0.0, float(me.look_offset_y))
+	# A spectator: the middle of the living fighters.
+	var sum := Vector2.ZERO
+	var n := 0
+	for pid in player_instances:
+		var p = player_instances[pid]
+		if is_instance_valid(p) and not p.is_dead:
+			sum += p.global_position
+			n += 1
+	return sum / float(n) if n > 0 else Vector2.INF
+
+
+func _draw_markers(c: CanvasItem) -> void:
+	var me = player_instances.get(Global.my_player_id)
+	if me == null or not is_instance_valid(me):
+		return
+	var top: float = cam.get_screen_center_position().y - VIEW_H / 2.0
+	var bottom: float = top + VIEW_H
+	for pid in player_instances:
+		if pid == Global.my_player_id:
+			continue
+		var p = player_instances[pid]
+		if not is_instance_valid(p) or p.is_dead or not p.visible:
+			continue
+		var y: float = p.global_position.y
+		var at: Vector2
+		if y < top - 4.0:
+			at = Vector2(p.global_position.x, MARKER_R + 4.0)
+		elif y > bottom + 4.0:
+			at = Vector2(p.global_position.x, VIEW_H - MARKER_R - 4.0)
+		else:
+			continue
+		at.x = clampf(at.x, MARKER_R + 2.0, float(layout["width"]) - MARKER_R - 2.0)
+		c.draw_circle(at, MARKER_R + 2.0, Color(0.0, 0.0, 0.0, 0.6))
+		c.draw_circle(at, MARKER_R, Color(0.95, 0.95, 0.95, 0.9))
+		var tex: Texture2D = CLASS_ICON_TEX.get(p.class_type)
+		if tex != null:
+			var side := MARKER_R * 1.5
+			c.draw_texture_rect(tex, Rect2(at - Vector2(side, side) / 2.0, Vector2(side, side)), false)
+		# A little arrow on the side the fighter is.
+		var dir := -1.0 if y < top else 1.0
+		var tip := at + Vector2(0.0, dir * (MARKER_R + 6.0))
+		c.draw_colored_polygon(PackedVector2Array([tip, tip - Vector2(4.0, dir * 5.0), tip + Vector2(4.0, -dir * 5.0)]), Color(1.0, 0.85, 0.3, 0.95))
 
 
 # ------------------------------------------------------------------------------
@@ -341,6 +460,7 @@ func _record_tape_frame() -> void:
 		if p.is_egg: flags |= Global.FLAG_EGG
 		if p.is_on_floor(): flags |= Global.FLAG_FLOOR
 		if p.is_bubble: flags |= HistoryRingScript.FLAG_BUBBLE
+		if p.is_ducking: flags |= HistoryRingScript.FLAG_DUCK
 		if p.is_dead or not p.visible: flags |= HistoryRingScript.FLAG_DEAD
 		a[4] = float(flags)
 		present |= 1 << (pid - 1)

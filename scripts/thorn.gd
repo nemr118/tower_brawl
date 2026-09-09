@@ -1,6 +1,6 @@
 extends Area2D
 
-@export var speed: float = 550.0
+@export var speed: float = 480.0   # was 550 (v0.1.3 pacing)
 @export var gravity_scale: float = 200.0
 
 var velocity: Vector2 = Vector2.ZERO
@@ -31,11 +31,18 @@ func _physics_process(delta: float):
 	
 	global_position += velocity * delta
 	
-	var screen_w = 640.0
+	# The tower's seams (v0.1.3): the walls stop a projectile everywhere but the
+	# passages and the holes, so this only fires there.
+	var aw: float = preload("res://scripts/player.gd").arena_w
+	var ah: float = preload("res://scripts/player.gd").arena_h
 	if global_position.x < -10.0:
-		global_position.x = screen_w + 10.0
-	elif global_position.x > screen_w + 10.0:
+		global_position.x = aw + 10.0
+	elif global_position.x > aw + 10.0:
 		global_position.x = -10.0
+	if global_position.y > ah + 10.0:
+		global_position.y = -10.0
+	elif global_position.y < -10.0 and velocity.y < 0.0:
+		global_position.y = ah + 10.0
 
 func _on_body_entered(body: Node2D):
 	_handle_body_collision(body)

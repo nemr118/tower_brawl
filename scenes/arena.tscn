@@ -1,22 +1,7 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/arena.gd" id="1_arena"]
 [ext_resource type="PackedScene" path="res://scenes/touch_controls.tscn" id="3_touch"]
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
-size = Vector2(160, 50)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_ledge"]
-size = Vector2(110, 12)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_high_ledge"]
-size = Vector2(90, 12)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_center"]
-size = Vector2(130, 14)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_apex"]
-size = Vector2(80, 10)
 
 [sub_resource type="LabelSettings" id="LabelSettings_banner"]
 font_size = 20
@@ -31,12 +16,15 @@ outline_color = Color(0, 0, 0, 1)
 [node name="Arena" type="Node2D"]
 script = ExtResource("1_arena")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Sky" type="CanvasLayer" parent="."]
+layer = -1
+
+[node name="Background" type="ColorRect" parent="Sky"]
 offset_right = 640.0
 offset_bottom = 360.0
 color = Color(0.08, 0.08, 0.12, 1)
 
-[node name="MoonDecor" type="ColorRect" parent="Background"]
+[node name="MoonDecor" type="ColorRect" parent="Sky/Background"]
 layout_mode = 0
 offset_left = 285.0
 offset_top = 65.0
@@ -45,175 +33,17 @@ offset_bottom = 135.0
 color = Color(0.18, 0.2, 0.3, 0.35)
 
 [node name="Platforms" type="Node2D" parent="."]
+
+[node name="Cam" type="Camera2D" parent="."]
 position = Vector2(320, 180)
+limit_left = 0
+limit_top = 0
+limit_right = 640
+limit_bottom = 1080
+position_smoothing_enabled = true
+position_smoothing_speed = 8.0
 
-[node name="GroundLeft" type="StaticBody2D" parent="Platforms"]
-position = Vector2(-140, 155)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/GroundLeft"]
-offset_left = -80.0
-offset_top = -25.0
-offset_right = 80.0
-offset_bottom = 25.0
-color = Color(0.2, 0.22, 0.28, 1)
-
-[node name="GrassTrim" type="ColorRect" parent="Platforms/GroundLeft"]
-offset_left = -80.0
-offset_top = -25.0
-offset_right = 80.0
-offset_bottom = -21.0
-color = Color(0.4, 0.75, 0.4, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/GroundLeft"]
-shape = SubResource("RectangleShape2D_ground")
-
-[node name="GroundRight" type="StaticBody2D" parent="Platforms"]
-position = Vector2(140, 155)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/GroundRight"]
-offset_left = -80.0
-offset_top = -25.0
-offset_right = 80.0
-offset_bottom = 25.0
-color = Color(0.2, 0.22, 0.28, 1)
-
-[node name="GrassTrim" type="ColorRect" parent="Platforms/GroundRight"]
-offset_left = -80.0
-offset_top = -25.0
-offset_right = 80.0
-offset_bottom = -21.0
-color = Color(0.4, 0.75, 0.4, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/GroundRight"]
-shape = SubResource("RectangleShape2D_ground")
-
-[node name="LedgeLeft" type="StaticBody2D" parent="Platforms"]
-position = Vector2(-210, 50)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeLeft"]
-offset_left = -55.0
-offset_top = -6.0
-offset_right = 55.0
-offset_bottom = 6.0
-color = Color(0.35, 0.25, 0.2, 1)
-
-[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeLeft"]
-offset_left = -55.0
-offset_top = -6.0
-offset_right = 55.0
-offset_bottom = -4.0
-color = Color(0.65, 0.5, 0.35, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeLeft"]
-shape = SubResource("RectangleShape2D_ledge")
-
-[node name="LedgeRight" type="StaticBody2D" parent="Platforms"]
-position = Vector2(210, 50)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeRight"]
-offset_left = -55.0
-offset_top = -6.0
-offset_right = 55.0
-offset_bottom = 6.0
-color = Color(0.35, 0.25, 0.2, 1)
-
-[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeRight"]
-offset_left = -55.0
-offset_top = -6.0
-offset_right = 55.0
-offset_bottom = -4.0
-color = Color(0.65, 0.5, 0.35, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeRight"]
-shape = SubResource("RectangleShape2D_ledge")
-
-[node name="LedgeHighLeft" type="StaticBody2D" parent="Platforms"]
-position = Vector2(-150, -40)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeHighLeft"]
-offset_left = -45.0
-offset_top = -6.0
-offset_right = 45.0
-offset_bottom = 6.0
-color = Color(0.35, 0.25, 0.2, 1)
-
-[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeHighLeft"]
-offset_left = -45.0
-offset_top = -6.0
-offset_right = 45.0
-offset_bottom = -4.0
-color = Color(0.65, 0.5, 0.35, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeHighLeft"]
-shape = SubResource("RectangleShape2D_high_ledge")
-
-[node name="LedgeHighRight" type="StaticBody2D" parent="Platforms"]
-position = Vector2(150, -40)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/LedgeHighRight"]
-offset_left = -45.0
-offset_top = -6.0
-offset_right = 45.0
-offset_bottom = 6.0
-color = Color(0.35, 0.25, 0.2, 1)
-
-[node name="WoodTrim" type="ColorRect" parent="Platforms/LedgeHighRight"]
-offset_left = -45.0
-offset_top = -6.0
-offset_right = 45.0
-offset_bottom = -4.0
-color = Color(0.65, 0.5, 0.35, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/LedgeHighRight"]
-shape = SubResource("RectangleShape2D_high_ledge")
-
-[node name="CenterTower" type="StaticBody2D" parent="Platforms"]
-position = Vector2(0, 5)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/CenterTower"]
-offset_left = -65.0
-offset_top = -7.0
-offset_right = 65.0
-offset_bottom = 7.0
-color = Color(0.35, 0.25, 0.2, 1)
-
-[node name="WoodTrim" type="ColorRect" parent="Platforms/CenterTower"]
-offset_left = -65.0
-offset_top = -7.0
-offset_right = 65.0
-offset_bottom = -5.0
-color = Color(0.65, 0.5, 0.35, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterTower"]
-shape = SubResource("RectangleShape2D_center")
-
-[node name="CenterApex" type="StaticBody2D" parent="Platforms"]
-position = Vector2(0, -85)
-collision_mask = 0
-
-[node name="VisualBase" type="ColorRect" parent="Platforms/CenterApex"]
-offset_left = -40.0
-offset_top = -5.0
-offset_right = 40.0
-offset_bottom = 5.0
-color = Color(0.35, 0.25, 0.2, 1)
-
-[node name="WoodTrim" type="ColorRect" parent="Platforms/CenterApex"]
-offset_left = -40.0
-offset_top = -5.0
-offset_right = 40.0
-offset_bottom = -3.0
-color = Color(0.65, 0.5, 0.35, 1)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Platforms/CenterApex"]
-shape = SubResource("RectangleShape2D_apex")
+[node name="Markers" type="CanvasLayer" parent="."]
 
 [node name="HUD" type="CanvasLayer" parent="."]
 

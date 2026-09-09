@@ -68,6 +68,7 @@ var _ghost_proj: Array = []     # [{wid, node}] pooled ghost projectiles by list
 var _powerup: Array = [0.0, 0.0, false]
 var _frozen_live: Array = []    # [[node, was_visible, process_mode]] the paused live world
 var _overlay: Node2D = null
+var _overlay_layer: CanvasLayer = null   # v0.1.3: the overlay is screen space now (the camera scrolls the tower)
 var _victim_pos: Vector2 = Vector2.INF
 # v0.1.2 probe (cut 1): what the start cost. start_ms = start() itself, tick_ms = the
 # whole freeze tick (set by arena.gd), first_ms = the slowest of the first three
@@ -93,7 +94,12 @@ func _ready() -> void:
 	_overlay = VhsOverlay.new()
 	_overlay.owner_replay = self
 	_overlay.z_index = 30
-	add_child(_overlay)
+	# v0.1.3: on its own CanvasLayer, so the scanlines, the caption and the counter
+	# stay on the screen while the camera follows the closing kill up the tower.
+	_overlay_layer = CanvasLayer.new()
+	_overlay_layer.layer = 1
+	add_child(_overlay_layer)
+	_overlay_layer.add_child(_overlay)
 	set_process(false)
 	if Global.warm_enabled:
 		prepare_ghosts()
@@ -152,6 +158,12 @@ func start(ring, platforms: Node2D, live: Array, round_end_msec: int) -> String:
 	_overlay.queue_redraw()
 	start_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	return ""
+
+
+# v0.1.3: where the camera should look while the replay plays (the victim of
+# the closing kill), or INF when nothing is known yet.
+func focus_point() -> Vector2:
+	return _victim_pos if playing else Vector2.INF
 
 
 # Stop now. cut = true when the next round arrived before the tape ran out.
@@ -284,6 +296,7 @@ func _show_frame(seq: int) -> void:
 		g.is_egg = (flags & Global.FLAG_EGG) != 0
 		g.is_bubble = (flags & HistoryRingScript.FLAG_BUBBLE) != 0
 		g.ghost_on_floor = (flags & Global.FLAG_FLOOR) != 0
+		g._set_duck((flags & HistoryRingScript.FLAG_DUCK) != 0)
 		g.dash_dir = vel.normalized() if vel.length_squared() > 1.0 else g.aim_direction
 		g.anim_time = float(f["msec"]) * 0.012   # the same 12 x seconds the live fighter counts
 		g.queue_redraw()
@@ -441,9 +454,11 @@ func _draw_overlay(c: CanvasItem) -> void:
 		c.draw_arc(Vector2(_powerup[0], _powerup[1]), 14.0, 0.0, TAU, 20, Color(1.0, 0.9, 0.3, 0.8), 2.0)
 		c.draw_circle(Vector2(_powerup[0], _powerup[1]), 5.0, Color(1.0, 0.8, 0.2, 0.7))
 	# A red ring around the one who is about to fall, during the slow part.
+	# The overlay is screen space: the world spot goes through the camera's transform.
 	if _phase == "slow" and _victim_pos != Vector2.INF:
 		var pulse := 26.0 + sin(_clock * 12.0) * 3.0
-		c.draw_arc(_victim_pos + Vector2(0, -8), pulse, 0.0, TAU, 32, Color(1.0, 0.25, 0.2, 0.85), 2.5)
+		var at: Vector2 = c.get_viewport().get_canvas_transform() * (_victim_pos + Vector2(0, -8))
+		c.draw_arc(at, pulse, 0.0, TAU, 32, Color(1.0, 0.25, 0.2, 0.85), 2.5)
 	# Label and counter, bottom left, in the void column beside the seam (the top
 	# row belongs to the HUD panels). Counter = seconds from the kill frame.
 	var row := ARENA_H - 12.0

@@ -46,7 +46,7 @@ except ImportError:
     sys.exit("websocket-client is missing. Run with ./venv/bin/python")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ARENA_W, ARENA_H = 640.0, 360.0
+ARENA_W, ARENA_H = 640.0, 1080.0   # v0.1.3: the tower, three screens tall
 WEAPONS = ["arrow", "firebolt", "kunai"]
 MOVEMENT_TYPES = ("sync_pos", "spawn_projectile")
 # Identical raw packets closer than this = duplicate broadcast. Event packets get a
