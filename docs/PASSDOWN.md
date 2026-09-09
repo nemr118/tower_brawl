@@ -19,9 +19,9 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 4. **`server.log` / `debug.log` never rotate on the PC** — open (the laptop has logrotate) — [[PASSDOWN-2026-09-05]].
 5. **`player_configs` still carries a default class per slot** — open, harmless — clean up when `global.gd` is touched.
 11. **Arena voids are a mechanic, not a bug** — user decision (v0.0.11) — nothing to do (`bot_brain.gd` routes through the seams).
-12. **One-off `fleet.client-silent`** — seen once (v0.0.27) — if seen again keep `.harness_logs/godot2.log`.
+12. **One-off `fleet.client-silent`** — seen once (v0.0.27) — if seen again keep the godot log.
 13. **PC keyboard dead after a reload in the replay gap** — open, low, seen once — a clock time is enough — [[v0.0.28 - Rejoin in the Replay Gap]].
-14. **Stall report from the playtest** — open, vague — ask for steps at the next playtest — [[Playtest v0.0.26]].
+14. **Stall report from the playtest** — open, vague — ask for steps next time — [[Playtest v0.0.26]].
 16. **The stomp-egg has no author over the network** — design call — a `player_hit` event relayed like `player_died` — [[v0.0.29 - Egg-Form Puppet]].
 17. **Seam hiding** — design call — draw a second copy of a fighter near the seam — [[Playtest v0.0.17]].
 18. **Archer kit revisit** — design call — slow regen, steal arrows, arrows in the join snapshot — [[v0.0.30 - Ranger Rejoin Quiver]].
