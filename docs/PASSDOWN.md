@@ -33,7 +33,7 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 29. **More than four players** — idea (user, 2026-09-08) — `range(1, 5)` in `serve_game.py`, four HUD panels, four spawn ledges — [[arena-tower]].
 
 ## How to work here
-- **Rules:** `CLAUDE.md` (rule 7 plain words; rule 8 trim step; scene edits allowed since v0.1.3, run the load check; GDScript ships via `./bump_build.sh`). One approved phase at a time; report bugs outside it, don't fix them. Every human-validation ask goes into [[Playtest — Master Validation Suite v0.1]] as a section with its own verdict.
+- **Rules:** `CLAUDE.md` (rule 7 plain words; rule 8 trim step; scene edits allowed (v0.1.3), load check after; GDScript ships via `./bump_build.sh`). One approved phase at a time; report bugs outside it, don't fix them. Every human-validation ask goes into [[Playtest — Master Validation Suite v0.1]] as a section with its own verdict.
 - **Verify:** `godot --headless --path . --script tools/check_scripts.gd -- --no-net` (scripts and scenes), then `./venv/bin/python tools/chaos_bots.py --restart-each --json docs/harness_report_<ver>.json` (bump first; detached; wait for `25/25`; it restarts the PC service per scenario: leave the service alone meanwhile).
 - **Serve:** `systemctl --user restart towerbrawl` after a `serve_game.py` change. Laptop: [[laptop-server]]. Deck: `tbdash`. Rest: [[Commands]].
 
