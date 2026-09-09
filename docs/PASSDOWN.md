@@ -35,7 +35,7 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 ## How to work here
 - **Rules:** `CLAUDE.md` (rule 7 plain words; rule 8 trim step; scene edits allowed (v0.1.3), load check after; GDScript ships via `./bump_build.sh`). One approved phase at a time; report bugs outside it, don't fix them. Every human-validation ask goes into [[Playtest — Master Validation Suite v0.1]] as a section with its own verdict.
 - **Verify:** `godot --headless --path . --script tools/check_scripts.gd -- --no-net` (scripts and scenes), then `./venv/bin/python tools/chaos_bots.py --restart-each --json docs/harness_report_<ver>.json` (bump first; detached; wait for `25/25`; it restarts the PC service per scenario: leave the service alone meanwhile).
-- **Serve:** `systemctl --user restart towerbrawl` after a `serve_game.py` change. Laptop: [[laptop-server]]. Deck: `tbdash`. Rest: [[Commands]].
+- **Serve:** `systemctl --user restart towerbrawl` after a `serve_game.py` change. Laptop: [[laptop-server]]. Deck: `tbdash`. [[Commands]].
 
 ## Architecture now
 - `serve_game.py`: authoritative lobby/match state (slots, stocks, scores, rounds, 5-crown match end), relay for the rest. A reader thread per socket, a `ClientConn` writer thread with a bounded queue; `sync_pos` goes through the `MovementBatcher`, one `sync_bundle` per client every 50 ms. Client token gates slot reclaim; 8 s rejoin grace mid-match; deaths deduped per `DEATH_DEDUPE_S` 0.6 s (under the client's 1.2 s respawn, backlog 27). Round gaps `NEXT_ROUND_DELAY = 2.6`, `REPLAY_ROUND_DELAY = 6.5`, `MATCH_END_DELAY = 7.0`. Harness gate (`_harness_tick`). Tagged log lines; `status.json` once a second; `client_stats.jsonl` (cards and match / round / join / lock / kill / leave records).
