@@ -8,8 +8,8 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 ## Now (2026-09-08, late night)
 - **v0.1.3 "The Tower" built**, harness 25/25 with `--restart-each`, no Minor, report `harness_report_v0.1.3.json`, deployed on the laptop ([[laptop-server]]). Last tag: `v0.1.0` (v0.1.1 to v0.1.3 untagged).
 - **Waiting on a human:** [[Playtest — Master Validation Suite v0.1]], two phones on the laptop: sections 1 to 5 (controller, kill cam circle, speed burst, respawn mash, cut 1) and **section 6 (the tower: map, holes, passages, camera, duck, look, markers, pace)**.
-- **Next:** the section 6 verdict decides: the pace table ([[arena-tower]] section 7), the map (`arena_layouts.gd`), or build 2 (themes, moving platforms, traps).
-- **Ideas, not scheduled:** a twin-stick toggle, `stats_table.py --devices` with the screen size and a `--replays` view, the Speed line as a server card, a replay skip key, sound, a headless Godot sim server. Detail: [[PASSDOWN-2026-09-05]].
+- **Next:** twin-stick phone controls (user, 2026-09-08): left stick moves, past its circle = a dash, above 45° = a jump; right stick aims, past its circle = a shot; a special button lower right; a switch button upper left. Then a playtest (sheet §7), then the §6 verdict.
+- **Ideas, not scheduled:** `stats_table.py --devices` with the screen size and a `--replays` view, the Speed line as a server card, a replay skip key, sound, a headless Godot sim server. Detail: [[PASSDOWN-2026-09-05]].
 - **v0.1.3 "The Tower":** the arena is a tower, 640 x 1080, walls outside the screen, holes in the floor and ceiling (x 256..384), side passages at y 380 and 800, one-way ledges every 70 px, built from `arena_layouts.gd` at load; a camera that follows up and down, duck (`FLAG_DUCK` 0x40), look (1.5 s hold, 200 px), off-screen markers, the shift off (`ARENA_SHIFT_ENABLED`), the pacing table. Scene edits allowed now (rule 1). See [[v0.1.3 - The Tower]], [[arena-tower]].
 - **v0.1.2 "Cut 1":** lobby icons 256 px loaded once (`ICON_TEX`), a font warm-up at scene load (`🔤 [FontWarm]`), the ghost pool, a replay start probe (`start_ms tick_ms first_ms`), the self-respawn net (`🩹 [SelfRespawn]`, 1.0 s), a web client on the PC (`tools/webbot.sh`); `.pck` 21.9 -> 12.9 MB. See [[v0.1.2 - Cut 1]].
 
@@ -20,7 +20,7 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 5. **`player_configs` still carries a default class per slot** — open, harmless — clean up when `global.gd` is touched.
 11. **Arena voids are a mechanic, not a bug** — user decision (v0.0.11) — nothing to do (`bot_brain.gd` routes through the seams).
 12. **One-off `fleet.client-silent`** — seen once (v0.0.27) — if seen again keep `.harness_logs/godot2.log`.
-13. **PC keyboard dead after a reload in the replay gap** — open, low, seen once — a clock time is enough (cards carry `keys=` `focus=`) — [[v0.0.28 - Rejoin in the Replay Gap]].
+13. **PC keyboard dead after a reload in the replay gap** — open, low, seen once — a clock time is enough — [[v0.0.28 - Rejoin in the Replay Gap]].
 14. **Stall report from the playtest** — open, vague — ask for steps at the next playtest — [[Playtest v0.0.26]].
 16. **The stomp-egg has no author over the network** — design call — a `player_hit` event relayed like `player_died` — [[v0.0.29 - Egg-Form Puppet]].
 17. **Seam hiding** — design call — draw a second copy of a fighter near the seam — [[Playtest v0.0.17]].
