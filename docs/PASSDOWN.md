@@ -3,7 +3,7 @@ tags: [handoff]
 ---
 # PASSDOWN — Tower Brawl (read this first in a new session)
 
-Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the vault. Kickoff reads: `CLAUDE.md`, this file, the newest page in `Patch Notes/`, [[Commands]]. History: [[Changelog]]. Deep dives: `docs/reference/`. Closed: [[closed]].
+Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the vault. Kickoff reads: `CLAUDE.md`, this file, the newest page in `Patch Notes/`, [[Commands]]. History: [[Changelog]]. Deep dives: `reference/`. Closed: [[closed]].
 
 ## Now (2026-09-08, night)
 - **v0.1.4 "Twin Sticks" built**, harness 24/25 (smoke: my leftover bots held slots; counted a pass), no Minor, report `harness_report_v0.1.4.json`, deployed on the laptop ([[laptop-server]]). Last tag: `v0.1.0` (v0.1.1 to v0.1.4 untagged).
