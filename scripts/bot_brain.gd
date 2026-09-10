@@ -17,6 +17,10 @@
 # Human-likeness: decisions wait out a reaction delay (100-250 ms scaled by
 # difficulty) before they reach the inputs, aim carries gaussian error, and a
 # seeded RNG makes a run reproducible (--ai-seed).
+# Routes (v0.1.5): scripts/bot_nav.gd turns the tower layout into places to
+# stand and the moves between them, and _steer_to follows the route. Two stall
+# guards stop a round running for hours: no kill for HUNT_AFTER_S makes every
+# persona hunt, and a bot that gets nowhere for STUCK_S takes a detour.
 # ==============================================================================
 extends Node
 # No class_name: the global class cache is only rebuilt by the editor, so
@@ -38,8 +42,19 @@ const ACTIONS := ["left", "right", "up", "down", "jump", "dash", "attack", "spec
 # Movement numbers from player.gd, for route planning.
 const SPEED := PlayerScript.SPEED         # v0.1.3: read from the fighter, not a copy
 const FALL_G := 1600.0
-const JUMP_H := 80.0                     # jump apex: 430^2 / (2 * 1150)
 const SEAM_Y := ARENA_H + 16.0           # bottom wrap: out of the floor hole, in at the ceiling hole (y = -10)
+const BotNav := preload("res://scripts/bot_nav.gd")
+# v0.1.5 stall guards (the overnight soaks stalled for hours):
+const HUNT_AFTER_S := 20.0               # no kill anywhere this long: every persona hunts
+const STUCK_S := 4.0                     # wanting to move this long without getting anywhere: a detour
+const DETOUR_S := 3.0                    # how long a detour lasts
+const NAV_RETRY_S := 0.5                 # a route jump or drop is not pressed again sooner
+const NAV_MISS_COST := 150.0             # route cost added per recent miss of a move
+const NAV_MISS_FORGET_S := 60.0          # a missed move is forgiven after this long
+const DROP_DOWN_S := 0.25                # "down" stays held this long after the drop's jump
+const DROP_STEADY_FRAMES := 3            # frames standing on the ledge, down held, before the drop's jump
+const NAV_LAUNCH_S := 1.2                # a pressed route move that has not left the floor by then missed
+const LEAP_NEED_PX := 28.0               # a wide route jump dashes only if its ledge is further than this
 
 var persona := "wanderer"
 var seed_value := 0
@@ -66,7 +81,8 @@ var _status_timer := 0.0
 var _aim_warned := false
 var _stats := {"moves": 0, "jumps": 0, "dashes": 0, "attacks": 0, "specials": 0, "evades": 0,
 	"aim_err_sum": 0.0, "aim_err_n": 0, "aim_err_max": 0.0, "decisions": 0,
-	"drops": 0, "wraps": 0, "seams": 0, "land_sum": 0.0, "land_n": 0, "max_loop": 0, "shift_wraps": 0}
+	"drops": 0, "wraps": 0, "seams": 0, "land_sum": 0.0, "land_n": 0, "max_loop": 0, "shift_wraps": 0,
+	"steps": 0, "misses": 0, "stucks": 0}
 
 # steering state shared by the personas
 var _stuck_time := 0.0                   # seconds spent pushing into a wall on the floor
@@ -78,9 +94,8 @@ var _t_counter_until := 0.0              # turtle: counter-attack window after a
 var _r_engage_until := 0.0               # rusher: committed to a burst on this target
 var _goal := Vector2.ZERO                # where the persona is steering this tick
 var _has_goal := false
-var _climb_dash := false                 # tap dash at the jump apex (with "up" held: an upward dash)
-var _leap_dash := false                  # tap dash shortly after leaving the ground (seam hop)
-var _climb_since := 0.0
+var _leap_dash := false                  # tap dash at the apex of a wide route jump (v0.1.5)
+var _climb_since := 0.0                  # brain time that jump was pressed
 var _last_pos := Vector2.ZERO            # wrap statistics
 var _wrap_at := -1.0                     # brain time of the last bottom wrap, -1 once landed
 var _loop_len := 0                       # bottom wraps since the last landing
@@ -88,6 +103,24 @@ var _was_rotating := false               # arena.is_arena_rotating last frame (b
 var _g_mood := "harass"                  # griefer
 var _g_mood_until := 0.0
 var _g_goal := Vector2.ZERO
+# route following and the stall guards (v0.1.5)
+var goal_override := Vector2.INF         # tools/nav_probe.gd: steer only to this point (INF = off)
+var _nav = null                          # bot_nav.gd built from the arena layout; null = no map
+var _nav_step := {}                      # the route move being followed (bot_nav.gd), plus from / launched
+var _nav_air := false                    # the last think tick was in the air
+var _nav_pressed_at := -10.0             # brain time a route jump or drop was last pressed
+var _nav_misses := {}                    # "i>j" -> [misses, brain time of the last one]
+var _drop_state := 0                     # a drop-through: 0 none, 1 down held (waiting for a steady ledge), 2 jump sent
+var _drop_frames := 0                    # frames in a row on the ledge while down is held
+var _drop_since := 0.0
+var _last_kill_at := 0.0                 # brain time of the last kill or round start anywhere
+var _hunting := false
+var _steer_moving := false               # this think tick's steering wanted to go somewhere
+var _progress_surface := -1
+var _progress_x := 0.0
+var _progress_at := 0.0
+var _detour_until := 0.0
+var _detour_goal := Vector2.ZERO
 
 
 func setup(p_persona: String, p_seed: int, p_difficulty: float) -> void:
@@ -120,13 +153,24 @@ func _ready() -> void:
 	# Synthetic mouse events must apply immediately: the headless display server
 	# never flushes Godot's accumulated-input buffer.
 	Input.use_accumulated_input = false
+	var arena = fighter.get_parent()
+	if arena != null and "layout" in arena and not arena.layout.is_empty():
+		_nav = BotNav.new()
+		_nav.build(arena.layout)
+	Global.net_player_died.connect(_on_player_died)
+	Global.net_new_round.connect(_on_new_round)
 	var note := "" if persona in IMPLEMENTED else " (not built yet: playing as wanderer)"
-	print("🧠 [Bot] P%d persona=%s seed=%d difficulty=%.2f reaction=%.0fms aim_sigma=%.1f°%s" % [
-		fighter.player_id, persona, seed_value, difficulty, reaction_delay * 1000.0, aim_sigma_deg, note])
+	print("🧠 [Bot] P%d persona=%s seed=%d difficulty=%.2f reaction=%.0fms aim_sigma=%.1f°%s nav=%s" % [
+		fighter.player_id, persona, seed_value, difficulty, reaction_delay * 1000.0, aim_sigma_deg, note,
+		("%d surfaces" % _nav.surfaces.size()) if _nav != null else "off"])
 
 
 func _exit_tree() -> void:
 	_release_all()
+	if Global.net_player_died.is_connected(_on_player_died):
+		Global.net_player_died.disconnect(_on_player_died)
+	if Global.net_new_round.is_connected(_on_new_round):
+		Global.net_new_round.disconnect(_on_new_round)
 
 
 func _physics_process(delta: float) -> void:
@@ -164,21 +208,44 @@ func _physics_process(delta: float) -> void:
 	while _queue.size() > 0 and _queue[0]["t"] <= _clock:
 		_apply(_queue.pop_front()["ctrl"])
 
-	# 4b. frame-accurate follow-ups: the upward dash at a jump apex, the seam hop
-	if _climb_dash or _leap_dash:
+	# 4b. frame-accurate follow-up: a wide route jump dashes toward its ledge at
+	#     the apex (a dash ignores gravity, so an earlier one cuts the rise short),
+	#     and only when the ledge is still out of reach (a dash overshoots a near one)
+	if _leap_dash:
 		var airborne := not fighter.is_on_floor()
 		var apex := fighter.velocity.y > -90.0
-		var left_ground := _clock - _climb_since > 0.12
-		if airborne and fighter.dash_cooldown_timer <= 0.0 and not fighter.is_dashing and ((_climb_dash and apex) or (_leap_dash and left_ground)):
-			_tap("dash")
-			_stats["dashes"] += 1
-			_climb_dash = false
+		if airborne and apex and _clock - _climb_since > 0.12 and fighter.dash_cooldown_timer <= 0.0 and not fighter.is_dashing:
 			_leap_dash = false
-			_release("up")
+			if not _nav_step.is_empty():
+				var fx := fighter.global_position.x
+				if absf(clampf(fx, float(_nav_step["lx0"]), float(_nav_step["lx1"])) - fx) > LEAP_NEED_PX:
+					_tap("dash")
+					_stats["dashes"] += 1
 		elif _clock - _climb_since > 0.8:
-			_climb_dash = false
 			_leap_dash = false
-			_release("up")
+
+	# 4c. a drop-through (v0.1.5): down first, the jump once the fighter has stood
+	#     on the ledge for DROP_STEADY_FRAMES with down held. Down and jump in the
+	#     same frame jump instead: the duck costs the floor frame the drop needs
+	#     (tools/nav_probe.gd --drop-test).
+	if _drop_state == 1:
+		if fighter.is_on_floor() and fighter._on_ledge():
+			_drop_frames += 1
+		else:
+			_drop_frames = 0
+		if _drop_frames >= DROP_STEADY_FRAMES:
+			if _held.has("jump"):
+				_release("jump")
+				_jump_hold_left = 0.0
+			_tap("jump")
+			_drop_state = 2
+			_drop_since = _clock
+		elif _clock - _drop_since > 0.6:
+			_release("down")
+			_drop_state = 0
+	elif _drop_state == 2 and (_clock - _drop_since > DROP_DOWN_S or fighter.velocity.y < -100.0):
+		_release("down")
+		_drop_state = 0
 	_track_wraps()
 
 	# 5. keep the synthetic mouse on the current aim point every frame. The
@@ -289,19 +356,25 @@ func _perceive() -> Dictionary:
 	snap["ammo"] = _ammo()
 	snap["threat"] = _inbound_threat(snap)
 	var arena := me.get_parent()
-	# v0.0.39: the ground slabs live under arena.ground_node now (anchored, they
-	# do not turn); the brain reads both nodes so the floor stays on its map.
-	var plat_nodes: Array = []
-	if arena != null and "platforms_node" in arena and arena.platforms_node != null:
-		plat_nodes.append(arena.platforms_node)
-	if arena != null and "ground_node" in arena and arena.ground_node != null:
-		plat_nodes.append(arena.ground_node)
-	for pn in plat_nodes:
-		for body in pn.get_children():
-			for cs in body.get_children():
-				if cs is CollisionShape2D and cs.shape is RectangleShape2D:
-					var size: Vector2 = cs.shape.size
-					snap["platforms"].append(cs.global_transform * Rect2(-size * 0.5, size))
+	if _nav != null:
+		# v0.1.5: only places to stand (ledge, bump and floor tops), so a roam or
+		# retreat target is never inside a wall or the ceiling
+		for sf: Dictionary in _nav.surfaces:
+			snap["platforms"].append(Rect2(sf["x0"], sf["top"], sf["x1"] - sf["x0"], 12.0))
+	else:
+		# no layout table: read the collision shapes. v0.0.39: the ground slabs
+		# live under arena.ground_node (anchored); the brain reads both nodes.
+		var plat_nodes: Array = []
+		if arena != null and "platforms_node" in arena and arena.platforms_node != null:
+			plat_nodes.append(arena.platforms_node)
+		if arena != null and "ground_node" in arena and arena.ground_node != null:
+			plat_nodes.append(arena.ground_node)
+		for pn in plat_nodes:
+			for body in pn.get_children():
+				for cs in body.get_children():
+					if cs is CollisionShape2D and cs.shape is RectangleShape2D:
+						var size: Vector2 = cs.shape.size
+						snap["platforms"].append(cs.global_transform * Rect2(-size * 0.5, size))
 	if arena != null and "powerup_node" in arena and is_instance_valid(arena.powerup_node):
 		snap["powerup"] = arena.powerup_node.global_position
 	return snap
@@ -444,22 +517,109 @@ func _landing_move(snap: Dictionary, goal: Vector2, has_goal: bool) -> int:
 	return 0 if absf(dx) < 6.0 else int(signf(dx))
 
 
-# Nearest x (within max_dist) whose column below us is empty: walking there drops
-# us through the seam. NAN when there is none in reach.
-func _nearest_drop_x(snap: Dictionary, max_dist := 200.0) -> float:
+# One route move from the floor (v0.1.5): walk to its take-off stretch, then
+# press. The press lands a reaction delay after the decision, so the position
+# is predicted that far ahead.
+func _follow_move(snap: Dictionary, m: Dictionary, here: int, ctrl: Dictionary) -> void:
 	var pos: Vector2 = snap["pos"]
-	for step in range(1, int(max_dist / 12.0) + 1):
-		for dir in [-1.0, 1.0]:
-			var x: float = pos.x + dir * step * 12.0
-			if _platform_below(snap, x, pos.y).is_empty():
-				return x
-	return NAN
+	var ahead: float = pos.x + snap["vel"].x * (reaction_delay + 0.05)
+	_nav_step = m.duplicate()
+	_nav_step["from"] = here
+	_nav_step["launched"] = false
+	var spot := clampf(pos.x, m["x0"], m["x1"])
+	var can_press := _clock - _nav_pressed_at > NAV_RETRY_S
+	match str(m["kind"]):
+		"walkoff":
+			ctrl["move"] = int(m["dir"])   # keep walking: the fall starts past the end
+		"drop":
+			if absf(ahead - spot) > 6.0:
+				ctrl["move"] = int(signf(spot - pos.x)) if absf(spot - pos.x) > 6.0 else 0
+			else:
+				ctrl["move"] = 0
+				if absf(snap["vel"].x) < 40.0 and can_press and _drop_state == 0:
+					ctrl["drop_through"] = true
+					_nav_press()
+		_:
+			# a gap wider than a running jump needs the dash at the apex: wait for it
+			var dash_ok: bool = snap["dash_ready"] or not m.get("need_dash", false)
+			if ahead >= m["x0"] and ahead <= m["x1"] and can_press and dash_ok:
+				_nav_press()
+				ctrl["jump"] = true
+				ctrl["jump_hold"] = 0.3
+				ctrl["leap"] = m["leap"]
+				ctrl["move"] = int(m["dir"])
+			elif pos.x >= m["x0"] and pos.x <= m["x1"]:
+				ctrl["move"] = 0   # inside the stretch but carried past it: brake, press next tick
+			else:
+				ctrl["move"] = int(signf(spot - pos.x))
 
 
-# Walk toward a point (shortest way across the seam), jumping for small rises and
-# when blocked. A rise beyond one jump uses the arena's tools: a jump with an
-# upward dash at the apex, or a drop through the bottom seam to come out of the
-# ceiling above the target (the landing logic in _decide finishes that route).
+func _nav_press() -> void:
+	_nav_step["launched"] = true
+	_nav_pressed_at = _clock
+	_stats["steps"] += 1
+
+
+# Route bookkeeping, once per think tick before deciding. In the air, a walk-off
+# that fell from its own end counts as launched; any other fall the route did
+# not press (the far end with a turn still in the reaction queue, a shove) just
+# ends the move. Back on the floor, a launched move that came down anywhere but
+# its surface, or a press that never left the floor, is a miss: routes avoid
+# that move for a while (NAV_MISS_COST, NAV_MISS_FORGET_S).
+func _nav_track_floor(snap: Dictionary) -> void:
+	if _nav_step.is_empty():
+		_nav_air = not snap["on_floor"]
+		return
+	if not snap["on_floor"]:
+		_nav_air = true
+		if not _nav_step["launched"]:
+			if _nav_step["kind"] == "walkoff" and absf(snap["pos"].x - float(_nav_step["x0"])) <= 24.0:
+				_nav_step["launched"] = true
+				_stats["steps"] += 1
+			else:
+				_nav_step = {}
+		return
+	if _nav_air:
+		if _nav_step["launched"] and _nav.surface_at(snap["pos"]) != _nav_step["to"]:
+			_nav_miss()
+		_nav_step = {}
+	elif not _nav_step["launched"]:
+		_nav_step = {}   # not pressed yet: this tick's steering picks the move again
+	elif _clock - _nav_pressed_at > NAV_LAUNCH_S:
+		_nav_miss()      # pressed, but the floor never went away
+		_nav_step = {}
+	_nav_air = false
+
+
+func _nav_miss() -> void:
+	var key := "%d>%d" % [_nav_step["from"], _nav_step["to"]]
+	var n: int = int(_nav_misses[key][0]) + 1 if _nav_misses.has(key) else 1
+	_nav_misses[key] = [n, _clock]
+	_stats["misses"] += 1
+
+
+func _nav_penalty() -> Dictionary:
+	var pen := {}
+	for key in _nav_misses.keys():
+		if _clock - float(_nav_misses[key][1]) > NAV_MISS_FORGET_S:
+			_nav_misses.erase(key)
+		else:
+			pen[key] = NAV_MISS_COST * float(_nav_misses[key][0])
+	return pen
+
+
+# In the air on a route move: head for the landing stretch, judged where we will
+# be when this decision reaches the keys.
+func _air_steer(snap: Dictionary) -> int:
+	var ahead: float = snap["pos"].x + snap["vel"].x * (reaction_delay + 0.1)
+	var target := clampf(ahead, float(_nav_step["lx0"]) + 4.0, float(_nav_step["lx1"]) - 4.0)
+	return 0 if absf(target - ahead) < 6.0 else int(signf(target - ahead))
+
+
+# Walk toward a point. v0.1.5 (the tower): on another surface, follow the route
+# from bot_nav.gd (jump up, drop through a ledge, walk off an end); on the same
+# surface, walk, and hop a small rise or a blocked step. In the air, _decide
+# steers a route move to its landing spot.
 func _steer_to(snap: Dictionary, target: Vector2, ctrl: Dictionary, stop_dist := 8.0) -> void:
 	var pos: Vector2 = snap["pos"]
 	_goal = target
@@ -467,26 +627,28 @@ func _steer_to(snap: Dictionary, target: Vector2, ctrl: Dictionary, stop_dist :=
 	var d := _wrapped_delta(pos, target)
 	ctrl["move"] = 0 if absf(d.x) < stop_dist else int(signf(d.x))
 	if not snap["on_floor"]:
-		return   # air control toward the target; _decide overrides over an empty column
+		return   # air control toward the target; _decide overrides it on a route move
+	if _nav != null:
+		if not _nav_step.is_empty() and _nav_step["launched"]:
+			# the press is on its way (the reaction delay, the drop's duck): hold the take-off
+			ctrl["move"] = 0 if _nav_step["kind"] == "drop" else int(_nav_step["dir"])
+			_steer_moving = true
+			return
+		var here: int = _nav.surface_at(pos)
+		var there: int = _nav.surface_under(target)
+		if here >= 0 and there >= 0 and here != there:
+			var m: Dictionary = _nav.next_move(here, pos.x, there, _nav_penalty())
+			if not m.is_empty():
+				_follow_move(snap, m, here, ctrl)
+				_steer_moving = true
+				return
+	_steer_moving = ctrl["move"] != 0
 	if ctrl["move"] != 0 and absf(snap["vel"].x) < 20.0:
 		_stuck_time += 1.0 / THINK_HZ
 	else:
 		_stuck_time = 0.0
 	var rise := -d.y
-	if rise > JUMP_H - 10.0 and absf(d.x) < 220.0:
-		if snap["dash_ready"] and rise < 2.0 * JUMP_H and absf(d.x) < 90.0:
-			ctrl["jump"] = true
-			ctrl["jump_hold"] = 0.3
-			ctrl["climb"] = true
-		else:
-			var drop_x := _nearest_drop_x(snap)
-			if not is_nan(drop_x):
-				ctrl["move"] = 0 if absf(drop_x - pos.x) < 4.0 else int(signf(drop_x - pos.x))
-				ctrl["drop"] = true
-				return
-			ctrl["jump"] = true
-			ctrl["jump_hold"] = 0.3
-	elif (rise > 24.0 and absf(d.x) < 110.0) or _stuck_time > 0.3:
+	if (rise > 24.0 and rise < BotNav.JUMP_RISE and absf(d.x) < 110.0) or _stuck_time > 0.3:
 		ctrl["jump"] = true
 		ctrl["jump_hold"] = 0.3 if rise > 50.0 else rng.randf_range(0.08, 0.2)
 		_stuck_time = 0.0
@@ -547,24 +709,40 @@ func _evade(snap: Dictionary, ctrl: Dictionary) -> bool:
 #   dash / attack / special: one-frame taps
 # ------------------------------------------------------------------------------
 func _decide(snap: Dictionary) -> Dictionary:
+	_nav_track_floor(snap)
 	_has_goal = false
+	_steer_moving = false
 	var ctrl: Dictionary
-	match persona:
-		"chaser":
-			ctrl = _decide_chaser(snap)
-		"sniper":
-			ctrl = _decide_sniper(snap)
-		"turtle":
-			ctrl = _decide_turtle(snap)
-		"rusher":
-			ctrl = _decide_rusher(snap)
-		"griefer":
-			ctrl = _decide_griefer(snap)
-		_:
-			ctrl = _decide_wanderer(snap)
-	# Airborne over an empty column: this fall ends in the bottom seam and comes
-	# out of the ceiling. Air-steer to the landing platform, whatever was held.
-	if not snap["on_floor"] and _platform_below(snap, snap["pos"].x, snap["pos"].y).is_empty():
+	var hunting := _is_hunting()
+	if goal_override.is_finite():
+		ctrl = {}
+		_steer_to(snap, goal_override, ctrl, 6.0)
+	elif _clock < _detour_until:
+		ctrl = _decide_detour(snap)
+	elif hunting and persona != "rusher":
+		ctrl = _decide_chaser(snap)
+	else:
+		match persona:
+			"chaser":
+				ctrl = _decide_chaser(snap)
+			"sniper":
+				ctrl = _decide_sniper(snap)
+			"turtle":
+				ctrl = _decide_turtle(snap)
+			"rusher":
+				ctrl = _decide_rusher(snap)
+			"griefer":
+				ctrl = _decide_griefer(snap)
+			_:
+				ctrl = _decide_wanderer(snap)
+	_watch_progress(snap)
+	if not snap["on_floor"] and not _nav_step.is_empty():
+		# Airborne on a route move (v0.1.5): steer for its landing stretch, whatever was held.
+		ctrl["move"] = _air_steer(snap)
+		ctrl.erase("jump")
+	elif not snap["on_floor"] and _platform_below(snap, snap["pos"].x, snap["pos"].y).is_empty():
+		# Airborne over an empty column: this fall ends in the bottom seam and comes
+		# out of the ceiling. Air-steer to the landing platform, whatever was held.
 		var goal: Vector2 = _goal if _has_goal else snap["pos"]
 		if not _has_goal:
 			var enemy := _nearest_enemy(snap)
@@ -626,7 +804,7 @@ func _decide_chaser(snap: Dictionary) -> Dictionary:
 	else:
 		ctrl["move"] = 0
 	# target above and close: hop up to it (stomps happen if we land on it)
-	if snap["on_floor"] and d.y < -30.0 and absf(d.x) < 60.0 and not ctrl.has("jump"):
+	if snap["on_floor"] and d.y < -30.0 and d.y > -BotNav.JUMP_RISE and absf(d.x) < 60.0 and not ctrl.has("jump"):
 		ctrl["jump"] = true
 		ctrl["jump_hold"] = 0.3
 	# dash to engage: same height, medium range, dash ready
@@ -768,18 +946,19 @@ func _decide_rusher(snap: Dictionary) -> Dictionary:
 	return ctrl
 
 
-# GRIEFER (druid): deliberate edge cases. Moods rotate every 2-5 s: "wrap" drops
-# through the seam to come out on the highest ground, "seam" hops across the
-# vertical seam from ledge to ledge, "camp" sits on / falls through the powerup,
-# "harass" plays a chaser that dashes INTO projectiles, spams the air shield and
-# toggles bear form whenever it is on the floor.
+# GRIEFER (druid): deliberate edge cases. Moods rotate every 2-5 s: "wrap" heads
+# for the highest ground (the route often runs out of the floor hole and in at
+# the ceiling), "camp" sits on / falls through the powerup, "harass" plays a
+# chaser that dashes INTO projectiles, spams the air shield and toggles bear
+# form whenever it is on the floor. v0.1.5: the "seam" mood is gone; the tower
+# has walls, and that mood pinned the griefer against the left one for hours.
 func _decide_griefer(snap: Dictionary) -> Dictionary:
 	var ctrl := {}
 	var pos: Vector2 = snap["pos"]
 	var enemy := _nearest_enemy(snap)
 	var plats: Array = snap["platforms"]
 	if _clock >= _g_mood_until:
-		var moods := ["wrap", "seam", "harass", "harass"]
+		var moods := ["wrap", "harass", "harass"]
 		if snap["powerup"] != null:
 			moods.append("camp")
 			moods.append("camp")
@@ -791,14 +970,6 @@ func _decide_griefer(snap: Dictionary) -> Dictionary:
 				if r.position.y < top.position.y:
 					top = r
 			_g_goal = Vector2(rng.randf_range(top.position.x + 10.0, top.end.x - 10.0), top.position.y - 14.0)
-		elif _g_mood == "seam" and plats.size() > 0:
-			# the platform across the seam: the outermost one on the far side
-			var going_right := pos.x < ARENA_W * 0.5
-			var far: Rect2 = plats[0]
-			for r: Rect2 in plats:
-				if (going_right and r.position.x < far.position.x) or (not going_right and r.end.x > far.end.x):
-					far = r
-			_g_goal = Vector2(far.position.x + 20.0 if going_right else far.end.x - 20.0, far.position.y - 14.0)
 	if not enemy.is_empty():
 		ctrl["aim"] = enemy["pos"] if _is_melee_class() else _lead_point(snap, enemy)
 	# dash INTO an inbound projectile (dash frames are invulnerable)
@@ -815,16 +986,6 @@ func _decide_griefer(snap: Dictionary) -> Dictionary:
 			_steer_to(snap, _g_goal, ctrl, 10.0)
 			if snap["on_floor"] and absf(_wrapped_delta(pos, _g_goal).y) < 20.0:
 				_g_mood_until = _clock   # arrived: pick the next mood
-		"seam":
-			_steer_to(snap, _g_goal, ctrl, 10.0)
-			var edge := pos.x < 90.0 or pos.x > ARENA_W - 90.0
-			if snap["on_floor"] and edge and snap["dash_ready"]:
-				ctrl["jump"] = true
-				ctrl["jump_hold"] = 0.3
-				ctrl["leap"] = true
-				ctrl["move"] = -1 if pos.x < ARENA_W * 0.5 else 1
-			if absf(_wrapped_delta(pos, _g_goal).x) < 20.0:
-				_g_mood_until = _clock
 		"camp":
 			if snap["powerup"] == null:
 				_g_mood_until = _clock
@@ -853,6 +1014,66 @@ func _decide_griefer(snap: Dictionary) -> Dictionary:
 
 
 # ------------------------------------------------------------------------------
+# STALL GUARDS (v0.1.5): overnight soaks stalled for hours with two fighters
+# that never met (docs/reference/bot-soak-2026-09-08.md)
+# ------------------------------------------------------------------------------
+func _on_player_died(_killer_id, _victim_id, _stock, _weapon) -> void:
+	_last_kill_at = _clock
+
+
+func _on_new_round(_round_num) -> void:
+	_last_kill_at = _clock
+
+
+# No kill anywhere for HUNT_AFTER_S: a sniper keeping its distance, a turtle
+# holding its ground and a griefer in a mood all go and find someone.
+func _is_hunting() -> bool:
+	var hunting := _clock - _last_kill_at > HUNT_AFTER_S
+	if hunting != _hunting:
+		_hunting = hunting
+		if hunting:
+			print("🧭 [BotNav] P%d hunt on: no kill for %.0f s" % [fighter.player_id, _clock - _last_kill_at])
+	return hunting
+
+
+# Steering that wanted to move for STUCK_S without leaving its surface or
+# getting 24 px along it: head for a random surface for DETOUR_S, then try again.
+func _watch_progress(snap: Dictionary) -> void:
+	if not snap["on_floor"] or goal_override.is_finite():
+		return
+	var here: int = _nav.surface_at(snap["pos"]) if _nav != null else -1
+	if not _steer_moving or here != _progress_surface or absf(snap["pos"].x - _progress_x) > 24.0:
+		_progress_surface = here
+		_progress_x = snap["pos"].x
+		_progress_at = _clock
+		return
+	var plats: Array = snap["platforms"]
+	if _clock - _progress_at < STUCK_S or plats.is_empty():
+		return
+	_stats["stucks"] += 1
+	var r: Rect2 = plats[rng.randi() % plats.size()]
+	_detour_goal = Vector2(rng.randf_range(r.position.x + 12.0, maxf(r.end.x - 12.0, r.position.x + 12.0)), r.position.y - 14.0)
+	_detour_until = _clock + DETOUR_S
+	_progress_at = _clock
+	_nav_step = {}
+	var there: int = _nav.surface_under(_goal) if _nav != null else -1
+	print("🧭 [BotNav] P%d stuck %.0f s on %s at (%.0f,%.0f), goal (%.0f,%.0f) on %s: detour to (%.0f,%.0f)" % [
+		fighter.player_id, STUCK_S, _nav.surface_name(here) if _nav != null else "-", snap["pos"].x, snap["pos"].y,
+		_goal.x, _goal.y, _nav.surface_name(there) if _nav != null else "-", _detour_goal.x, _detour_goal.y])
+
+
+func _decide_detour(snap: Dictionary) -> Dictionary:
+	var ctrl := {}
+	_steer_to(snap, _detour_goal, ctrl, 10.0)
+	var enemy := _nearest_enemy(snap)
+	if not enemy.is_empty():
+		ctrl["aim"] = enemy["pos"] if _is_melee_class() else _lead_point(snap, enemy)
+		if snap["attack_ready"] and enemy["dist"] < _attack_range() and not enemy["shielding"]:
+			ctrl["attack"] = true
+	return ctrl
+
+
+# ------------------------------------------------------------------------------
 # ACTUATION: intents become input actions and synthetic mouse motion
 # ------------------------------------------------------------------------------
 func _apply(ctrl: Dictionary) -> void:
@@ -873,22 +1094,20 @@ func _apply(ctrl: Dictionary) -> void:
 		if not _has_aim:
 			_aim_frames = 0
 		_has_aim = true
-	if ctrl.get("jump", false) and not _held.has("jump"):
+	if ctrl.get("drop_through", false) and _drop_state == 0:
+		# down now; the jump follows in _physics_process once the fighter stands steady (4c)
+		_press("down")
+		_drop_state = 1
+		_drop_frames = 0
+		_drop_since = _clock
+		_stats["drops"] += 1
+	elif ctrl.get("jump", false) and not _held.has("jump") and _drop_state == 0:
 		_press("jump")
 		_jump_hold_left = maxf(float(ctrl.get("jump_hold", 0.1)), 2.0 / 60.0)
 		_stats["jumps"] += 1
-		if ctrl.get("climb", false):
-			_climb_dash = true
-			_climb_since = _clock
-			_set_held("up", true)
-		elif ctrl.get("leap", false):
+		if ctrl.get("leap", false):
 			_leap_dash = true
 			_climb_since = _clock
-	if ctrl.get("drop", false) and not _held.has("drop_mark"):
-		_stats["drops"] += 1
-		_held["drop_mark"] = true     # one count per committed drop (cleared on landing below)
-	elif not ctrl.get("drop", false):
-		_held.erase("drop_mark")
 	if ctrl.get("dash", false):
 		_tap("dash")
 		_stats["dashes"] += 1
@@ -913,9 +1132,6 @@ func _press(action: String) -> void:
 
 
 func _release(action: String) -> void:
-	if action == "drop_mark":
-		_held.erase(action)
-		return
 	Input.action_release(prefix + action)
 	_held.erase(action)
 
@@ -936,8 +1152,8 @@ func _release_all() -> void:
 	_held.clear()
 	_tap_release.clear()
 	_jump_hold_left = 0.0
-	_climb_dash = false
 	_leap_dash = false
+	_drop_state = 0
 
 
 # player.gd aims the local fighter at get_global_mouse_position(), which is
@@ -980,11 +1196,13 @@ func _print_status() -> void:
 	var land_avg := 0.0
 	if _stats["land_n"] > 0:
 		land_avg = _stats["land_sum"] / _stats["land_n"]
-	print("🧠 [Bot %s P%d %.0fs] pos=(%.0f,%.0f) decisions=%d moves=%d jumps=%d dashes=%d attacks=%d specials=%d evades=%d | wraps=%d drops=%d seams=%d land_avg=%.2fs max_loop=%d shift=%d | aim err mean %.1f° max %.1f° over %d frames | held=%s queue=%d" % [
+	print("🧠 [Bot %s P%d %.0fs] pos=(%.0f,%.0f) decisions=%d moves=%d jumps=%d dashes=%d attacks=%d specials=%d evades=%d | wraps=%d drops=%d seams=%d land_avg=%.2fs max_loop=%d shift=%d | aim err mean %.1f° max %.1f° over %d frames | held=%s queue=%d | nav surf=%s steps=%d misses=%d stucks=%d hunt=%d" % [
 		persona, fighter.player_id, _clock, fighter.global_position.x, fighter.global_position.y,
 		_stats["decisions"], _stats["moves"], _stats["jumps"], _stats["dashes"], _stats["attacks"], _stats["specials"], _stats["evades"],
 		_stats["wraps"], _stats["drops"], _stats["seams"], land_avg, _stats["max_loop"], _stats["shift_wraps"],
-		mean_err, _stats["aim_err_max"], _stats["aim_err_n"], ",".join(_held.keys()), _queue.size()])
+		mean_err, _stats["aim_err_max"], _stats["aim_err_n"], ",".join(_held.keys()), _queue.size(),
+		_nav.surface_name(_nav.surface_at(fighter.global_position)) if _nav != null else "-",
+		_stats["steps"], _stats["misses"], _stats["stucks"], int(_hunting)])
 	if _stats["aim_err_n"] > 60 and mean_err > 1.0 and not _aim_warned:
 		_aim_warned = true
 		push_warning("[BotBrain] synthetic mouse aim is not reaching player.gd (mean error %.1f°)" % mean_err)
@@ -999,7 +1217,11 @@ func _print_status() -> void:
 # knows how to draw them.
 func _send_status(mean_err: float, land_avg: float) -> void:
 	var state = null
-	if persona == "griefer":
+	if _clock < _detour_until:
+		state = "detour"
+	elif _hunting:
+		state = "hunt"
+	elif persona == "griefer":
 		state = _g_mood        # the griefer already has a mood, so it can show it
 	var goal = null
 	if _has_goal:
@@ -1024,6 +1246,7 @@ func _send_status(mean_err: float, land_avg: float) -> void:
 			"wraps": _stats["wraps"], "drops": _stats["drops"], "seams": _stats["seams"],
 			"land_avg_s": snappedf(land_avg, 0.01), "max_loop": _stats["max_loop"],
 			"shift_wraps": _stats["shift_wraps"],
+			"steps": _stats["steps"], "misses": _stats["misses"], "stucks": _stats["stucks"],
 		},
 		"aim": {
 			"err_mean_deg": snappedf(mean_err, 0.1), "err_max_deg": snappedf(_stats["aim_err_max"], 0.1),

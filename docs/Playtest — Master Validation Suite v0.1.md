@@ -1,7 +1,7 @@
 ---
 tags: [playtest]
-build: v0.1.4 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, sections 6 and 7 on v0.1.4 or later: the v0.1.3 duck flickered)
-backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3), the twin sticks and the duck fix (v0.1.4)
+build: v0.1.5 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, sections 6 and 7 on v0.1.4 or later: the v0.1.3 duck flickered; section 8 on v0.1.5 or later)
+backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3), the twin sticks and the duck fix (v0.1.4), the bot routes and the soak check (v0.1.5)
 result: open (started 2026-09-08)
 ---
 # Playtest — Master Validation Suite v0.1
@@ -14,7 +14,7 @@ result: open (started 2026-09-08)
 
 | Field | Your answer |
 |---|---|
-| Date and time | |
+| Date and time | 2026-09-08 (Tue), human play ended 22:50 CDT |
 | Build shown in the lobby (must be v0.1.1 or later) | |
 | Phones in the game (who is on which) | |
 | Server (the laptop, or the PC's service) | |
@@ -23,9 +23,11 @@ result: open (started 2026-09-08)
 
 | # | Start (HH:MM) | End (HH:MM) | Who, on what | What you noticed |
 |---|---|---|---|---|
-| 1 | | | | |
+| 1 | | 22:50 | the son, one phone, against bots | first human play on v0.1.4; no verdicts yet |
 | 2 | | | | |
 | 3 | | | | |
+
+**Session note (2026-09-08).** The son played v0.1.4 on one phone against bots and stopped by 22:50 CDT. No section verdict is ticked yet: the answers come on 2026-09-09. An overnight bot run started after he stopped, so the rows in `client_stats.jsonl` after 22:50 are bots, not people.
 
 ---
 
@@ -213,4 +215,37 @@ What changed. The phone has a second layout. Tap the small SWAP button under the
 - [ ] **The jump angle is wrong:** misses or double jumps. Next: `JUMP_DEG` (45) and `JUMP_REARM_DEG` (35).
 - [ ] **A circle is wrong:** too small or too big. Next: `MOVE_RADIUS` (80), `AIM_RADIUS` (70).
 - [ ] **The thumbs miss:** write what in the notes. Next: move SPEC or SWAP (`SPECIAL_TWIN`, `SWAP_CENTER`), or a bigger dead zone (`NOISE_RADIUS`).
+Notes:
+
+---
+
+## 8. The bot soak (v0.1.5)
+
+What changed. The bots find their way round the tower now: up by jumping from ledge to ledge or out of the floor hole, down by dropping through a ledge (down first, then jump) or walking off an end. Before, a bot whose target stood straight above or below it froze or jumped on the spot, and a round could run for ten hours. Two safety nets: after 20 s with no kill anywhere every bot goes hunting, and a bot that gets nowhere for 4 s takes a short detour. This section is a long bot run on the laptop with nobody playing. You run the commands and copy the numbers; `tools/soak_report.py` does the counting.
+
+### 8.1 Start it (once)
+- [ ] The laptop shows v0.1.5 in `tbdash`. (yes / no): 
+- [ ] On the laptop: `tbbot clear`, wait 10 s (the server holds a leaving seat 8 s; a bot added sooner is turned away and never asks again), then four bots. Which four (four chasers froze on 2026-09-10; rusher, griefer, turtle, sniper froze on 2026-09-08): 
+- [ ] Start clock (HH:MM): 
+- [ ] `tbdash` shows PLAYING and four bots. (yes / no): 
+
+### 8.2 Check it (after an hour, and the next morning)
+On the PC: `tools/pull_laptop_logs.sh 192.168.4.29`, then `./venv/bin/python tools/soak_report.py --dir playtest_logs/<folder> --from <start HH:MM>`.
+
+| Line in the report | After 1 h | Next morning |
+|---|---|---|
+| window (hours) | | |
+| matches ended (match won) | | |
+| rounds: median / longest (s) | | |
+| rounds over 300 s | | |
+| a round still open, for how long (s) | | |
+| longest gap without a kill (s) | | |
+| stuck lines, all bots | | |
+| errors, all bots | | |
+| the last line (no stall / STALL) | | |
+
+### 8.3 Verdict (section 8)
+- [ ] **Pass:** "no stall" both times, no errors, matches keep ending. The bots can run all night; a soak can go before every build.
+- [ ] **A round ran long:** write the round and its start clock from the report. Next: the stuck lines around that time in `bots/bot<N>.log`, then `tools/nav_probe.gd --only` on that spot.
+- [ ] **A bot stopped:** write which one and when (the errors column, `bots/bot<N>.log`).
 Notes:

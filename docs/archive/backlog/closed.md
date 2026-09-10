@@ -6,6 +6,7 @@ tags: [archive, backlog]
 Appended at close time: the number, the closing version, one line on the fix, the page that holds the story. Numbers are never reused, so patch pages and sheets that name "backlog 15" still resolve here. The open list is in [[PASSDOWN]].
 
 ## Backlog
+30. **`bot_brain.gd` pushed at a wall for ever (a bot held `left` at x 7 for 10 h; every soak stalled)** — closed in **v0.1.5**: routes from `scripts/bot_nav.gd`, the griefer's "seam" mood removed, the detour guard (`STUCK_S` 4 s) and the hunt guard (`HUNT_AFTER_S` 20 s); proof `tools/nav_probe.gd` and the PC soaks — [[v0.1.5 - Bot Routes]], [[bot-soak-2026-09-08]].
 27. **A second death 1.2 to 1.5 s after the first was dropped as a duplicate (dead on its screen, alive on the server, the round ran 13 h)** — closed on **v0.1.1** (server only, 2026-09-08): `serve_game.py` `DEATH_DEDUPE_S` 1.5 -> 0.6, under the 1.2 s respawn; harness scenario `respawn_death` — [[v0.1.1 - Phone Controller]].
 19. **Fill-with-bots button** — closed in **v0.0.40** as a tool, not a server feature: `tools/tbbot.py` (`tbbot add [persona]`, `remove`, `clear`, `list`) starts real headless Godot clients on the server machine, max 4; the deck's `--controls` panel has the buttons — [[v0.0.40 - LAN Server Kit]], [[laptop-server]].
 22. **Hiding on top of the flipped ground** — closed in **v0.0.39** (the ground slabs are anchored and never turn, so the old floor never sits at the top edge) — [[v0.0.39 - Anchored Ground]].
