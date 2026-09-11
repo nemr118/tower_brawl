@@ -245,10 +245,11 @@ On the PC: `tools/pull_laptop_logs.sh 192.168.4.29`, then `./venv/bin/python too
 | the last line (no stall / STALL) | no stall | |
 
 ### 8.3 Verdict (section 8)
-- [ ] **Pass:** "no stall" both times, no errors, matches keep ending. The bots can run all night; a soak can go before every build.
+- [x] **Pass:** "no stall" both times, no errors, matches keep ending. The bots can run all night; a soak can go before every build.
 - [ ] **A round ran long:** write the round and its start clock from the report. Next: the stuck lines around that time in `bots/bot<N>.log`, then `tools/nav_probe.gd --only` on that spot.
 - [ ] **A bot stopped:** write which one and when (the errors column, `bots/bot<N>.log`).
 Notes: 19:17 (1 h), filled by Claude from the PC: no stall, every match ended by a win (7), and `server.log` has no JOIN, LEAVE or ERROR line since 18:16, so no bot left or came back. The report's per-bot `up 0.1 h` and the drop in `steps` are not restarts: those numbers come from the bot's last `🧠 [Bot ...]` line, whose clock starts again at every arena load (each match). The verdict waits for the next-morning reading.
+21:41 (3.42 h), filled by Claude just before the v0.1.7 deploy ended the soak (the deploy was moved up, so there is no morning column): no stall, 23 matches ended by a win, 272 rounds (median 34 s, longest 110 s, none over 300 s), the longest gap without a kill 59 s, 0 bot errors; `server.log` since 18:16 has 0 ERROR and no LEAVE. Pass, on 3.42 h. Details: [[v0.1.7 - Bug Sweep]].
 
 ---
 

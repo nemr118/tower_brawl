@@ -38,7 +38,7 @@ Kernel log noise that is harmless: `b43` probes the wifi chip and fails before `
 - **The game's own logs roll over (v0.1.7, backlog 4):** `serve_game.py` itself (`RotatingFileHandler`, `LOG_MAX_BYTES` 50 MB) moves `server.log` and `debug.log` to `.1` and keeps that one old file, on the laptop and the PC alike. `debug.log` grows about 1 MB an hour with bots in the game. The old `/etc/logrotate.d/towerbrawl` (5 kept, compressed) never rotated before 2026-09-10, because both files were under 50 MB at its daily run; `tools/deploy_laptop.sh` deletes it from v0.1.7 on.
 - **Wifi power saving off** (`/etc/NetworkManager/conf.d/wifi-powersave.conf`, `wifi.powersave = 2`), for the night the cable is not an option.
 - **Diagnostics installed:** `smartmontools`, `ethtool`, `dmidecode`. `sudo smartctl -H /dev/sdb` for the SSD, `sudo ethtool enp4s0` for the link.
-- **Old builds are removed** from `build/web` after a deploy; only the current `index_v*` pair stays.
+- **Old builds are removed by hand** from `build/web` after a deploy (`tools/deploy_laptop.sh` does not do it; v0.1.0 to v0.1.5 had piled up until the v0.1.7 deploy); only the current `index_v*` pair stays. `cert.pem` and `key.pem` are not in git since v0.1.7: the deploy copies the PC's pair.
 - **Left alone on purpose:** the CPU governor (the relay is idle most of the time; the 50 ms bundle window dwarfs any ramp-up), `vm.swappiness` (memory is never tight), the HDD (nothing uses it yet), the firewall (none; a home LAN), and `PasswordAuthentication yes` in sshd, which is why the temporary password must change before the laptop sits on someone else's network.
 
 ## At a new house

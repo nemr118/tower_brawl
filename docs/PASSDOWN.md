@@ -6,8 +6,8 @@ tags: [handoff]
 Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the vault. Kickoff: `CLAUDE.md`, this file, the newest `Patch Notes/` page, [[Commands]]. History: [[Changelog]]. Deep dives: `reference/`.
 
 ## Now (2026-09-10)
-- **v0.1.7 "Bug Sweep" built, not committed**, harness 25/25 with --restart-each, no Minor. The PC runs it with a new TLS pair. The laptop keeps v0.1.5 ([[laptop-server]]) for the soak (4 chasers since 18:16; at 1 h no stall). Last tag: `v0.1.0` (v0.1.1 to v0.1.7 untagged).
-- **Waiting on a human:** [[Playtest v0.1.7]]: the soak's morning reading first, then the laptop deploy (the new pair, its logrotate file goes), then the yes/no lines and the verdict.
+- **v0.1.7 "Bug Sweep" committed**, harness 25/25 with --restart-each, no Minor. The PC and the laptop ([[laptop-server]]) both run it, with the new TLS pair. The laptop soak was read at 3.42 h, just before that deploy: no stall. No bots run on the laptop. Last tag: `v0.1.0` (v0.1.1 to v0.1.7 untagged).
+- **Waiting on a human:** [[Playtest v0.1.7]]: each phone accepts the new certificate once, then the yes/no lines and the verdict.
 - **Next:** the decisions below. Still open: a focused read of `ws_client_thread` and its locks. Old master sheet: `archive/playtests/`.
 - **Ideas:** stats views, a replay skip key, sound, a sim server. [[PASSDOWN-2026-09-05]].
 - **v0.1.7 "Bug Sweep":** down + jump drops within `LEDGE_GRACE_S` (31); `--autojoin` asks again on `server_full` (32); ALL SEATS TAKEN on both JOIN buttons, and the arena finds `HUD/JoinBtn` again (33); new TLS pair, untracked (34); logs keep one `.1` (4); one `DEFAULT_CLASS` (5); the jump trap skips an eaten jump (20). [[v0.1.7 - Bug Sweep]].
