@@ -1,7 +1,7 @@
 ---
 tags: [playtest]
-build: v0.1.5 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, sections 6 and 7 on v0.1.4 or later: the v0.1.3 duck flickered; section 8 on v0.1.5 or later)
-backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3), the twin sticks and the duck fix (v0.1.4), the bot routes and the soak check (v0.1.5)
+build: v0.1.5 (sections 1 to 4 on v0.1.1 or later, section 5 on v0.1.2 or later, sections 6 and 7 on v0.1.4 or later: the v0.1.3 duck flickered; section 8 on v0.1.5 or later; section 9 on v0.1.6 or later)
+backlog: 25 (the speed burst), the kill cam circle (fixed in v0.1.1), the phone controller revamp, 27 (the respawn death, server fix), cut 1 (the first replay hitch and the lobby frames, v0.1.2), the tower arena and the pacing (v0.1.3), the twin sticks and the duck fix (v0.1.4), the bot routes and the soak check (v0.1.5), the review fixes (v0.1.6)
 result: open (started 2026-09-08)
 ---
 # Playtest — Master Validation Suite v0.1
@@ -249,3 +249,20 @@ On the PC: `tools/pull_laptop_logs.sh 192.168.4.29`, then `./venv/bin/python too
 - [ ] **A round ran long:** write the round and its start clock from the report. Next: the stuck lines around that time in `bots/bot<N>.log`, then `tools/nav_probe.gd --only` on that spot.
 - [ ] **A bot stopped:** write which one and when (the errors column, `bots/bot<N>.log`).
 Notes: 19:17 (1 h), filled by Claude from the PC: no stall, every match ended by a win (7), and `server.log` has no JOIN, LEAVE or ERROR line since 18:16, so no bot left or came back. The report's per-bot `up 0.1 h` and the drop in `steps` are not restarts: those numbers come from the bot's last `🧠 [Bot ...]` line, whose clock starts again at every arena load (each match). The verdict waits for the next-morning reading.
+
+---
+
+## 9. Review fixes (v0.1.6)
+
+What changed. A code review found three real bugs. Two are on the server and were checked on the PC: a spectator's stats card was thrown away, and a seat taken back by the test harness got a broken address. The third is on every phone: a name with an apostrophe (O'Brien) was never saved, so it was gone after a reload. v0.1.6 saves it. A headless Chrome on the PC already passed this check; this section is the same check on the real phones.
+
+- [ ] First take the section 8 morning reading. Then deploy v0.1.6 to the laptop from the PC: `TB_SUDO_PASS=... tools/deploy_laptop.sh 192.168.4.29` (never before the reading: the deploy restarts the server and ends the soak). The laptop shows v0.1.6 in `tbdash`. (yes / no): 
+- [ ] On each phone, type a name with an apostrophe (for example O'Brien) and join a match. Reload the page. Is the name still in the name box? S25 Ultra (yes / no):  · Pixel (yes / no): 
+- [ ] Open the game on one more device and do not press JOIN (it stays a spectator) for one minute. Clock time (HH:MM): 
+- [ ] Afterwards, from the PC: `tools/pull_laptop_logs.sh 192.168.4.29`, then `grep -c '"name":"spectator"' playtest_logs/<folder>/client_stats.jsonl`. The number (0 means the spectator's card is still lost): 
+
+### 9.1 Verdict (section 9)
+- [ ] **Pass:** the apostrophe name survives a reload on both phones, and the spectator count is over 0. Close it.
+- [ ] **The name is lost:** write the phone and the exact name. Next: `_save_player_name` in `scripts/global.gd` and the page's console.
+- [ ] **No spectator card:** write the clock time. Next: the `client_stats` branch in `serve_game.py` (it must sit above `if assigned_id is None`).
+Notes:

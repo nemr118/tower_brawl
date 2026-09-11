@@ -605,7 +605,8 @@ func _on_harness_status(info: Dictionary):
 	if j_btn:
 		var locked := bool(info.get("active", false))
 		j_btn.visible = Global.my_player_id == 0 and not locked
-		if not locked and j_btn.disabled and j_btn.text != "RELOAD THE PAGE TO JOIN":
+		# v0.1.6: not while "QUEUED FOR LOBBY..." waits for its answer (a second press sent a second request_join).
+		if not locked and j_btn.disabled and j_btn.text != "RELOAD THE PAGE TO JOIN" and j_btn.text != "QUEUED FOR LOBBY...":
 			j_btn.text = "JOIN NEXT MATCH"
 			j_btn.disabled = false
 

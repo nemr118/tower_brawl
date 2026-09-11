@@ -18,7 +18,7 @@ var touch_aim: Vector2 = Vector2.ZERO
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.1.5"
+const GAME_VERSION: String = "v0.1.6"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -902,17 +902,6 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 
 	elif type == "player_joined":
 		var p_id = int(data.get("id", 1))
-		
-		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if my_player_id >= 2:   # id 0 = still a spectator: no p0_* actions exist
-			var prefix1 = "p1_"
-			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
-				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
-				var my_action = "p" + str(my_player_id) + "_" + action_suffix
-				for ev in events1:
-					if ev is InputEventKey or ev is InputEventMouseButton:
-						InputMap.action_add_event(my_action, ev)
-
 		active_players.clear()
 		for x in data.get("active_players", []):
 			active_players.append(int(x))
@@ -922,17 +911,6 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 		
 	elif type == "player_left":
 		var p_id = int(data.get("id", 1))
-		
-		# Transfer PC Keyboard and Mouse binds to our assigned slot if we aren't P1
-		if my_player_id >= 2:   # id 0 = still a spectator: no p0_* actions exist
-			var prefix1 = "p1_"
-			for action_suffix in ["left", "right", "up", "down", "jump", "dash", "attack", "special"]:
-				var events1 = InputMap.action_get_events(prefix1 + action_suffix)
-				var my_action = "p" + str(my_player_id) + "_" + action_suffix
-				for ev in events1:
-					if ev is InputEventKey or ev is InputEventMouseButton:
-						InputMap.action_add_event(my_action, ev)
-
 		active_players.clear()
 		for x in data.get("active_players", []):
 			active_players.append(int(x))
@@ -1013,7 +991,8 @@ func reset_scores():
 func _save_player_name(n: String):
 	my_player_name = n
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval("(function(){ try { localStorage.setItem('towerbrawl_name', '" + n.replace("'", "\'") + "'); } catch(e) {} })()", true)
+		# v0.1.6: JSON.stringify gives a safe JS string (a ' or a \ in the name broke the old one, so it was never saved).
+		JavaScriptBridge.eval("(function(){ try { localStorage.setItem('towerbrawl_name', " + JSON.stringify(n) + "); } catch(e) {} })()", true)
 
 func _load_saved_player_name() -> String:
 	if OS.has_feature("web"):

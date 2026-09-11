@@ -144,7 +144,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.1.5"
+GAME_VERSION = "v0.1.6"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)
@@ -648,7 +648,7 @@ def _demote_humans():
                 continue        # the seat changed hands while we looked
             demoted_socks.add(id(sock))
         _release_seat(sock, entry["addr"], entry["label"], pid,
-                      f"was moved to spectator by the harness gate")
+                      f"was moved to spectator by the harness gate", ip=entry.get("ip"))
         ws_send(sock, json.dumps({"type": "join_locked", "demoted": True, **harness_gate}))
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1033,7 +1033,7 @@ def broadcast(msg, exclude=None, msg_type=None):
 def _present_players():
     return [i + 1 for i in range(4) if player_slots[i]]
 
-def _release_seat(sock, addr, label, old_id, why):
+def _release_seat(sock, addr, label, old_id, why, ip=None):
     """Give a seat back and make its socket a plain spectator again.
 
     Used by leave_slot (the player pressed SPECTATE or LEAVE MATCH) and by the
@@ -1053,7 +1053,8 @@ def _release_seat(sock, addr, label, old_id, why):
             _remove_player(old_id)
         player_bots.pop(old_id, None)
         player_tapes.pop(old_id, None)
-        spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": _ip(addr)})  # pure spectator again
+        # ip: the harness gate passes the seat's stored ip, because its addr is text, not the tuple (v0.1.6)
+        spectator_sockets.append({"sock": sock, "addr": str(addr), "label": label, "ip": ip or _ip(addr)})  # pure spectator again
         logger.info(f"[LEAVE] P{old_id} {why}")
         _stats_log({"kind": "leave", "seat": old_id, "why": why})
         broadcast(json.dumps({
@@ -1524,8 +1525,29 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     broadcast(json.dumps({"type": "name_update", "player_names": names}))
                     continue
 
+                if mtype == "client_stats":
+                    # v0.0.37: the client's NetStats card. Kept for status.json and the
+                    # jsonl only, never sent to the players. v0.1.6: above the spectator
+                    # guard, so a spectator's card counts too (spectator_stats).
+                    if len(msg) > CLIENT_STATS_MAX_BYTES:
+                        logger.debug(f"[NET] {_who(assigned_id)} client_stats too big ({len(msg)} B), dropped")
+                        continue
+                    card = {k: v for k, v in data.items() if k not in ("type", "sender")}
+                    card["seat"] = assigned_id or 0
+                    card["addr"] = _ip(addr)
+                    card["link"] = label
+                    with lobby_lock:
+                        card["name"] = player_names.get(assigned_id, "?") if assigned_id else "spectator"
+                        card["state"] = global_match_state
+                        card["round"] = global_current_round if global_match_state == 'PLAYING' else 0
+                    card["updated_at"] = time.time()
+                    with client_stats_lock:
+                        client_stats[id(sock)] = card
+                    _stats_log(dict(card, kind="card"))
+                    continue
+
                 if assigned_id is None:
-                    continue  # spectators may only ping / request_join / set_name
+                    continue  # spectators may only ping / request_join / set_name / client_stats
 
                 if mtype == "bot_status":
                     # v0.0.22: a bot brain's numbers (persona, actions, aim, and empty slots
@@ -1542,26 +1564,6 @@ def ws_client_thread(sock, addr, label, skip_handshake=False):
                     card["updated_at"] = time.time()
                     with lobby_lock:
                         player_bots[assigned_id] = card
-                    continue
-
-                if mtype == "client_stats":
-                    # v0.0.37: the client's NetStats card. Kept for status.json and the
-                    # jsonl only, never sent to the players.
-                    if len(msg) > CLIENT_STATS_MAX_BYTES:
-                        logger.debug(f"[NET] {_who(assigned_id)} client_stats too big ({len(msg)} B), dropped")
-                        continue
-                    card = {k: v for k, v in data.items() if k not in ("type", "sender")}
-                    card["seat"] = assigned_id or 0
-                    card["addr"] = _ip(addr)
-                    card["link"] = label
-                    with lobby_lock:
-                        card["name"] = player_names.get(assigned_id, "?") if assigned_id else "spectator"
-                        card["state"] = global_match_state
-                        card["round"] = global_current_round if global_match_state == 'PLAYING' else 0
-                    card["updated_at"] = time.time()
-                    with client_stats_lock:
-                        client_stats[id(sock)] = card
-                    _stats_log(dict(card, kind="card"))
                     continue
 
                 if mtype == "history_status":

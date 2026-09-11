@@ -1,5 +1,7 @@
 extends Area2D
 
+const PlayerScript = preload("res://scripts/player.gd")   # arena_w / arena_h for the seams
+
 @export var speed: float = 600.0   # was 720 (v0.1.3 pacing)
 var velocity: Vector2 = Vector2.ZERO
 var shooter_id: int = 1
@@ -24,8 +26,8 @@ func _physics_process(delta: float):
 	
 	# The tower's seams (v0.1.3): the walls stop a projectile everywhere but the
 	# passages and the holes, so this only fires there.
-	var aw: float = preload("res://scripts/player.gd").arena_w
-	var ah: float = preload("res://scripts/player.gd").arena_h
+	var aw: float = PlayerScript.arena_w
+	var ah: float = PlayerScript.arena_h
 	if global_position.x < -10.0:
 		global_position.x = aw + 10.0
 	elif global_position.x > aw + 10.0:

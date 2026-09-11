@@ -6,12 +6,12 @@ tags: [handoff]
 Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the vault. Kickoff: `CLAUDE.md`, this file, the newest `Patch Notes/` page, [[Commands]]. History: [[Changelog]]. Deep dives: `reference/`.
 
 ## Now (2026-09-10)
-- **v0.1.5 "Bot Routes" committed and pushed** (`663903c`), harness 25/25 with --restart-each, no Minor, deployed on the laptop ([[laptop-server]]). Last tag: `v0.1.0` (v0.1.1 to v0.1.5 untagged).
-- **Waiting on a human:** [[Playtest — Master Validation Suite v0.1]] §1 to §7 (§6 the tower, §7 twin sticks; played 2026-09-08, no verdict). **§8, the laptop soak (4 chasers since 18:16):** at 1 h no stall (81 rounds, longest 82 s, 0 errors); the morning column and the verdict are left.
-- **Next:** the §8 morning check; the user's whole-code ultrareview (`review/core` in `~/Work/tower_brawl_review`: `/code-review ultra` there), its findings as a phase; the §6 and §7 verdicts; or tower build 2 (themes, moving platforms, traps).
+- **v0.1.6 "Review Fixes" committed, not pushed**, harness 25/25 with --restart-each, no Minor. v0.1.5 (pushed, `663903c`) stays on the laptop ([[laptop-server]]) until the §8 morning reading. Last tag: `v0.1.0` (v0.1.1 to v0.1.6 untagged).
+- **Waiting on a human:** [[Playtest — Master Validation Suite v0.1]] §1 to §7 (§6 the tower, §7 twin sticks; played 2026-09-08, no verdict). **§8, the laptop soak (4 chasers since 18:16):** at 1 h no stall (81 rounds, longest 82 s, 0 errors); the morning column and the verdict are left. **§9** (apostrophe names) after that deploy.
+- **Next:** backlog 31 to 33; the §8 morning check, then the deploy and §9; a focused read of `ws_client_thread` and its locks; the §6 and §7 verdicts; or tower build 2 (themes, moving platforms, traps).
 - **Ideas:** stats views, a replay skip key, sound, a sim server. [[PASSDOWN-2026-09-05]].
-- **v0.1.5 "Bot Routes":** every soak stalled (a bot whose target stood above or below it froze, [[bot-soak-2026-09-08]]). `bot_nav.gd` (new) makes the layout 25 places to stand and the jumps, drops and walk-offs between them; `bot_brain.gd` follows the route, drops with down first (backlog 31), and has two stall guards (hunt after 20 s with no kill, a detour after 4 s stuck). Tools: `nav_probe.gd`, `soak_report.py`. [[v0.1.5 - Bot Routes]].
-- **v0.1.4 "Twin Sticks":** a second phone layout in `touch_controls.gd` (`arc` / `twin`, saved as `towerbrawl_layout`, a SWAP button): the left stick walks, jumps and ducks, and past its rim dashes or drops through; the right stick aims, and past its rim shoots. The duck flicker fix: `DUCK_GRACE_S` 0.1 in `player.gd`. Tools: `webshot.py`, `duck_probe.gd`. [[v0.1.4 - Twin Sticks]].
+- **v0.1.6 "Review Fixes":** the first code review (ultrareview, 7 473 lines, 7 findings checked by hand). Fixed in `serve_game.py`: spectator `client_stats` cards were dropped, the gate's demoted ip was `"(:'"`; in GDScript: names with `'` never saved (`JSON.stringify`), the queued JOIN reset. [[v0.1.6 - Review Fixes]].
+- **v0.1.5 "Bot Routes":** every soak stalled (a bot whose target stood above or below it froze, [[bot-soak-2026-09-08]]). `bot_nav.gd` makes the tower 25 places to stand and the moves between them; `bot_brain.gd` follows the route and has two stall guards (hunt: 20 s with no kill; detour: 4 s stuck). Tools: `nav_probe.gd`, `soak_report.py`. [[v0.1.5 - Bot Routes]].
 
 ## Open backlog
 `N. **Title** — state — next action — detail`. Numbers are never reused; closed: [[closed]].
@@ -27,12 +27,13 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 18. **Archer kit revisit** — design call — slow regen, steal arrows, arrows in the join snapshot — [[v0.0.30 - Ranger Rejoin Quiver]].
 20. **The W jump lock** — 6 `🪤 [JumpTrap]` lines caught, all on ledge rows, contacts 1 to 3 — read them, then fix — [[bot-soak-2026-09-08]].
 21. **Slope traction and air shield feel** — design call — fighters slide off tilted platforms — [[Playtest v0.0.17]].
-25. **A fighter "went into super speed"** — seen once at a round start (phone, 2026-09-07); a different one at the left wall (341 px/s, vel 0) — sheet §3 wants a clock time — [[bot-soak-2026-09-08]].
-26. **A death in the tail second after `round_end` still counts a stock** — open, low — 18 seen on v0.1.0/v0.1.1, none on v0.1.4 — [[bot-soak-2026-09-08]].
-28. **A round has no clock: two fighters that never meet play for ever** — design call; bots no longer stall (v0.1.5 routes and hunt), people still can — a round timer, a shrinking arena, or pull the fighters together — [[bot-soak-2026-09-08]].
+25. **A fighter "went into super speed"** — seen twice (a phone, 2026-09-07; 341 px/s at the left wall) — sheet §3 wants a clock time — [[bot-soak-2026-09-08]].
+26. **A death in the tail second after `round_end` still counts a stock** — open, low — none since v0.1.4 — [[bot-soak-2026-09-08]].
+28. **A round has no clock: two fighters that never meet play for ever** — design call; bots no longer stall (v0.1.5), people still can — a round timer, a shrinking arena, or pull the fighters together — [[bot-soak-2026-09-08]].
 29. **More than four players** — idea (user, 2026-09-08) — `range(1, 5)` in `serve_game.py`, four HUD panels, four spawn ledges — [[arena-tower]].
 31. **Down and jump in the same frame jump instead of dropping through** — open — S + W together, a twin-stick flick past the down rim; fix in `player.gd` (the drop check) or `touch_controls.gd` (down first) — [[v0.1.5 - Bot Routes]].
 32. **A bot added right after `tbbot clear` never gets a seat** — open — a leaving seat is held 8 s and `--autojoin` never asks again; retry, or `tbbot add` waits — [[v0.1.5 - Bot Routes]].
+33. **The arena's JOIN button sticks on a full server** — open — no `server_full` handler in `arena.gd`; reset it like `join_locked` — [[v0.1.6 - Review Fixes]].
 
 ## How to work here
 - **Rules:** `CLAUDE.md` (rule 7 plain words; rule 8 trim; scene edits allowed since v0.1.3, load check after; GDScript ships via `./bump_build.sh`). One approved phase at a time; report bugs outside it, don't fix them. Every human-validation ask becomes a section with its own verdict in [[Playtest — Master Validation Suite v0.1]].
