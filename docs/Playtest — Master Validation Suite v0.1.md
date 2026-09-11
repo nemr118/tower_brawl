@@ -224,28 +224,28 @@ Notes:
 What changed. The bots find their way round the tower now: up by jumping from ledge to ledge or out of the floor hole, down by dropping through a ledge (down first, then jump) or walking off an end. Before, a bot whose target stood straight above or below it froze or jumped on the spot, and a round could run for ten hours. Two safety nets: after 20 s with no kill anywhere every bot goes hunting, and a bot that gets nowhere for 4 s takes a short detour. This section is a long bot run on the laptop with nobody playing. You run the commands and copy the numbers; `tools/soak_report.py` does the counting.
 
 ### 8.1 Start it (once)
-- [ ] The laptop shows v0.1.5 in `tbdash`. (yes / no): 
-- [ ] On the laptop: `tbbot clear`, wait 10 s (the server holds a leaving seat 8 s; a bot added sooner is turned away and never asks again), then four bots. Which four (four chasers froze on 2026-09-10; rusher, griefer, turtle, sniper froze on 2026-09-08): 
-- [ ] Start clock (HH:MM): 
-- [ ] `tbdash` shows PLAYING and four bots. (yes / no): 
+- [x] The laptop shows v0.1.5 in `tbdash`. (yes / no): yes (read from the laptop's `status.json` on the PC at 18:48, `version` v0.1.5)
+- [x] On the laptop: `tbbot clear`, wait 10 s (the server holds a leaving seat 8 s; a bot added sooner is turned away and never asks again), then four bots. Which four (four chasers froze on 2026-09-10; rusher, griefer, turtle, sniper froze on 2026-09-08): four chasers (started from the PC by Claude)
+- [x] Start clock (HH:MM): 18:16 (the soak's match 46 started 18:16:36)
+- [x] `tbdash` shows PLAYING and four bots. (yes / no): yes (`status.json` at 18:48: PLAYING, bots 4, spectators 0)
 
 ### 8.2 Check it (after an hour, and the next morning)
 On the PC: `tools/pull_laptop_logs.sh 192.168.4.29`, then `./venv/bin/python tools/soak_report.py --dir playtest_logs/<folder> --from <start HH:MM>`.
 
 | Line in the report | After 1 h | Next morning |
 |---|---|---|
-| window (hours) | | |
-| matches ended (match won) | | |
-| rounds: median / longest (s) | | |
-| rounds over 300 s | | |
-| a round still open, for how long (s) | | |
-| longest gap without a kill (s) | | |
-| stuck lines, all bots | | |
-| errors, all bots | | |
-| the last line (no stall / STALL) | | |
+| window (hours) | 1.02 (18:16 to 19:17) | |
+| matches ended (match won) | 7 (7 match won) | |
+| rounds: median / longest (s) | 35 / 82 (81 rounds; the longest started 18:55:49) | |
+| rounds over 300 s | 0 | |
+| a round still open, for how long (s) | round 9, 0 (it had just started) | |
+| longest gap without a kill (s) | 43 (864 kills, 14.2 a minute, no gap over 60 s) | |
+| stuck lines, all bots | 16 (6 + 2 + 4 + 4) | |
+| errors, all bots | 0 | |
+| the last line (no stall / STALL) | no stall | |
 
 ### 8.3 Verdict (section 8)
 - [ ] **Pass:** "no stall" both times, no errors, matches keep ending. The bots can run all night; a soak can go before every build.
 - [ ] **A round ran long:** write the round and its start clock from the report. Next: the stuck lines around that time in `bots/bot<N>.log`, then `tools/nav_probe.gd --only` on that spot.
 - [ ] **A bot stopped:** write which one and when (the errors column, `bots/bot<N>.log`).
-Notes:
+Notes: 19:17 (1 h), filled by Claude from the PC: no stall, every match ended by a win (7), and `server.log` has no JOIN, LEAVE or ERROR line since 18:16, so no bot left or came back. The report's per-bot `up 0.1 h` and the drop in `steps` are not restarts: those numbers come from the bot's last `🧠 [Bot ...]` line, whose clock starts again at every arena load (each match). The verdict waits for the next-morning reading.
