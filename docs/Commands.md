@@ -25,7 +25,6 @@ ssh nemr@<laptop ip>                              # find it: ip neigh | grep -i 
 ./bump_build.sh none                    # re-export the current version, no cache bust
 godot --headless --path . --script tools/check_scripts.gd -- --no-net   # the check: scripts compile, scenes load (run after a .tscn edit)
 ```
-`GAME_VERSION`: `scripts/global.gd`, mirrored into `serve_game.py`.
 
 ## The harness (`tools/chaos_bots.py`)
 ```bash
@@ -45,8 +44,9 @@ tools/webbot.sh --ai chaser --minutes 5   # a real WEB client (Chromium headless
 Personas: `wanderer`, `chaser`, `sniper`, `turtle`, `rusher`, `griefer`.
 ```bash
 ./venv/bin/python tools/webshot.py --seq sticks --layout twin --out /tmp/shot   # web screenshots over CDP (idle|sticks|moves|duck|keys)
-godot --headless --path . --script tools/duck_probe.gd -- --no-net   # the duck must hold 40 frames on a floor
-godot --headless --path . --fixed-fps 60 --script tools/nav_probe.gd -- --no-net   # bot routes: N/N trips; --only=N; --drop-test
+godot --headless --path . --script tools/duck_probe.gd -- --no-net   # the duck holds 40 frames
+godot --headless --path . --fixed-fps 60 --script tools/nav_probe.gd -- --no-net   # bot routes N/N; --only=N; --drop-test (controls)
+godot --headless --path . --script tools/join_full_probe.gd -- --no-net   # JOIN on a full server; --live --server=ws://127.0.0.1:8081
 ./venv/bin/python tools/soak_report.py --dir playtest_logs/<f> --from 23:08   # a bot soak; STALL = a round over 300 s
 ```
 
@@ -63,7 +63,7 @@ tbdash                                            # = tools/watch_server.py (a: 
 ./venv/bin/python tools/stats_table.py --list     # the matches in client_stats.jsonl
 ./venv/bin/python tools/stats_table.py --match 3  # one row per device; --by-round --devices
 ./venv/bin/python tools/stats_table.py --summary --last 3        # seats, classes, kills, K/D, weapons, devices; --events
-./venv/bin/python tools/stats_table.py --from 20:41 --to 20:52   # a clock window; --file playtest_logs/<f>/client_stats.jsonl
+./venv/bin/python tools/stats_table.py --from 20:41 --to 20:52   # a clock window; --file <pulled jsonl>
 grep "\[GATE\]\|\[TAPE\]\|\[NET\]" server.log | tail   # tags: JOIN LEAVE CONN NAME LOCK MATCH ROUND KILL NET STATS GATE TAPE
 ```
-`server.log` never rotates on the PC (the laptop's does). `client_stats.jsonl` rotates at 10 MB. Keys: [[deck]].
+`server.log`, `debug.log`: `.1` at 50 MB; `client_stats.jsonl` at 10 MB. Keys: [[deck]].

@@ -229,6 +229,8 @@ const NET_SIGNAL_HANDLERS = {
 	"net_player_joined": "_on_net_player_joined",
 	"net_harness_status": "_on_harness_status",
 	"net_join_locked": "_on_join_locked",
+	"net_server_full": "_on_server_full",
+	"net_disconnected": "_on_net_disconnected",
 }
 
 const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
@@ -290,7 +292,7 @@ func _ready():
 	join_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	join_btn.connect("pressed", Callable(self, "_on_arena_join_pressed"))
 	join_btn.z_index = 100
-	$HUD.add_child(join_btn)   # v0.1.3: on the HUD layer
+	$HUD.add_child(join_btn)   # v0.1.3: on the HUD layer, so the handlers look for "HUD/JoinBtn" (v0.1.7: they looked at the root and found nothing)
 	
 	if Global.my_player_id > 0 or bool(Global.harness_info.get("active", false)):
 		join_btn.visible = false
@@ -601,18 +603,18 @@ func _on_return_to_lobby():
 func _on_harness_status(info: Dictionary):
 	# v0.0.23: the gate closed or opened. A spectator's JOIN NEXT MATCH button
 	# hides while the tests run and comes back, ready to press, when they end.
-	var j_btn = get_node_or_null("JoinBtn")
+	var j_btn = get_node_or_null("HUD/JoinBtn")
 	if j_btn:
 		var locked := bool(info.get("active", false))
 		j_btn.visible = Global.my_player_id == 0 and not locked
 		# v0.1.6: not while "QUEUED FOR LOBBY..." waits for its answer (a second press sent a second request_join).
-		if not locked and j_btn.disabled and j_btn.text != "RELOAD THE PAGE TO JOIN" and j_btn.text != "QUEUED FOR LOBBY...":
+		if not locked and j_btn.disabled and not j_btn.text in ["RELOAD THE PAGE TO JOIN", "QUEUED FOR LOBBY...", "ALL SEATS TAKEN"]:
 			j_btn.text = "JOIN NEXT MATCH"
 			j_btn.disabled = false
 
 func _on_join_locked(demoted: bool, old_id: int):
 	# The server said no to JOIN NEXT MATCH, or took our seat back for the tests.
-	var j_btn = get_node_or_null("JoinBtn")
+	var j_btn = get_node_or_null("HUD/JoinBtn")
 	if j_btn:
 		j_btn.text = "JOIN NEXT MATCH"
 		j_btn.disabled = false
@@ -631,11 +633,33 @@ func _on_join_locked(demoted: bool, old_id: int):
 			child.visible = false
 	_show_banner("THE TESTS TOOK YOUR SEAT. WATCH UNTIL THEY FINISH.", 4.0)
 
+func _on_server_full():
+	# v0.1.7 (backlog 33): our JOIN NEXT MATCH found all 4 seats taken. Say so for
+	# 2 s, then give the button back. Not on an auto-rejoin (the button never waited).
+	var j_btn = get_node_or_null("HUD/JoinBtn")
+	if j_btn and j_btn.text == "QUEUED FOR LOBBY...":
+		j_btn.text = "ALL SEATS TAKEN"
+		j_btn.disabled = true
+		get_tree().create_timer(2.0).timeout.connect(_join_btn_back)
+
+func _join_btn_back():
+	var j_btn = get_node_or_null("HUD/JoinBtn")
+	if j_btn and j_btn.text == "ALL SEATS TAKEN":
+		j_btn.text = "JOIN NEXT MATCH"
+		j_btn.disabled = false
+
+func _on_net_disconnected():
+	# v0.1.7: the socket closed while JOIN NEXT MATCH waited; that answer is not coming.
+	var j_btn = get_node_or_null("HUD/JoinBtn")
+	if j_btn and j_btn.text == "QUEUED FOR LOBBY...":
+		j_btn.text = "JOIN NEXT MATCH"
+		j_btn.disabled = false
+
 func _on_net_version_error(server_version: String):
 	# The server refused our JOIN NEXT MATCH: the browser is running a cached build.
 	_show_banner("UPDATE REQUIRED: this build is " + Global.GAME_VERSION + ", the server runs "
 		+ server_version + ".\nReload the page to get the new version.", 999.0)
-	var j_btn = get_node_or_null("JoinBtn")
+	var j_btn = get_node_or_null("HUD/JoinBtn")
 	if j_btn:
 		j_btn.text = "RELOAD THE PAGE TO JOIN"
 		j_btn.disabled = true
@@ -1012,8 +1036,10 @@ func _finish_spin_now() -> void:
 	_set_platforms_solid(true)
 
 func _on_arena_join_pressed():
+	if not Global.ws_connected:
+		return   # v0.1.7: no socket, so no request goes out; the button would wait for ever
 	Global.request_join(Global._load_saved_player_id())
-	var j_btn = get_node_or_null("JoinBtn")
+	var j_btn = get_node_or_null("HUD/JoinBtn")
 	if j_btn:
 		j_btn.text = "QUEUED FOR LOBBY..."
 		j_btn.disabled = true

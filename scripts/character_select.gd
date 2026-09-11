@@ -77,6 +77,7 @@ const NET_SIGNAL_HANDLERS = {
 	"net_version_error": "_on_net_version_error",
 	"net_harness_status": "_on_harness_status",
 	"net_join_locked": "_on_join_locked",
+	"net_server_full": "_on_server_full",
 }
 
 const HarnessTickerScript = preload("res://scripts/harness_ticker.gd")
@@ -246,6 +247,21 @@ func _ready():
 func _on_harness_status(_info: Dictionary):
 	# The gate closed or opened: show or hide JOIN MATCH and LOCK IN.
 	_update_roster()
+
+func _on_server_full():
+	# v0.1.7 (backlog 33): JOIN MATCH found all 4 seats taken. Say so for 2 s, then
+	# give the button back (the lobby used to show nothing at all).
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn and j_btn.text == "JOIN MATCH":
+		j_btn.text = "ALL SEATS TAKEN"
+		j_btn.disabled = true
+		get_tree().create_timer(2.0).timeout.connect(_join_btn_back)
+
+func _join_btn_back():
+	var j_btn = get_node_or_null("JoinBtn")
+	if j_btn and j_btn.text == "ALL SEATS TAKEN":
+		j_btn.text = "JOIN MATCH"
+		j_btn.disabled = false
 
 func _on_join_locked(_demoted: bool, _old_id: int):
 	# The server kept our seat for the tests. We are a spectator now.

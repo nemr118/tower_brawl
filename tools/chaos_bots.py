@@ -314,6 +314,8 @@ def server_log_errors(since_offset):
     found = []
     try:
         with open(SERVER_LOG, encoding="utf-8", errors="replace") as f:
+            if since_offset > os.fstat(f.fileno()).st_size:
+                since_offset = 0   # v0.1.7: the log rolled over to server.log.1 since the mark
             f.seek(since_offset)
             for line in f:
                 s = line.rstrip()

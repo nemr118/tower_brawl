@@ -10,6 +10,7 @@ build/web/index_v*
 debug.log
 server.log
 *.log
+*.log.1
 .harness_logs/
 
 # live status file written by serve_game.py once a second
@@ -29,3 +30,7 @@ client_stats.jsonl*
 # v0.0.40: the laptop bot manager (tools/tbbot.py) pid and log files, and playtest data pulled off the laptop
 .bots/
 playtest_logs/
+
+# v0.1.7 (backlog 34): the TLS pair is made on each machine and never tracked (the old key sat in the public repo)
+cert.pem
+key.pem

@@ -19,6 +19,7 @@ import termios
 import collections
 import threading
 import logging
+import logging.handlers
 import sys
 import os
 import re
@@ -86,14 +87,20 @@ logger.addHandler(ch)
 ring = _RingHandler()
 logger.addHandler(ring)
 
+# v0.1.7 (backlog 4): both log files roll over at LOG_MAX_BYTES and keep one old
+# file (server.log.1, debug.log.1), on the PC and on the laptop alike.
+LOG_MAX_BYTES = 50 * 1024 * 1024
+
 # File output (server.log) - INFO level for the user
-fh = logging.FileHandler(os.path.join(os.path.dirname(__file__), "server.log"))
+fh = logging.handlers.RotatingFileHandler(os.path.join(os.path.dirname(__file__), "server.log"),
+                                          maxBytes=LOG_MAX_BYTES, backupCount=1)
 fh.setLevel(logging.INFO)
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
 # Diagnostic File output (debug.log) - DEBUG level for AI
-dfh = logging.FileHandler(os.path.join(os.path.dirname(__file__), "debug.log"))
+dfh = logging.handlers.RotatingFileHandler(os.path.join(os.path.dirname(__file__), "debug.log"),
+                                           maxBytes=LOG_MAX_BYTES, backupCount=1)
 dfh.setLevel(logging.DEBUG)
 dfh.setFormatter(logging.Formatter('%(asctime)s | %(threadName)s | %(levelname)s | %(message)s'))
 logger.addHandler(dfh)
@@ -144,7 +151,7 @@ import json
 # Fallback only. bump_build.sh rewrites this line, but get_game_version() below
 # prefers the live value in scripts/global.gd so a running server accepts a
 # freshly built client without a restart.
-GAME_VERSION = "v0.1.6"
+GAME_VERSION = "v0.1.7"
 
 # Phase 0 knobs ---------------------------------------------------------------
 LOG_MOVEMENT   = False   # True = log every sync_pos / spawn_projectile relay (very noisy, slows the relay)

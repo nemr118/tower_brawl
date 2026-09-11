@@ -35,7 +35,7 @@ Kernel log noise that is harmless: `b43` probes the wifi chip and fails before `
 
 - **`towerbrawl.service`** drop-in `/etc/systemd/system/towerbrawl.service.d/10-standalone.conf`: `StartLimitIntervalSec=0` (it keeps restarting after a crash for ever; the default gave up after 5 tries in 10 s), `Nice=-5` (the relay gets CPU before the deck and the bots), `OOMScoreAdjust=-500` (a bot is killed before the server if memory ever runs out), `TimeoutStopSec=10`.
 - **Journal** capped at 200 MB (`/etc/systemd/journald.conf.d/10-cap.conf`).
-- **The game's own logs rotate:** `logrotate` with `/etc/logrotate.d/towerbrawl`: `server.log` and `debug.log` at 50 MB, 5 kept, compressed, `copytruncate` because the server keeps the files open. `debug.log` grows about 1 MB an hour with bots in the game. (Backlog 4 is solved on the laptop this way; the PC still has no rotation.)
+- **The game's own logs roll over (v0.1.7, backlog 4):** `serve_game.py` itself (`RotatingFileHandler`, `LOG_MAX_BYTES` 50 MB) moves `server.log` and `debug.log` to `.1` and keeps that one old file, on the laptop and the PC alike. `debug.log` grows about 1 MB an hour with bots in the game. The old `/etc/logrotate.d/towerbrawl` (5 kept, compressed) never rotated before 2026-09-10, because both files were under 50 MB at its daily run; `tools/deploy_laptop.sh` deletes it from v0.1.7 on.
 - **Wifi power saving off** (`/etc/NetworkManager/conf.d/wifi-powersave.conf`, `wifi.powersave = 2`), for the night the cable is not an option.
 - **Diagnostics installed:** `smartmontools`, `ethtool`, `dmidecode`. `sudo smartctl -H /dev/sdb` for the SSD, `sudo ethtool enp4s0` for the link.
 - **Old builds are removed** from `build/web` after a deploy; only the current `index_v*` pair stays.

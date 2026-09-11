@@ -18,7 +18,7 @@ var touch_aim: Vector2 = Vector2.ZERO
 # Single source of truth for the game version. bump_build.sh rewrites this line,
 # mirrors it into serve_game.py, and names the exported .pck after it
 # (index_v0.0.1.pck) so browsers cannot serve a stale cached build.
-const GAME_VERSION: String = "v0.1.6"
+const GAME_VERSION: String = "v0.1.7"
 var version_canvas: CanvasLayer
 var version_label: Label
 var is_spectator: bool = true
@@ -258,6 +258,11 @@ const FLAG_DUCK := 64             # v0.1.3: ducking (the hitbox is the bottom ha
 # Timers that replaced per-frame checks in _process (Phase 1).
 var _ping_timer: Timer          # 1 Hz keepalive while connected
 var _reconnect_timer: Timer     # one-shot 2 s, armed only from the CLOSED branch
+var _autojoin_retry_timer: Timer   # one-shot: an --autojoin bot told server_full asks again (v0.1.7)
+var _autojoin_tries: int = 0
+const AUTOJOIN_RETRY_S := 2.0
+const AUTOJOIN_RETRY_SLOW_S := 10.0   # after AUTOJOIN_FAST_TRIES tries
+const AUTOJOIN_FAST_TRIES := 10
 
 ## Global Game Manager & WebSocket Network Engine
 ## Central singleton for 4-Player Battle Royale, state sync, and class definitions.
@@ -335,11 +340,15 @@ const CLASS_INFO = {
 	}
 }
 
+# v0.1.7 (backlog 5): every seat starts with the same class. A seat's real class
+# only comes from its lock_in (or locked_players in a snapshot); the old table gave
+# P2 a knight, P3 a mage and P4 a rogue that nobody had picked.
+const DEFAULT_CLASS := ClassType.RANGER
 var player_configs = {
-	1: {"class": ClassType.RANGER, "active": true},
-	2: {"class": ClassType.KNIGHT, "active": true},
-	3: {"class": ClassType.MAGE, "active": true},
-	4: {"class": ClassType.ROGUE, "active": true}
+	1: {"class": DEFAULT_CLASS, "active": true},
+	2: {"class": DEFAULT_CLASS, "active": true},
+	3: {"class": DEFAULT_CLASS, "active": true},
+	4: {"class": DEFAULT_CLASS, "active": true}
 }
 
 var player_scores = {
@@ -390,6 +399,11 @@ signal net_force_start()
 # back, demoted = true) because the tests are running.
 signal net_harness_status(info: Dictionary)
 signal net_join_locked(demoted: bool, old_id: int)
+# v0.1.7 (backlog 33): server_full answers a request_join when all 4 seats are
+# taken; net_disconnected fires once when the socket closes. Both give a waiting
+# JOIN button back.
+signal net_server_full()
+signal net_disconnected()
 var harness_info: Dictionary = {"active": false, "state": "idle", "scenario": null,
 	"done": 0, "total": 0, "passed": 0, "failed": 0, "minor": 0}
 
@@ -429,6 +443,15 @@ func _ready():
 	_reconnect_timer.autostart = false
 	_reconnect_timer.timeout.connect(_determine_url_and_connect)
 	add_child(_reconnect_timer)
+
+	# v0.1.7 (backlog 32): the server holds a leaving seat 8 s, so a bot added right
+	# after tbbot clear was told server_full, asked once, and never got a seat.
+	_autojoin_retry_timer = Timer.new()
+	_autojoin_retry_timer.name = "AutojoinRetryTimer"
+	_autojoin_retry_timer.one_shot = true
+	_autojoin_retry_timer.autostart = false
+	_autojoin_retry_timer.timeout.connect(_autojoin_retry)
+	add_child(_autojoin_retry_timer)
 
 	if _no_net:
 		print("🔌 [Global] --no-net: skipping server connection")
@@ -536,6 +559,8 @@ func _process(_delta):
 			is_spectator = true
 			print("❌ [Global] Disconnected. Reconnecting in 2s...")
 			_reconnect_timer.start()
+			_autojoin_stop_retry()   # the reconnect's spectator_state asks again
+			emit_signal("net_disconnected")
 		elif _reconnect_timer.is_stopped():
 			_reconnect_timer.start()
 
@@ -764,6 +789,15 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 			print("🔒 [Global] JOIN refused: the test harness is running, we watch for now")
 		is_spectator = true
 		emit_signal("net_join_locked", demoted, old_id)
+	if type == "server_full":
+		emit_signal("net_server_full")
+		if _autojoin and my_player_id == 0:
+			_autojoin_tries += 1
+			var wait := AUTOJOIN_RETRY_S if _autojoin_tries <= AUTOJOIN_FAST_TRIES else AUTOJOIN_RETRY_SLOW_S
+			print("🤖 [Global] --autojoin: all 4 seats are taken, asking again in %d s (try %d)" % [int(wait), _autojoin_tries])
+			_autojoin_retry_timer.start(wait)
+	elif type in ["version_error", "join_locked"]:
+		_autojoin_stop_retry()
 	if type in ["version_error", "server_full", "join_locked"] and _rejoin_pending:
 		_rejoin_pending = false
 		_ensure_scene_for_state(last_match_state)
@@ -838,6 +872,7 @@ func _handle_net_packet(msg_str: String, byte_size: int = 0):
 	if type == "assign_id":
 		is_spectator = false
 		_rejoin_pending = false
+		_autojoin_stop_retry()
 		_had_slot = 0
 		my_player_id = int(data.get("id", 1))
 		rejoined_mid_match = bool(data.get("rejoined", false))
@@ -970,6 +1005,16 @@ func is_host() -> bool:
 	if active_players.size() == 0:
 		return true
 	return my_player_id == lowest
+
+func _autojoin_retry() -> void:
+	if not _autojoin or my_player_id != 0 or not ws_connected:
+		return
+	_rejoin_pending = true
+	request_join(_autojoin_reclaim)
+
+func _autojoin_stop_retry() -> void:
+	_autojoin_retry_timer.stop()
+	_autojoin_tries = 0
 
 func _autojoin_relock() -> void:
 	# v0.0.18. The story: a bot locked in only once, right when it got its seat.

@@ -40,6 +40,7 @@ const DUCK_SHAPE_Y := 2.0                 # the shape's centre while ducked (sta
 const DUCK_GRACE_S := 0.1                 # a ducked fighter keeps the duck this long without a floor
 const LEDGE_LAYER := 6                    # one-way ledges live on this physics layer
 const DROP_THROUGH_S := 0.3               # the ledge layer is ignored this long after down + jump
+const LEDGE_GRACE_S := 0.1                # down + jump still drops this long after the feet were last seen on a ledge
 const LOOK_HOLD_S := 1.5                  # hold down (or aim up) this long before the view moves
 const LOOK_PX := 200.0                    # how far the view moves
 const LOOK_SPEED := 700.0                 # px/s, there and back (about 0.3 s)
@@ -50,6 +51,7 @@ var _duck_grace: float = 0.0
 var _look_down_t: float = 0.0
 var _look_up_t: float = 0.0
 var _drop_timer: float = 0.0
+var _ledge_grace: float = 0.0
 
 # Movement states
 var is_dashing: bool = false
@@ -83,7 +85,8 @@ const BUBBLE_SIDE_SPEED = 160.0  # px/s, left and right while floating
 
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
-var _jump_fired_last_frame: bool = false   # for the jump trap (v0.0.18)
+var _jump_fired_frame: int = -10   # physics frame of the last jump that left with its upward speed (the jump trap)
+var jump_trap_count: int = 0      # 🪤 lines printed, for tools/nav_probe.gd --drop-test
 
 # Speed probe (v0.1.1). The story: on a phone a fighter "went into super speed
 # for a second or two at the start of a round", then was normal. Run speed is
@@ -386,11 +389,22 @@ func _physics_process(delta: float):
 		
 	# Drop through a one-way ledge: down + jump while standing on one. The ledge
 	# layer is ignored for DROP_THROUGH_S so the fighter falls out of it.
+	# v0.1.7 (backlog 31): the duck that down starts changes the shape, and that
+	# costs is_on_floor() for 2 frames and _on_ledge() for up to 3 frames while it
+	# settles, so a jump in those frames jumped. The drop now counts the duck grace
+	# as ground and remembers the ledge for LEDGE_GRACE_S.
 	if _drop_timer > 0.0:
 		_drop_timer -= delta
 		if _drop_timer <= 0.0:
 			set_collision_mask_value(LEDGE_LAYER, true)
-	if Input.is_action_just_pressed(prefix + "jump") and down_held and is_on_floor() and _on_ledge():
+	if is_on_floor() and _on_ledge():
+		_ledge_grace = LEDGE_GRACE_S
+	else:
+		_ledge_grace -= delta
+	var dropped_now := false
+	if Input.is_action_just_pressed(prefix + "jump") and down_held and grounded and _ledge_grace > 0.0:
+		dropped_now = true
+		_ledge_grace = 0.0
 		_drop_timer = DROP_THROUGH_S
 		set_collision_mask_value(LEDGE_LAYER, false)
 		_set_duck(false)
@@ -416,19 +430,25 @@ func _physics_process(delta: float):
 	# sometimes could not jump with W until it walked off. We could not find
 	# the reason in the code, so this trap prints one line to the console the
 	# moment it happens, with the numbers we need to see. Two cases:
-	#   1. jump was pressed on the floor but no jump fired;
+	#   1. jump was pressed on the floor but no jump fired (a drop is not a miss);
 	#   2. a jump fired last frame but the feet are already back on the floor.
-	if Input.is_action_just_pressed(prefix + "jump") and is_on_floor() and not jumped_now:
+	# v0.1.7 (backlog 20): case 2 only counts a jump that kept its upward speed to
+	# move_and_slide. A special in the same frame can take that speed away (a
+	# ranger's shot aimed up pushes down), and that printed a "lock" that was none.
+	# "Last frame" is a frame number, so a dash, shield, bubble or egg frame in
+	# between (those return early) cannot leave an old flag standing.
+	if Input.is_action_just_pressed(prefix + "jump") and is_on_floor() and not jumped_now and not dropped_now:
+		jump_trap_count += 1
 		print("🪤 [JumpTrap] P", player_id, " pressed jump on the floor but no jump fired.",
 			" coyote=", snapped(coyote_timer, 0.001), " buffer=", snapped(jump_buffer_timer, 0.001),
 			" vel=", velocity.round(), " pos=", global_position.round(),
 			" contacts=", get_slide_collision_count(), " floor_normal=", get_floor_normal(),
 			" shield=", is_shielding, " dash=", is_dashing, " bubble=", is_bubble)
-	if _jump_fired_last_frame and is_on_floor() and velocity.y >= 0.0:
+	if Engine.get_physics_frames() - _jump_fired_frame == 1 and is_on_floor() and velocity.y >= 0.0:
+		jump_trap_count += 1
 		print("🪤 [JumpTrap] P", player_id, " jumped last frame but is back on the floor already.",
 			" vel=", velocity.round(), " pos=", global_position.round(),
 			" contacts=", get_slide_collision_count(), " floor_normal=", get_floor_normal())
-	_jump_fired_last_frame = jumped_now
 		
 	if Input.is_action_just_released(prefix + "jump") and velocity.y < -120.0:
 		velocity.y = -120.0
@@ -442,6 +462,8 @@ func _physics_process(delta: float):
 	if Input.is_action_just_pressed(prefix + "special") and special_cooldown <= 0.0:
 		_perform_special(aim_direction)
 
+	if jumped_now and velocity.y < 0.0:
+		_jump_fired_frame = Engine.get_physics_frames()
 	move_and_slide()
 	_check_screen_wrap()
 	_probe_speed(delta)
