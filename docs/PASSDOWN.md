@@ -6,12 +6,12 @@ tags: [handoff]
 Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the vault. Kickoff: `CLAUDE.md`, this file, the newest `Patch Notes/` page, [[Commands]]. History: [[Changelog]]. Deep dives: `reference/`.
 
 ## Now (2026-09-10)
-- **v0.1.6 "Review Fixes" committed, not pushed**, harness 25/25 with --restart-each, no Minor. v0.1.5 (pushed, `663903c`) stays on the laptop ([[laptop-server]]) until the §8 morning reading. Last tag: `v0.1.0` (v0.1.1 to v0.1.6 untagged).
+- **v0.1.6 "Review Fixes" pushed**, harness 25/25 with --restart-each, no Minor. The laptop keeps v0.1.5 ([[laptop-server]]) until the §8 morning reading. Last tag: `v0.1.0` (v0.1.1 to v0.1.6 untagged).
 - **Waiting on a human:** [[Playtest — Master Validation Suite v0.1]] §1 to §7 (§6 the tower, §7 twin sticks; played 2026-09-08, no verdict). **§8, the laptop soak (4 chasers since 18:16):** at 1 h no stall (81 rounds, longest 82 s, 0 errors); the morning column and the verdict are left. **§9** (apostrophe names) after that deploy.
-- **Next:** backlog 31 to 33; the §8 morning check, then the deploy and §9; a focused read of `ws_client_thread` and its locks; the §6 and §7 verdicts; or tower build 2 (themes, moving platforms, traps).
+- **Next:** backlog 31 to 33, then 34; the §8 morning check, then the deploy and §9; a focused read of `ws_client_thread` and its locks; the §6 and §7 verdicts; or tower build 2.
 - **Ideas:** stats views, a replay skip key, sound, a sim server. [[PASSDOWN-2026-09-05]].
-- **v0.1.6 "Review Fixes":** the first code review (ultrareview, 7 473 lines, 7 findings checked by hand). Fixed in `serve_game.py`: spectator `client_stats` cards were dropped, the gate's demoted ip was `"(:'"`; in GDScript: names with `'` never saved (`JSON.stringify`), the queued JOIN reset. [[v0.1.6 - Review Fixes]].
-- **v0.1.5 "Bot Routes":** every soak stalled (a bot whose target stood above or below it froze, [[bot-soak-2026-09-08]]). `bot_nav.gd` makes the tower 25 places to stand and the moves between them; `bot_brain.gd` follows the route and has two stall guards (hunt: 20 s with no kill; detour: 4 s stuck). Tools: `nav_probe.gd`, `soak_report.py`. [[v0.1.5 - Bot Routes]].
+- **v0.1.6 "Review Fixes":** the first code review (ultrareview, 7 findings checked by hand). Fixed in `serve_game.py`: spectator `client_stats` cards were dropped, the gate's demoted ip was `"(:'"`; in GDScript: names with `'` never saved (`JSON.stringify`), the queued JOIN reset. [[v0.1.6 - Review Fixes]].
+- **v0.1.5 "Bot Routes":** every soak stalled: bots froze under or over their target ([[bot-soak-2026-09-08]]). `bot_nav.gd` routes over 25 places to stand; two stall guards (hunt 20 s, detour 4 s); tools `nav_probe.gd`, `soak_report.py`. [[v0.1.5 - Bot Routes]].
 
 ## Open backlog
 `N. **Title** — state — next action — detail`. Numbers are never reused; closed: [[closed]].
@@ -34,6 +34,7 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 31. **Down and jump in the same frame jump instead of dropping through** — open — S + W together, a twin-stick flick past the down rim; fix in `player.gd` (the drop check) or `touch_controls.gd` (down first) — [[v0.1.5 - Bot Routes]].
 32. **A bot added right after `tbbot clear` never gets a seat** — open — a leaving seat is held 8 s and `--autojoin` never asks again; retry, or `tbbot add` waits — [[v0.1.5 - Bot Routes]].
 33. **The arena's JOIN button sticks on a full server** — open — no `server_full` handler in `arena.gd`; reset it like `join_locked` — [[v0.1.6 - Review Fixes]].
+34. **A private TLS key is in the public repo** — open — `key.pem` tracked since `671bae0`: a new pair, untrack both, `.gitignore` — [[v0.1.6 - Review Fixes]].
 
 ## How to work here
 - **Rules:** `CLAUDE.md` (rule 7 plain words; rule 8 trim; scene edits allowed since v0.1.3, load check after; GDScript ships via `./bump_build.sh`). One approved phase at a time; report bugs outside it, don't fix them. Every human-validation ask becomes a section with its own verdict in [[Playtest — Master Validation Suite v0.1]].
