@@ -63,13 +63,13 @@ At full screen size, the S25 Ultra (2560 x 1440) held 60 through T3, then got 58
 - **The pass rule was wrong** and failed even a steady 60 (p95 16.7 ms or less, and script time 8 ms or less). The report now judges old cards by the fair rule, and the page uses it too (re-exported 2026-09-11).
 - **The limit test stopped at level 1 on every phone**, partly because of that rule. It told us nothing that T6 didn't.
 - **Script time (`proc`) reads higher than the frame time** on the web (S25 at T2: 18.7 ms at 60 fps). Use it only to compare tiers.
-- **Not done yet:** run C (10 minutes of heat on the weakest phone). Run D is below.
+- Run C (10 minutes of heat) and run D are below.
 
 ## Proposed next steps
 
 1. The iPad again, charged, with Low Power Mode off (7 minutes).
 2. **A split test.** Ladders that turn on one thing at a time, for T2 on the iPhone (particles only, fog only, shafts only) and for lights on the Androids (8, 16, 24, 32 lights). About an hour to build, 5 minutes a phone. It shows exactly what to cut or make cheaper.
-3. Run C on the iPhone at T1 or T2 (10 minutes).
+3. ~~Run C~~: done on the S25 Ultra at T3 instead, because the question became whether the look we aim for holds. See below.
 4. ~~Run D~~: done, see below.
 
 ## Run D: the server on the laptop (2026-09-11)
@@ -167,3 +167,46 @@ The S25 Ultra ran the ladder again; it is named "daughter" in the data (`bench_r
 At full size (2560 x 1440) it dropped to exactly 30 fps from T2 on, where the first run held 60 through T3. Frames of exactly 33.3 ms mean the phone fell to half its refresh rate. Android does that when frames keep missing, and more easily when the phone is warm or saving power. The network also hiccuped: a 150 ms round trip at the start, and 21 stalls during T6 at 1080.
 
 **What it means:** the same phone gave very different numbers two days apart. A warm or power-saving phone loses the top tiers first, while T1 to T3 at 1080 held up. So run C (10 minutes of heat) matters more than we thought. The game also needs a quality setting that steps down by itself when frames keep missing.
+
+## Run C: 10 minutes of heat (2026-09-13)
+
+**The question:** does the look we aim for, T3 drawn at 1920 x 1080, keep 60 fps for 10 minutes while a phone warms up?
+
+**The setup.** The S25 Ultra (the same phone as "S25" and "daughter"), named "S25-heat" in the data. It was held sideways, unplugged, with battery saver off. The page ran T3 at 1080 for 10 one-minute steps, and the first 3 s of each step were not counted: `…/bench/index.html?name=S25-heat&tiers=3,3,3,3,3,3,3,3,3,3&res=1080&no-cpu&seconds=60`. The bench server ran on the PC with the network thread and 7 fake players. The run went from 22:53 to 23:03, about 50 minutes after the phone's last ladder ended (22:01). Battery: 47% to 45%.
+
+| Minute | fps | Middle frame (p50) | Slowest 1% (p99) | Time near 30 fps (estimate) | Script time | Held 60 |
+|---|---|---|---|---|---|---|
+| 1 | 60 | 16.7 ms | 20.9 ms | 0% | 18.9 ms | **yes** |
+| 2 | 45 | 17.3 | 38.3 | 51% | 18.8 | no |
+| 3 | 59 | 16.7 | 30.3 | 2% | 17.9 | no (p99) |
+| 4 | 57 | 16.8 | 36.2 | 11% | 18.3 | no |
+| 5 | 38 | 30.6 | 38.7 | 75% | 21.4 | no |
+| 6 | 58 | 16.8 | 33.9 | 6% | 18.9 | no (p99) |
+| 7 | 46 | 17.4 | 38.2 | 46% | 20.1 | no |
+| 8 | 57 | 17.1 | 25.8 | 10% | 20.4 | no |
+| 9 | 55 | 17.8 | 27.2 | 18% | 21.9 | no |
+| 10 | 56 | 17.3 | 25.5 | 12% | 21.1 | no |
+
+"Time near 30 fps" is (60 − fps) / 30: the share of the minute spent at 30 if the phone only ever ran at 60 or at 30. It is an estimate, because a card keeps only a summary of its minute. No minute had a hitch over 50 ms.
+
+**The server and the network were fine.** Ticks averaged 0.29 ms (worst 5.3 ms) at 3% CPU, with 8 clients the whole time. The phone's round trip had a median of 17 to 18 ms. It was 30 to 32 ms in minutes 2 and 5, but that is an effect of the slow frames, not a cause: the page reads replies once a frame, so at 30 fps each reply waits longer. Snapshot gap p99 was 51 to 68 ms, with 1 stall, in minute 10. The 7 fake players, over their 40 minutes on the PC, each got 30 snapshots a second, with round trip p95 4 ms, gap p99 37 ms and no stalls.
+
+**What it means**
+
+1. **No: T3 at 1080 does not hold 60 for 10 minutes on the S25 Ultra.** It held 60 only in minute 1. It averaged 53 fps over the 10 minutes and spent about 2.3 of them near 30 fps.
+2. **The drops come in bursts, not as a slow slide.** Minutes 2, 5 and 7 spent about half their time or more at 30, and the minutes between came back to 57 to 59. Frames of 33 ms mean Android halved the refresh after frames kept missing. T3 leaves no room: even the cool first minute had 5% of its frames over 18.8 ms. A busy moment tips the phone over, and it then stays at 30 for a while.
+3. **Heat shows in the script time.** It averaged 18.5 ms in minutes 1 to 4 and 20.6 ms in minutes 5 to 10: 11% more for the same work, so the CPU slowed as the phone warmed. (Script time on the web is only good for comparing like with like, and here every minute ran the same step.)
+4. **The plan's heat mark was too weak.** "The last minute at 90% of the first or better" passes this run (56 against 60, 94%), yet only 1 minute in 10 held 60. The mark is now "held 60 in every minute". The report prints both.
+5. **Short steps hid this.** In the ladders, T3 at 1080 showed 59 and 58 fps. A 20-second step can fall between two bursts.
+6. **The battery is not a problem:** 2% in 10 minutes, about 12% an hour.
+
+**What it changes**
+
+- **The target needs headroom.** A cool phone should draw the default look with frames well under 16.7 ms, not just hit 60. The split test should now also split T3 on the S25 Ultra (fog layers, lights, particles, the post shader), not only T2 on the iPhone.
+- **The automatic step-down should act before Android halves to 30:** for example, when p95 stays over 17 ms for a few seconds, drop a fog layer or some particles.
+- **A 30 fps cap stays the last step, not the first.** Plan section 4 said a phone that fails the heat check gets a 30 fps option. A steady 30 is kinder than flipping between 60 and 30, but a fast brawler wants a lighter look at 60 first.
+- **Run C again** for 10 minutes at the lighter setting the split test picks.
+
+**Not known:** how warm the phone was at the start (it had rested about 50 minutes) and the room temperature. A browser cannot read the phone's temperature.
+
+**How to repeat:** the link above, then `./venv/bin/python tools/bench_report.py --date 2026-09-13`. For any step run 3 or more times, the report prints a trend: fps, p50 and p99 per step, the last against the first, how many held 60, and the first miss.

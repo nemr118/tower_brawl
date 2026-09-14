@@ -4,6 +4,7 @@
 # bench_results/<date>/server.jsonl (a line a second from bench_server.gd),
 # synth.jsonl (bench_synth.py) and cards.jsonl (a card per phone step), and
 # prints a table each with the pass marks of docs/reference/bench-8p-plan.md.
+# A step run 3 or more times (run C, the heat run) also gets a trend line.
 #   ./venv/bin/python tools/bench_report.py [--date 2026-09-10] [--dir bench_results]
 # ==============================================================================
 import argparse, json, os, statistics, time
@@ -68,6 +69,28 @@ def synth_table(recs):
 def held60(c):
     return c['fps'] >= 58 and c['ft_p99'] <= 25.0 and int(c.get('hitches_50ms', 0)) == 0
 
+# The heat run repeats one step (tiers=3,3,3,...): a trend line per repeated step,
+# its fps and p99 in order, and the last step against the first (the plan's 90% mark).
+def trend_lines(cards):
+    groups = {}
+    for c in cards:
+        if c.get("tier") == "done" or c.get("skipped") or c.get("levels"):
+            continue
+        groups.setdefault((c["tier"], c["res"], bool(c.get("cpu_particles"))), []).append(c)
+    for (tier, res, cpu), g in groups.items():
+        if len(g) < 3:
+            continue
+        ratio = g[-1]["fps"] / g[0]["fps"] if g[0]["fps"] > 0 else 0.0
+        held = sum(1 for c in g if held60(c))
+        miss = next((i + 1 for i, c in enumerate(g) if not held60(c)), None)
+        print(f"   trend {tier} {res}{' cpu' if cpu else ''}: {len(g)} steps of {g[0].get('seconds', 0):.0f} s")
+        print("      step " + " ".join(f"{i + 1:3d}" for i in range(len(g))))
+        print("      fps  " + " ".join(f"{c['fps']:3.0f}" for c in g))
+        print("      p50  " + " ".join(f"{c['ft_p50']:3.0f}" for c in g) + " ms")
+        print("      p99  " + " ".join(f"{c['ft_p99']:3.0f}" for c in g) + " ms")
+        # the heat mark since 2026-09-13 is "held 60 in every step"; the old 90% mark passed run C at 1 of 10
+        print(f"      held 60 in {held} of {len(g)} (every step: {mark(held == len(g))})" + (f" | first miss: step {miss}" if miss else "") + f" | last against first: {ratio * 100:.0f}% (old mark >= 90%: {mark(ratio >= 0.9)})")
+
 def cards_table(recs):
     runs = {}
     for c in recs:
@@ -78,14 +101,16 @@ def cards_table(recs):
         return
     print("\n== Phones (bench cards) ==")
     for (name, run), cards in runs.items():
+        cards.sort(key=lambda c: c.get("recv_t", 0))  # the order they arrived (stable: old cards keep file order)
         dev = cards[0].get("device", {})
         print(f"\n{name} (run {run}) | {dev.get('gpu', dev.get('adapter', '?'))} | screen {dev.get('sw','?')}x{dev.get('sh','?')} dpr {dev.get('dpr','?')} cores {dev.get('cores','?')} mem {dev.get('mem','?')} GB")
-        print(f"   {'tier':12} {'res':6} {'cpu':3} {'render':10} {'fps':>5} {'p50':>6} {'p95':>6} {'p99':>6} {'max':>7} {'hitch':>5} {'proc':>5} {'draws':>5} {'lights':>6} {'rtt95':>5} {'gap99':>6} {'stall':>5}  verdict")
+        print(f"   {'#':>2} {'ended':8} {'tier':12} {'res':6} {'cpu':3} {'render':10} {'fps':>5} {'p50':>6} {'p95':>6} {'p99':>6} {'max':>7} {'hitch':>5} {'proc':>5} {'draws':>5} {'lights':>6} {'rtt95':>5} {'gap99':>6} {'stall':>5}  verdict")
         best = {}
         w0 = next((c['window'] for c in cards if c.get('window')), None)
-        for c in cards:
+        for n, c in enumerate(cards, 1):
             if c.get("tier") == "done":
                 continue
+            step = f"{n:2d} {time.strftime('%H:%M:%S', time.localtime(c['recv_t'])) if 'recv_t' in c else '':8}"
             # Godot's JSON writes every number as a float.
             for k in ("hitches_50ms", "draw_calls_max", "lights_now", "stalls_150ms", "tier_i", "limit_level"):
                 if k in c:
@@ -94,17 +119,18 @@ def cards_table(recs):
                 for k in ("level", "fog_layers", "fighters", "lights"):
                     lv[k] = int(lv[k])
             if c.get("skipped"):
-                print(f"   {c['tier']:12} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} skipped: {c['skipped']}")
+                print(f"   {step} {c['tier']:12} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} skipped: {c['skipped']}")
                 continue
             if c.get("levels"):
-                print(f"   {c['tier']:12} {c['res']:6} limit test: stopped at level {len(c['levels'])}")
+                print(f"   {step} {c['tier']:12} {c['res']:6} limit test: stopped at level {len(c['levels'])}")
                 for lv in c["levels"]:
                     print(f"      level {lv['level']:2d}: particles x{lv['particles']:.2f} fog layers {lv['fog_layers']} fighters {lv['fighters']:2d} lights {lv['lights']:2d} | {lv['fps']:5.0f} fps p95 {lv['ft_p95']:6.1f} p99 {lv['ft_p99']:6.1f} ms proc {lv['proc_ms']:4.1f} | {mark(held60(lv))}")
                 continue
             rs = "x".join(str(v) for v in c.get("render_size", []))
-            print(f"   {c['tier']:12} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} {rs:10} {c['fps']:5.0f} {c['ft_p50']:6.1f} {c['ft_p95']:6.1f} {c['ft_p99']:6.1f} {c['ft_max']:7.1f} {c['hitches_50ms']:5d} {c['proc_ms']:5.1f} {c['draw_calls_max']:5d} {c['lights_now']:6d} {c['rtt_p95']:5.0f} {c['gap_p99']:6.1f} {c['stalls_150ms']:5d}  {mark(held60(c))}" + (f"  (window changed to {c['window'][0]:.0f}x{c['window'][1]:.0f})" if w0 and c.get('window') != w0 else ""))
+            print(f"   {step} {c['tier']:12} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} {rs:10} {c['fps']:5.0f} {c['ft_p50']:6.1f} {c['ft_p95']:6.1f} {c['ft_p99']:6.1f} {c['ft_max']:7.1f} {c['hitches_50ms']:5d} {c['proc_ms']:5.1f} {c['draw_calls_max']:5d} {c['lights_now']:6d} {c['rtt_p95']:5.0f} {c['gap_p99']:6.1f} {c['stalls_150ms']:5d}  {mark(held60(c))}" + (f"  (window changed to {c['window'][0]:.0f}x{c['window'][1]:.0f})" if w0 and c.get('window') != w0 else ""))
             if held60(c) and not c.get("cpu_particles"):
                 best[c["res"]] = max(best.get(c["res"], -1), c["tier_i"])
+        trend_lines(cards)
         names = ["T0 plain", "T1 lights", "T2 effects", "T3 shaders", "T4 live 3D", "T5 stress", "T6 max", "T7 limit"]
         print("   highest tier held at 60 fps: " + ", ".join(f"{res}: {names[t] if t >= 0 else 'none'}" for res, t in best.items()) if best else "   highest tier held at 60 fps: none")
 

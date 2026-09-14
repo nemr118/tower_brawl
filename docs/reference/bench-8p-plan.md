@@ -33,7 +33,7 @@ status: plan 2026-09-10, waits on "go"
 | frame time p99 | 25 ms or less |
 | hitches over 50 ms, after the first 5 s | none |
 | script time a frame (`proc`) | shown, not judged. On the web it reads higher than the frame time, so it is only good for comparing tiers |
-| fps after 10 minutes against the first minute | 90% or more (heat) |
+| heat: 10 one-minute steps of the same tier | held 60 in every minute. Changed 2026-09-13: the first rule, the last minute at 90% of the first or better, passed run C while only 1 minute in 10 held 60 |
 
 **Today's baseline** (the first phone match, v0.1.0, 640 x 360, 4 fighters): the S25 Ultra and the Pixel held 60 drawn fps, worst script frame 6.5 to 8 ms in play, round trip 19 and 25 ms ([[v0.1.1 - Phone Controller]]).
 
@@ -103,6 +103,7 @@ godot --headless --path bench res://server/bench_server.tscn -- --fighters 8    
 - **A phone:** open `https://192.168.4.21:8443/bench/index.html?name=S25`, tap START, lay it down (13 steps, about 5 minutes). If it cannot connect, open `https://192.168.4.21:8091` once, accept the certificate, and reload.
 - **Start the bench server first.** The page on 8443 comes from the game server, but the cards go to the bench server on 8091. Since 2026-09-11 the page shows a red WAITING line and START stays off until the bench server answers. It keeps trying, so start the server and wait. If the server drops mid-run, the corner says NO SERVER, and the last screen says how many cards were not saved.
 - **iPhone and iPad:** turn Low Power Mode off and charge to at least 50%. Low Power Mode caps Safari at 30 fps, and every tier would fail.
+- **Heat (run C):** `…/bench/index.html?name=S25-heat&tiers=3,3,3,3,3,3,3,3,3,3&res=1080&no-cpu&seconds=60` (10 one-minute steps of T3 at 1080). Hold the phone sideways, unplugged, battery saver or Low Power Mode off, and note the charge before and after. For a step run 3 or more times, the report prints a trend line.
 - **Just look:** `…/bench/index.html?tier=3` (no ladder; `&nopost` without the post shader), or on the PC `godot --path bench -- --tier=3 --server=wss://127.0.0.1:8091`.
 
 **Checked on the PC.**
@@ -118,7 +119,7 @@ godot --headless --path bench res://server/bench_server.tscn -- --fighters 8    
 - **T4 uses a toon `StandardMaterial3D`** with the prototype's texture and outline, because its `hero.gdshader` draws noise outside the prototype (it picks its texture from the prototype's vertex colours).
 - Godot 4.7 writes no `mainPack` key in the page: `bench_export.sh` adds one, like `bump_build.sh`.
 
-**Next:** run B is done (2026-09-11): [[bench-8p-results]]. Still to do: run C (10 minutes on the weakest), run D on the laptop.
+**Next:** runs B, C and D are done: [[bench-8p-results]]. Run C (2026-09-13) ran the S25 Ultra at T3, the look we aim for, not the weakest phone. Still to do: the split test, then run C again at the setting it picks.
 
 ## 7. The max build (2026-09-11, same branch)
 **Added at the user's request:** smoke arrows, more archer animations, the fog and effects "dialled all the way up", and a test that finds the limit.
