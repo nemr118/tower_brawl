@@ -1,0 +1,31 @@
+; Tower Brawl 8-player benchmark (branch bench/8p). Its own Godot project, so
+; the game's autoloads (Global) never start. Run the server headless:
+;   godot --headless --path bench res://server/bench_server.tscn -- --fighters 8
+; and the client in a window or the web export (tools/bench_export.sh).
+config_version=5
+
+[application]
+
+config/name="Tower Brawl Bench"
+run/main_scene="res://client/bench_client.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+window/size/window_width_override=1600
+window/size/window_height_override=900
+window/stretch/mode="disabled"
+window/vsync/vsync_mode=1
+
+[physics]
+
+common/physics_ticks_per_second=60
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/canvas_textures/default_texture_filter=0
+environment/defaults/default_clear_color=Color(0.02, 0.02, 0.035, 1)

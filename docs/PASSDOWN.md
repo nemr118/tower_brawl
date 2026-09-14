@@ -5,11 +5,11 @@ tags: [handoff]
 
 Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is the vault. Kickoff: `CLAUDE.md`, this file, the newest `Patch Notes/` page, [[Commands]]. History: [[Changelog]]. Deep dives: `reference/`.
 
-## Now (2026-09-10)
+## Now (2026-09-13)
 - **v0.1.7 "Bug Sweep" committed**, harness 25/25 with --restart-each, no Minor. The PC and the laptop ([[laptop-server]]) both run it, with the new TLS pair. The laptop soak was read at 3.42 h, just before that deploy: no stall. No bots run on the laptop. Last tag: `v0.1.0` (v0.1.1 to v0.1.7 untagged).
 - **Waiting on a human:** [[Playtest v0.1.7]]: each phone accepts the new certificate once, then the yes/no lines and the verdict.
-- **Next:** the decisions below. Still open: a focused read of `ws_client_thread` and its locks. Old master sheet: `archive/playtests/`.
-- **Ideas:** stats views, a replay skip key, sound, a sim server. [[PASSDOWN-2026-09-05]].
+- **Next: run C (heat)** on branch `bench/8p` (committed 2026-09-13; `master` unchanged, 2 commits ahead of origin, nothing pushed). The 8-player benchmark: run B (phones) and run D (the laptop server) are done, results in [[bench-8p-results]]. The server needs no dial-back, and a network thread (2026-09-13) ended the join stall. Aim for about T3 drawn at 1080: the Androids hold it, the iPhone only T1, and a warm S25 Ultra lost T5 and T6. T6 max is over budget everywhere. After C: a split test (what in T2 slows the iPhone; how many lights), the iPad again (optional), then the D decisions. How to run: [[bench-8p-plan]] sections 6 and 7. The vision: TowerFall play on its decompiled numbers, a modern Dead Cells-inspired look, 90 px fighters, a super arena for 8, a simulation server. Research [[towerfall-research]], [[dead-cells-research]], [[sim-server-design]]; plan [[v0.2-transformation-plan]]; choices [[Design Decisions v0.2]].
+- **Ideas:** stats views, a replay skip key, sound (the sim server is decided). [[PASSDOWN-2026-09-05]].
 - **v0.1.7 "Bug Sweep":** down + jump drops within `LEDGE_GRACE_S` (31); `--autojoin` asks again on `server_full` (32); ALL SEATS TAKEN on both JOIN buttons, and the arena finds `HUD/JoinBtn` again (33); new TLS pair, untracked (34); logs keep one `.1` (4); one `DEFAULT_CLASS` (5); the jump trap skips an eaten jump (20). [[v0.1.7 - Bug Sweep]].
 - **v0.1.6 "Review Fixes":** the first code review (ultrareview, 7 findings checked by hand). Fixed in `serve_game.py`: spectator `client_stats` cards were dropped, the gate's demoted ip was `"(:'"`; in GDScript: names with `'` never saved (`JSON.stringify`). [[v0.1.6 - Review Fixes]].
 
@@ -17,14 +17,14 @@ Godot 4.7 web game (4-player LAN brawler), Python WebSocket relay; `docs/` is th
 `N. **Title** — state — next action — detail`. Numbers are never reused; closed: [[closed]].
 **Watching** (open; each has a trap or log line, nothing to do until one shows): 3 a second tab stalls the game tab ([[PASSDOWN-2026-09-05]]) · 13 PC keyboard dead after a reload in the replay gap ([[v0.0.28 - Rejoin in the Replay Gap]]) · 20 the W jump lock, `🪤 [JumpTrap]` ([[v0.1.7 - Bug Sweep]]) · 25 super speed, `🏃 [Speed]` ([[bot-soak-2026-09-08]]) · 26 a death after `round_end` counts a stock ([[bot-soak-2026-09-08]]).
 
-**Decisions** (for the design session):
+**Decisions** (each now folds into a D in [[Design Decisions v0.2]]):
 16. **The stomp-egg has no author over the network** — design call — relay a `player_hit` like `player_died` — [[v0.0.29 - Egg-Form Puppet]].
 17. **Seam hiding** — design call — draw a second copy of a fighter near the seam — [[Playtest v0.0.17]].
 18. **Archer kit revisit** — design call — slow regen, steal arrows, arrows in the join snapshot — [[v0.0.30 - Ranger Rejoin Quiver]].
 21. **Air shield feel** — design call — slope traction is gone (the tower has no tilted pieces) — [[Playtest v0.0.17]].
 28. **A round has no clock: two fighters that never meet play for ever** — design call — a round timer, a shrinking arena, or pull the fighters together — [[bot-soak-2026-09-08]].
-29. **More than four players** — idea (user, 2026-09-08) — `range(1, 5)` in `serve_game.py`, four HUD panels, four spawn ledges — [[arena-tower]].
-- **Tower build 2** — the next arena pass — [[arena-tower]].
+29. **More than four players** — decided: 8 (2026-09-10) — the arena size is D13 — [[Design Decisions v0.2]].
+- **Tower build 2** — decided: replaced by a super arena for 8 (2026-09-10) — [[Design Decisions v0.2]].
 - **A `v0.2.0` tag** — the runbook — [[release-v0.1.0]].
 
 ## How to work here

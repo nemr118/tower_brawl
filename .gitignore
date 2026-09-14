@@ -34,3 +34,9 @@ playtest_logs/
 # v0.1.7 (backlog 34): the TLS pair is made on each machine and never tracked (the old key sat in the public repo)
 cert.pem
 key.pem
+
+# The 8-player benchmark (branch bench/8p): local-only files
+bench/.godot/
+bench/untracked/
+bench_results/
+build/web/bench/
