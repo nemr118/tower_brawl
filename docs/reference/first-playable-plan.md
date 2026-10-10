@@ -1,8 +1,10 @@
 ---
 tags: [reference, plan]
-status: plan 2026-10-10, waits on "go"
+status: built 2026-10-10 as v0.2.0-p1.1 ([[v0.2.0-p1.1 - First Playable]]); the laptop deploy and the play night wait on a go
 ---
 # The first playable (P1): the new game the kids can play
+
+**Built 2026-10-10** as [[v0.2.0-p1.1 - First Playable]]: section 3 steps 1 to 8 are done on the PC (the page has the proofs); the laptop tick proof (3.7) runs after the deploy, which asks first. The sheet: [[Playtest v0.2.0-p1.1]].
 
 **The decision (the user, 2026-10-10):** "I'd really like to get this game off the ground and playable with my kids. They aren't really interested in the benchmarking. The game looks great from the benchmark on my phone. Can we just proceed and tweak optimizations as we go? The graphics tweaks are a great lever to pull, but we don't even know exactly how the game is played. If we see performance issues in the future, we can revisit tweaking lighting or having settings so devices that struggle can tone down areas that impact their performance." So the benchmark stops here (the verdict: [[bench-8p-results]]) and we build. The entry: [[Design Decisions v0.2]] D18. The long plan it shortens: [[v0.2-transformation-plan]].
 
