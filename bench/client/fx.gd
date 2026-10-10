@@ -282,6 +282,8 @@ func on_event(e: Array) -> void:
 		ring(pos, 200.0, Color(0.8, 0.82, 0.88), 0.45)
 		flash(pos, 3.0, Color(0.9, 0.9, 1.0), 0.1)
 		shake = maxf(shake, 3.0)
+	elif type == P.E_DRYFIRE:
+		_burst("hurt_spark", pos, Color(0.7, 0.7, 0.7))
 
 func _process(delta: float) -> void:
 	shake = maxf(0.0, shake - delta * 60.0)

@@ -1,0 +1,21 @@
+# The new game's server on the laptop (P1): headless Godot, wss on 8091, beside
+# the old game's towerbrawl.service (which keeps serving the web files and the
+# old relay). tools/deploy_laptop.sh installs it in /etc/systemd/system/.
+[Unit]
+Description=Tower Brawl v2 game server (headless Godot, wss 8091)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=nemr
+WorkingDirectory=/home/nemr/tower_brawl
+ExecStart=/usr/bin/env godot --headless --path /home/nemr/tower_brawl/bench res://server/game_server.tscn -- --port 8091 --cert /home/nemr/tower_brawl/cert.pem --key /home/nemr/tower_brawl/key.pem --out /home/nemr/tower_brawl/bench_results --quiet
+Restart=always
+RestartSec=3
+Nice=-5
+OOMScoreAdjust=-500
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

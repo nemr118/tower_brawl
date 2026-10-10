@@ -1,0 +1,233 @@
+# The phone controls (P1), ported from the brawler's twin layout
+# (scripts/touch_controls.gd, v0.1.4), in window pixels scaled by the window's
+# height. Left half: the move stick appears under the thumb and runs the way it
+# points; above JUMP_DEG from level it jumps once and keeps the jump held while
+# the thumb stays up (re-armed under JUMP_REARM_DEG); within DOWN_DEG of straight
+# down it holds down, and past the rim there it presses jump (down + jump: the
+# drop through a ledge); past the rim anywhere else it dodges that way. Right
+# half: the aim stick: touching it aims (the fighter stands still on the
+# ground), the thumb's direction is the aim, and lifting it fires. A DODGE
+# button sits at the right edge. buttons() and aim_deg10() feed net.send_input.
+extends CanvasLayer
+
+const P = preload("res://sim/proto.gd")
+const MOVE_RADIUS := 240.0
+const AIM_RADIUS := 210.0
+const RIM_PAD := 30.0
+const RIM_REARM := 0.85
+const NOISE := 0.08
+const JUMP_DEG := 45.0
+const JUMP_REARM_DEG := 35.0
+const DOWN_DEG := 30.0
+const TAP_TICKS := 2
+const DODGE_R := 78.0
+const HIT_PAD := 16.0
+const GOLD := Color(1.0, 0.85, 0.3)
+const BLUE := Color(0.5, 0.8, 1.0)
+
+var active := false
+var k := 1.0                      # window px per design px (the window's height / 1080)
+var win := Vector2(1920, 1080)
+var move_touch := -1
+var move_center := Vector2.ZERO
+var move_offset := Vector2.ZERO
+var move_dir := Vector2.ZERO
+var in_down := false
+var in_jump := false
+var _jump_armed := true
+var _rim_armed := true
+var aim_touch := -1
+var aim_center := Vector2.ZERO
+var aim_offset := Vector2.ZERO
+var aim_dir := Vector2.RIGHT
+var aim_set := false
+var dodge_touch := -1
+var jump_tap := 0
+var dodge_tap := 0
+var gfx := _Gfx.new()
+
+class _Gfx extends Node2D:
+	var owner_layer
+	func _draw() -> void:
+		if owner_layer != null:
+			owner_layer._paint(self)
+
+func _init() -> void:
+	layer = 15
+	gfx.owner_layer = self
+	add_child(gfx)
+
+func fit(w: Vector2) -> void:
+	win = w
+	k = w.y / 1080.0
+	gfx.queue_redraw()
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		if not active:
+			active = true   # a touch on anything: this is a phone after all
+		if not visible:
+			return
+		get_viewport().set_input_as_handled()
+		_touch(event)
+	elif event is InputEventScreenDrag:
+		if not visible:
+			return
+		get_viewport().set_input_as_handled()
+		_drag(event)
+
+func _dodge_center() -> Vector2:
+	return Vector2(win.x - 118.0 * k, win.y * 0.42)
+
+func _touch(e: InputEventScreenTouch) -> void:
+	var p: Vector2 = e.position
+	if e.pressed:
+		if dodge_touch == -1 and p.distance_to(_dodge_center()) <= (DODGE_R + HIT_PAD) * k:
+			dodge_touch = e.index
+		elif p.x < win.x * 0.5 and move_touch == -1:
+			move_touch = e.index
+			move_center = p
+			_jump_armed = true
+			_rim_armed = true
+			_move(p)
+		elif p.x >= win.x * 0.5 and aim_touch == -1:
+			aim_touch = e.index
+			aim_center = p
+			_aim(p)
+	else:
+		if e.index == move_touch:
+			move_touch = -1
+			move_offset = Vector2.ZERO
+			move_dir = Vector2.ZERO
+			in_down = false
+			in_jump = false
+		elif e.index == aim_touch:
+			aim_touch = -1          # lifting the thumb fires: the next tick sends no shoot bit
+			aim_offset = Vector2.ZERO
+		elif e.index == dodge_touch:
+			dodge_touch = -1
+	gfx.queue_redraw()
+
+func _drag(e: InputEventScreenDrag) -> void:
+	if e.index == move_touch:
+		_move(e.position)
+	elif e.index == aim_touch:
+		_aim(e.position)
+	gfx.queue_redraw()
+
+func _move(p: Vector2) -> void:
+	var off := p - move_center
+	var dist := off.length()
+	var dir := off / dist if dist > 0.0 else Vector2.ZERO
+	var share := dist / (MOVE_RADIUS * k)
+	move_offset = dir * minf(dist, MOVE_RADIUS * k)
+	if share <= NOISE:
+		move_dir = Vector2.ZERO
+		in_down = false
+		in_jump = false
+		_jump_armed = true
+		_rim_armed = true
+		return
+	move_dir = dir
+	var up_deg := rad_to_deg(atan2(-dir.y, absf(dir.x)))   # +90 straight up, -90 straight down
+	in_down = up_deg <= -(90.0 - DOWN_DEG)
+	if up_deg >= JUMP_DEG:
+		in_jump = true
+		if _jump_armed:
+			_jump_armed = false
+			jump_tap = TAP_TICKS
+	else:
+		in_jump = false
+		if up_deg < JUMP_REARM_DEG:
+			_jump_armed = true
+	if dist >= (MOVE_RADIUS + RIM_PAD) * k:
+		if _rim_armed:
+			_rim_armed = false
+			if in_down:
+				jump_tap = TAP_TICKS      # down + jump: the drop through a ledge
+			else:
+				dodge_tap = TAP_TICKS
+	elif share <= RIM_REARM:
+		_rim_armed = true
+
+func _aim(p: Vector2) -> void:
+	var off := p - aim_center
+	var dist := off.length()
+	aim_offset = off.limit_length(AIM_RADIUS * k)
+	if dist > AIM_RADIUS * k * NOISE:
+		aim_dir = off / dist
+		aim_set = true
+
+# The buttons this physics tick (proto B_*). A tap lasts TAP_TICKS ticks.
+func buttons() -> int:
+	var b := 0
+	if move_dir != Vector2.ZERO:
+		if in_down:
+			b |= P.B_DOWN
+		else:
+			if move_dir.x > 0.38:
+				b |= P.B_RIGHT
+			elif move_dir.x < -0.38:
+				b |= P.B_LEFT
+			if move_dir.y < -0.38:
+				b |= P.B_UP
+			elif move_dir.y > 0.38:
+				b |= P.B_DOWN
+	if in_jump or jump_tap > 0:
+		b |= P.B_JUMP
+	if jump_tap > 0:
+		jump_tap -= 1
+	if aim_touch != -1:
+		b |= P.B_SHOOT
+	if dodge_touch != -1 or dodge_tap > 0:
+		b |= P.B_DODGE
+	if dodge_tap > 0:
+		dodge_tap -= 1
+	return b
+
+func aim_deg10() -> int:
+	return posmod(roundi(rad_to_deg(aim_dir.angle()) * 10.0), 3600)
+
+func _base(n: Node2D, c: Vector2, r: float, alpha: float) -> void:
+	n.draw_circle(c, r, Color(0.12, 0.14, 0.2, 0.35 * alpha))
+	n.draw_arc(c, r, 0.0, TAU, 64, Color(1.0, 1.0, 1.0, 0.55 * alpha), 2.0 * k, true)
+
+func _thumb(n: Node2D, p: Vector2, col: Color, alpha: float) -> void:
+	n.draw_circle(p, 48.0 * k, col)
+	n.draw_arc(p, 48.0 * k, 0.0, TAU, 32, Color(0.0, 0.0, 0.0, 0.5 * alpha), 1.5 * k, true)
+
+func _paint(n: Node2D) -> void:
+	var font := ThemeDB.fallback_font
+	# left: move
+	var mlive := move_touch != -1
+	var mc := move_center if mlive else Vector2(330.0 * k, win.y - 330.0 * k)
+	var mr := MOVE_RADIUS * k
+	var ma := 0.9 if mlive else 0.45
+	_base(n, mc, mr, ma)
+	n.draw_arc(mc, mr + RIM_PAD * k, 0.0, TAU, 64, Color(1.0, 1.0, 1.0, 0.2 * ma), 1.0 * k, true)
+	var j := deg_to_rad(JUMP_DEG)
+	n.draw_arc(mc, mr - 4.0 * k, -PI + j, -j, 24, Color(GOLD, (0.9 if in_jump else 0.5) * ma), 3.0 * k, true)
+	var d := deg_to_rad(DOWN_DEG)
+	n.draw_arc(mc, mr - 4.0 * k, PI * 0.5 - d, PI * 0.5 + d, 12, Color(BLUE, (0.9 if in_down else 0.5) * ma), 3.0 * k, true)
+	var mcol := Color(1.0, 1.0, 1.0, 0.85 * ma)
+	if in_jump:
+		mcol = Color(GOLD, 0.9)
+	elif in_down:
+		mcol = Color(BLUE, 0.9)
+	_thumb(n, mc + (move_offset if mlive else Vector2.ZERO), mcol, ma)
+	n.draw_string(font, mc + Vector2(-mr, -mr - 14.0 * k), "MOVE · up jumps · down + rim drops · rim dodges", HORIZONTAL_ALIGNMENT_LEFT, -1, int(20 * k), Color(1, 1, 1, 0.35))
+	# right: aim
+	var alive := aim_touch != -1
+	var ac := aim_center if alive else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
+	var ar := AIM_RADIUS * k
+	var aa := 0.9 if alive else 0.45
+	_base(n, ac, ar, aa)
+	n.draw_line(ac, ac + aim_dir * ar, Color(GOLD, 0.8 * aa), 2.0 * k, true)
+	_thumb(n, ac + (aim_offset if alive else Vector2.ZERO), Color(GOLD, 0.9) if alive else Color(1.0, 1.0, 1.0, 0.85 * aa), aa)
+	n.draw_string(font, ac + Vector2(-ar, -ar - 14.0 * k), "AIM · hold to aim · let go to fire", HORIZONTAL_ALIGNMENT_LEFT, -1, int(20 * k), Color(1, 1, 1, 0.35))
+	# the dodge button
+	var dc := _dodge_center()
+	var held := dodge_touch != -1
+	n.draw_circle(dc, DODGE_R * k, Color(1.0, 0.85, 0.3, 0.7) if held else Color(0.12, 0.14, 0.2, 0.55))
+	n.draw_arc(dc, DODGE_R * k, 0.0, TAU, 48, Color(1, 1, 1, 0.95 if held else 0.55), 2.0 * k, true)
+	n.draw_string(font, dc + Vector2(-DODGE_R * k, 9.0 * k), "DODGE", HORIZONTAL_ALIGNMENT_CENTER, DODGE_R * 2.0 * k, int(26 * k), Color(1, 1, 1, 0.95))

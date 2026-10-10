@@ -108,6 +108,7 @@ var bloom_on := false
 var distort_on := false
 var copies := 1
 var fighters: Array = []     # [sprite, material, plain tex, lit tex, ghost timer, ground tick when dead]
+var aim_pointer := Line2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
 var zones := {}              # key -> [kind, nodes...]
 var zone_seen := {}
@@ -300,7 +301,18 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	f3d = F3D.new()
 	threats.add_child(f3d)
 	f3d_ok = f3d.setup(render_size, TEAM)
+	aim_pointer.width = 4.0
+	aim_pointer.default_color = Color(1.0, 0.95, 0.6, 0.85)
+	aim_pointer.visible = false
+	threats.add_child(aim_pointer)
 	fx.prewarm(Vector2(960, 1200))
+
+# Your own aim while you hold shoot: a short line from the bow (the game client).
+func show_aim(pos: Vector2, ang: float, on: bool) -> void:
+	aim_pointer.visible = on
+	if on:
+		var d := Vector2.from_angle(ang)
+		aim_pointer.points = PackedVector2Array([pos + d * 34.0, pos + d * 110.0])
 
 func _build_tiles(layer: TileMapLayer, tex: Texture2D) -> void:
 	var ts := TileSet.new()
@@ -446,13 +458,24 @@ func render(s: Dictionary, delta: float) -> void:
 	fighter_count = mini(fl.size(), fighters.size())
 	if tier == 4:
 		f3d.update(fl)
+	# The game: slot = seat, so a fighter keeps its colour whatever seats are
+	# taken. The benchmark's copies (T5, T7) repeat the seats, so they go by index.
+	var by_seat := copies == 1
 	for i in fighters.size():
 		var slot: Array = fighters[i]
 		var spr: Sprite2D = slot[0]
-		if i >= fl.size() or tier == 4:
+		var f: Dictionary = {}
+		if not by_seat:
+			if i < fl.size():
+				f = fl[i]
+		else:
+			for cand in fl:
+				if int(cand["id"]) == i:
+					f = cand
+					break
+		if f.is_empty() or tier == 4:
 			spr.visible = false
 			continue
-		var f: Dictionary = fl[i]
 		spr.visible = true
 		spr.position = Vector2(f["x"] + 18.0, f["y"] + 63.0)
 		spr.flip_h = (f["flags"] & 1) == 0

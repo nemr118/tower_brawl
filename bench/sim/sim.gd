@@ -101,6 +101,7 @@ class Fighter:
 	var aim: float = 0.0
 	var aiming: bool = false
 	var points: int = 0         # the server copies the seat's points here for the snapshot
+	var killer: int = 255       # who killed this fighter (255: the arena itself)
 	var dead_t: int = 0
 	var burn_t: int = 0
 	var miasma_t: int = 0
@@ -408,13 +409,14 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 	f.rolling = false
 	_event(P.E_SPAWN, spot.x, spot.y, f.id, 0)
 
-func _kill(f: Fighter, _killer: int, cause: int) -> void:
+func _kill(f: Fighter, killer: int, cause: int) -> void:
 	if f.state == P.F_DEAD:
 		return
 	f.state = P.F_DEAD
 	f.state_t = 0
 	f.dead_t = RESPAWN_TICKS
 	f.aiming = false
+	f.killer = killer
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
 
 func _update_fighter(f: Fighter) -> void:

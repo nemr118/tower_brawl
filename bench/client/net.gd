@@ -1,6 +1,8 @@
-# The bench client's network side: the websocket to bench_server.gd, snapshot
-# decoding, a render clock 50 ms behind the server, interpolation between two
-# snapshots, the event queue, pings, and the network numbers for the cards.
+# The client's network side: the websocket to server/game_server.gd (or the
+# benchmark's bench_server.gd), the hello with the version and the seat token,
+# the JSON messages (a queue the client drains), snapshot decoding, a render
+# clock 50 ms behind the server, interpolation between two snapshots, the event
+# queue, pings, and the network numbers for the benchmark's cards.
 extends RefCounted
 
 const P = preload("res://sim/proto.gd")
@@ -11,9 +13,11 @@ const H := 1080.0
 var ws := WebSocketPeer.new()
 var url := ""
 var who := ""
+var token := ""
 var state := WebSocketPeer.STATE_CLOSED
 var snaps: Array = []          # decoded snapshots, oldest first
 var events: Array = []         # [tick, event]
+var messages: Array = []       # JSON dictionaries from the server, oldest first
 var tick_offset := 0.0
 var have_clock := false
 var client_tick := 0
@@ -28,9 +32,10 @@ var gaps := PackedFloat32Array()
 var bytes_in := 0
 var win_start_ms := 0.0
 
-func open(u: String, name: String) -> void:
+func open(u: String, name: String, seat_token: String = "") -> void:
 	url = u
 	who = name
+	token = seat_token
 	ws = WebSocketPeer.new()
 	ws.inbound_buffer_size = 1 << 20
 	var tls := TLSOptions.client_unsafe() if u.begins_with("wss") and OS.get_name() != "Web" else null
@@ -43,15 +48,22 @@ func poll() -> void:
 	ws.poll()
 	var st := ws.get_ready_state()
 	if st == WebSocketPeer.STATE_OPEN and state != WebSocketPeer.STATE_OPEN:
-		ws.send_text(JSON.stringify({"kind": "hello", "name": who}))
+		ws.send_text(JSON.stringify({"kind": "hello", "name": who, "version": P.VERSION, "token": token}))
 		win_start_ms = now_ms()
+		snaps.clear()
+		have_clock = false
 	state = st
 	if st != WebSocketPeer.STATE_OPEN:
 		return
 	while ws.get_available_packet_count() > 0:
 		var pkt := ws.get_packet()
 		bytes_in += pkt.size()
-		if pkt.size() == 0 or ws.was_string_packet():
+		if pkt.size() == 0:
+			continue
+		if ws.was_string_packet():
+			var d = JSON.parse_string(pkt.get_string_from_utf8())
+			if typeof(d) == TYPE_DICTIONARY:
+				messages.append(d)
 			continue
 		if pkt[0] == P.T_SNAP:
 			_on_snapshot(pkt)
@@ -71,7 +83,20 @@ func poll() -> void:
 		worst_gap = 0.0
 		ws.put_packet(out)
 
-# 60 times a second from _physics_process: the load a real client would send.
+# A JSON message to the server ({"kind": ...}).
+func send(d: Dictionary) -> bool:
+	if state != WebSocketPeer.STATE_OPEN:
+		return false
+	ws.send_text(JSON.stringify(d))
+	return true
+
+func take_messages() -> Array:
+	var m := messages
+	messages = []
+	return m
+
+# 60 times a second from _physics_process: the buttons (proto B_*) and the aim
+# in 0.1 degree steps, with the 3 ticks before, so a late packet loses nothing.
 func send_input(buttons: int, aim: int) -> void:
 	if state != WebSocketPeer.STATE_OPEN:
 		return
@@ -92,10 +117,7 @@ func send_input(buttons: int, aim: int) -> void:
 
 # False when the server is not connected: the card is lost.
 func send_card(d: Dictionary) -> bool:
-	if state != WebSocketPeer.STATE_OPEN:
-		return false
-	ws.send_text(JSON.stringify(d))
-	return true
+	return send(d)
 
 func _on_snapshot(pkt: PackedByteArray) -> void:
 	var t := now_ms()
@@ -108,15 +130,23 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	b.data_array = pkt
 	b.seek(1)
 	var s := {"tick": b.get_u32()}
+	s["phase"] = b.get_u8()
+	s["round"] = b.get_u8()
+	s["left"] = b.get_u16()
+	s["goal"] = b.get_u8()
+	s["winner"] = b.get_u8()
 	var nf := b.get_u8()
 	var na := b.get_u16()
 	var nz := b.get_u8()
 	var ne := b.get_u16()
 	var fighters: Array = []
+	var by_id := {}
 	for i in nf:
-		fighters.append({"id": b.get_u8(), "state": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()),
+		var f := {"id": b.get_u8(), "state": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()),
 			"vx": b.get_8(), "vy": b.get_8(), "flags": b.get_u8(), "aim": b.get_u8() * TAU / 256.0,
-			"arrows": b.get_u8(), "st": b.get_u8()})
+			"arrows": b.get_u8(), "st": b.get_u8(), "points": b.get_u8(), "flags2": b.get_u8()}
+		fighters.append(f)
+		by_id[f["id"]] = f
 	var arrows := {}
 	for i in na:
 		var id := b.get_u16()
@@ -132,6 +162,7 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	for i in ne:
 		events.append([s["tick"], [b.get_u8(), b.get_16(), b.get_16(), b.get_u8(), b.get_u8()]])
 	s["fighters"] = fighters
+	s["by_id"] = by_id
 	s["arrows"] = arrows
 	s["zones"] = zones
 	snaps.append(s)
@@ -146,6 +177,10 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 
 func render_tick() -> float:
 	return now_ms() / 1000.0 * 60.0 + tick_offset - DELAY_TICKS
+
+# The newest snapshot (empty before the first).
+func newest() -> Dictionary:
+	return snaps[snaps.size() - 1] if snaps.size() > 0 else {}
 
 func take_events(rt: float) -> Array:
 	var out: Array = []
@@ -162,7 +197,9 @@ static func _wlerp(a: float, b: float, t: float, size: float) -> float:
 	return fposmod(a + d * t, size)
 
 # The world at render tick rt: {fighters: [..], arrows: {id: ..}, zones: [..]}.
-func sample(rt: float) -> Dictionary:
+# Fighters are matched by seat between the two snapshots. own_id >= 0: that
+# fighter comes from the newest snapshot instead (your own, with less lag).
+func sample(rt: float, own_id: int = -1) -> Dictionary:
 	if snaps.is_empty():
 		return {}
 	var a: Dictionary = snaps[0]
@@ -176,10 +213,14 @@ func sample(rt: float) -> Dictionary:
 		b = snaps[0]
 	var span: float = b["tick"] - a["tick"]
 	var t := clampf((rt - a["tick"]) / span, 0.0, 1.0) if span > 0.0 else 1.0
+	var newest_snap: Dictionary = snaps[snaps.size() - 1]
 	var fighters: Array = []
-	for i in b["fighters"].size():
-		var fb: Dictionary = b["fighters"][i]
-		var fa: Dictionary = a["fighters"][i] if i < a["fighters"].size() else fb
+	for fb_raw in b["fighters"]:
+		var fb: Dictionary = fb_raw
+		if own_id >= 0 and fb["id"] == own_id and newest_snap["by_id"].has(own_id):
+			fighters.append(newest_snap["by_id"][own_id].duplicate())
+			continue
+		var fa: Dictionary = a["by_id"].get(fb["id"], fb)
 		var f := fb.duplicate()
 		var jx := absf(fb["x"] - fa["x"])
 		var jy := absf(fb["y"] - fa["y"])

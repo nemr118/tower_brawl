@@ -40,3 +40,6 @@ bench/.godot/
 bench/untracked/
 bench_results/
 build/web/bench/
+
+# The new game (P1): the exported page is rebuilt by tools/v2_build.sh
+build/web/v2/
