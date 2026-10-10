@@ -1,4 +1,4 @@
-# Branch bench/8p. One line per stage from tools/bench_ab.py: steady tick cost, the worst
+# Branch beta. One line per stage from tools/bench_ab.py: steady tick cost, the worst
 # tick while players join, network thread time, CPU, and what the fake players got.
 #   python3 tools/bench_ab_summary.py <out_dir> [<out_dir> ...]
 import glob, json, os, statistics, sys

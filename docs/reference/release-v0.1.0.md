@@ -11,6 +11,8 @@ decided: 2026-09-07
 
 **How it is verified.** One playtest on the v0.0.41 build, section 6 of [[Playtest — Master Validation Suite]], is the final human check of v0.1.0. The same evening's S25 Ultra rows from `tools/stats_table.py` (section 1) become the baseline for v0.1.1. Because v0.1.0 has no code change over v0.0.41, a pass on v0.0.41 counts for v0.1.0. If any code changes between the playtest and the tag, the playtest no longer counts and section 6 is played again.
 
+**2026-10-10, the git rule changed (CLAUDE.md rule 9):** read `master` below as `main`, and skip the `release/` branch: the next minor is `beta` merged into `main`, then the tag.
+
 ## 1. Before the tag (all must be true)
 - [ ] `git status --short` prints nothing on `master`; `git describe --tags` says `v0.0.41`.
 - [ ] Master sheet section 6 verdict ticked **ship**. Section 5 verdict ticked **the bundle stays** (or the bundle is off, see 4.3, and the patch page says so).

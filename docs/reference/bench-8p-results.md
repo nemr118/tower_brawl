@@ -210,3 +210,54 @@ At full size (2560 x 1440) it dropped to exactly 30 fps from T2 on, where the fi
 **Not known:** how warm the phone was at the start (it had rested about 50 minutes) and the room temperature. A browser cannot read the phone's temperature.
 
 **How to repeat:** the link above, then `./venv/bin/python tools/bench_report.py --date 2026-09-13`. For any step run 3 or more times, the report prints a trend: fps, p50 and p99 per step, the last against the first, how many held 60, and the first miss.
+
+## The split test, part 1: T3 on the S25 Ultra (2026-09-14)
+
+**The question:** what in T3 costs the most on the S25 Ultra: the fog layers, the lights, the particles or the post shader? The plan: [[bench-8p-plan]] section 8.
+
+**The setup.** The S25 Ultra, named "S25-split" in the data (`bench_results/2026-09-14/`), cool at the start. The link: `…/bench/index.html?name=S25-split&split=t3`. It ran 6 settings at 1080, 60 s each, forward and then back (21:15 to 21:27), so every setting ran once early and once late. The bench server ran on the PC with 7 fake players: 0.31 ms a tick, worst 2.2 ms, 3% CPU. Every step's switch check says `ok`. The GPU timer gave 2 630 samples and gave up on none.
+
+Numbers are first pass / second pass.
+
+| Setting | fps | Held 60 | p99 | Page frame work, p95 | GPU time p95, against T3 | Draw calls |
+|---|---|---|---|---|---|---|
+| T3 | 57 / 56 | 0 of 2 | 24 / 24 ms | 20.9 / 21.1 ms | the base | 151 / 159 |
+| T3 with 1 fog layer | 56 / 56 | 0 of 2 | 24 / 24 | 20.9 / 20.8 | −4.9 ms | 146 / 155 |
+| T3 without fog | 59 / 57 | 1 of 2 | 22 / 23 | 19.3 / 20.3 | −6.7 ms | 145 / 154 |
+| T3 without lights | 59 / 58 | 2 of 2 | 22 / 24 | 19.1 / 20.0 | −6.9 ms | 140 / 157 |
+| **T3 without particles** | **60 / 60** | **2 of 2** | **19 / 19** | **10.0 / 10.2** | **−11.4 ms** | **27 / 31** |
+| T3 without the post shader | 57 / 56 | 0 of 2 | 23 / 24 | 20.5 / 20.8 | −5.6 ms | 151 / 160 |
+
+**What it means**
+
+1. **The particles cost the most, by far.** Without them the page's frame work halves (21 to 10 ms), the draw calls fall from about 155 to about 29, and the phone held 60 in both minutes with the best frame times of the run. With particles on, 26 to 61 emitters ran at once, and each one adds its own draw calls.
+2. **The cost is on the CPU side as much as on the chip.** "Page frame work" is the time the page spends building a frame. It only moved when the particles went. So the number of emitters (draw calls) is the first suspect, not the number of pixels they cover.
+3. **The lights come second.** Without them the phone held 60 in both minutes and saved 6.9 ms of GPU time.
+4. **The fog costs about the same as the lights on the chip** (−6.7 ms), but held 60 in only 1 of 2 minutes. One layer instead of two saved little.
+5. **The post shader is cheap.** Removing it changed almost nothing.
+6. **No drops to 30 this time.** The phone was cool, and the time at 30 stayed at 0 to 1%. T3 missed 60 because the middle frame ran a little late (p50 17.5 ms), not because Android halved the rate.
+7. **T3 again missed 60** (57 / 56 fps), as in run C.
+
+**What it changes**
+
+- By the rule we set, run C again would use T3 without particles. That is not the look we want. The real job is cheaper particles: fewer emitters that each do more (one emitter for all arrow trails, one for all torches), fewer particles per burst, or both. A particle split test can tell which.
+- Lights and fog are the next two places to save, in that order.
+
+**A problem with the GPU number.** It cannot be judged against a fixed mark. Even the lightest step, which held 60, reads 16 to 18 ms. The browser only finishes a frame's drawing when the frame goes to the screen, so the number includes the wait for the screen. Differences between steps on one phone still mean something. So the lights rule of the plan ("`gpu_p95` at 13 ms or less") cannot work. Proposed instead (waits on the user): the highest light count that held 60 in both passes, with `gpu_p95` no more than 2 ms above "lights 4".
+
+**Still to run:** the iPhone (`split=t2`), the S25 Ultra and the Pixel (`split=lights`).
+
+## The verdict (2026-10-10): the benchmark stops here, the game gets built
+
+The user's call: the kids are not interested in the benchmark, the game already looks great on the phone, and we don't yet know exactly how the game is played. So we build the game now and tune the look as we go, with settings for phones that struggle ([[Design Decisions v0.2]] D18, the plan: [[first-playable-plan]]). The iPhone's T2 split and the lights ladders were not run.
+
+**What the benchmark settled, and what the game keeps from it**
+1. **The server needs no dial-back.** 8 fighters cost the laptop 2.4 ms of a 16.7 ms tick (0.3 ms on the PC), and a network thread keeps a join from stalling anyone.
+2. **The family Wi-Fi is fine.** 30 snapshots a second reach every phone; the Pixel wants a longer draw delay (about 100 ms, the others 50), so the game sets it per player.
+3. **Draw at 1920 x 1080 and scale up.** Pixel art looks the same, and the S25 Ultra gets a third of its frame back.
+4. **Lit sprites cost nothing.** Every phone held 60 at T1. The Dead Cells-inspired base is safe.
+5. **Particles are the first cost.** On the S25 Ultra at T3, dropping them halved the page's frame work (21 to 10 ms) and the draw calls (155 to 29), and the phone held 60 in both minutes. Lights were second (6.9 ms of GPU time), fog about the same, the post shader cheap. So the game's effects use few emitters that each do more, pooled, with a budget per effect.
+6. **T3 at 1080 has no room on the S25 Ultra**, and a warm phone drops to 30 in bursts (run C). So the game ships a quality setting (high = T3, normal = T2, low = T1) and a step-down that acts before Android halves the rate.
+7. **The iPhone holds T1 only.** It starts on low. What in T2 it chokes on is still unknown.
+8. **Live 3D fighters cost about the same as sprites** (T4 against T3), so D14 stays open on cost; the bake route stays the recommendation for the work it saves at draw time.
+9. **The max look (T6) is over budget everywhere.** It stays a "high" setting for strong phones, if ever.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Screenshots of the benchmark page (branch bench/8p) in headless Chromium over
+# Screenshots of the benchmark page (branch beta) in headless Chromium over
 # CDP, one per tier in look-only mode (?tier=N). Software drawing (SwiftShader):
 # the pictures are real, the speed is not. Nothing opens on the screen.
 #   ./venv/bin/python tools/bench_shot.py --server wss://127.0.0.1:8095 --tiers 0,2,3,4 --out <prefix>
@@ -14,6 +14,8 @@ ap.add_argument("--wait", type=float, default=14.0)
 ap.add_argument("--out", default="/tmp/bench_shot")
 ap.add_argument("--port", type=int, default=9344)
 ap.add_argument("--extra", default="")
+ap.add_argument("--looks", default="", help="split-test steps instead of tiers, e.g. t3,t3-fog (world.gd VARIANTS)")
+ap.add_argument("--ladder", default="", help="run a ladder instead, e.g. 'split=t3&seconds=4': one picture after --wait")
 a = ap.parse_args()
 
 prof = tempfile.mkdtemp(prefix="bench-shot-")
@@ -42,12 +44,17 @@ try:
                 return r.get("result", {})
     cdp("Page.enable")
     cdp("Emulation.setDeviceMetricsOverride", width=1920, height=1080, deviceScaleFactor=1, mobile=False)
-    for t in a.tiers.split(","):
-        url = f"{a.page}?server={a.server}&tier={t}&view-res=1080&name=shot" + (("&" + a.extra) if a.extra else "")
+    if a.ladder:
+        shots = [(f"{a.page}?server={a.server}&name=chromium&auto&{a.ladder}", f"{a.out}_ladder.png")]
+    elif a.looks:
+        shots = [(f"{a.page}?server={a.server}&look={v}&view-res=1080&name=shot", f"{a.out}_{v}.png") for v in a.looks.split(",")]
+    else:
+        shots = [(f"{a.page}?server={a.server}&tier={t}&view-res=1080&name=shot", f"{a.out}_T{t}.png") for t in a.tiers.split(",")]
+    for url, path in shots:
+        url += ("&" + a.extra) if a.extra else ""
         cdp("Page.navigate", url=url)
         time.sleep(a.wait)
         png = base64.b64decode(cdp("Page.captureScreenshot", format="png")["data"])
-        path = f"{a.out}_T{t}.png"
         open(path, "wb").write(png)
         print("shot", path, len(png), "bytes")
 finally:

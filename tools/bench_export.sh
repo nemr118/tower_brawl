@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exports the benchmark page (bench/, branch bench/8p) to build/web/bench/ with a
+# Exports the benchmark page (bench/, branch beta) to build/web/bench/ with a
 # new pck name every time, so a phone never runs a cached old copy. The game's
 # own server serves it at https://<host>:8443/bench/index.html.
 #   tools/bench_export.sh

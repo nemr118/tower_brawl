@@ -90,8 +90,11 @@ func setup(lit_parent: Node2D, glow_parent: Node2D, colors: Array, cpu_mode: boo
 
 # The first burst of every kind, where nobody sees it, so shaders compile at load.
 func prewarm(at: Vector2) -> void:
+	var was := enabled
+	enabled = true
 	for kind in pools:
 		_burst(kind, at)
+	enabled = was
 
 func set_tier(fx_on: bool, lights_on: bool) -> void:
 	enabled = fx_on
@@ -133,6 +136,8 @@ func set_ratio(r: float) -> void:
 			e.amount_ratio = ratio
 
 func _burst(kind: String, pos: Vector2, color := Color.WHITE, rot := 0.0) -> void:
+	if not enabled:
+		return
 	var arr: Array = pools[kind]
 	var i: int = pool_i[kind]
 	pool_i[kind] = (i + 1) % arr.size()
@@ -143,6 +148,8 @@ func _burst(kind: String, pos: Vector2, color := Color.WHITE, rot := 0.0) -> voi
 	e.restart()
 
 func flash(pos: Vector2, size: float, color: Color, secs: float) -> void:
+	if not enabled:
+		return
 	var f: Array = flashes[flash_i]
 	flash_i = (flash_i + 1) % flashes.size()
 	f[0].global_position = pos
@@ -170,6 +177,8 @@ func ring(pos: Vector2, max_r: float, color: Color, secs: float) -> void:
 	rings.append([pos, 0.0, max_r, color, secs])
 
 func scorch(pos: Vector2) -> void:
+	if not enabled:
+		return
 	var d: Array = decals[decal_i]
 	decal_i = (decal_i + 1) % decals.size()
 	d[0].global_position = pos
@@ -178,6 +187,8 @@ func scorch(pos: Vector2) -> void:
 	d[1] = 8.0
 
 func ghost(tex: Texture2D, region: Rect2, pos: Vector2, flip: bool, color: Color) -> void:
+	if not enabled:
+		return
 	var g: Array = ghosts[ghost_i]
 	ghost_i = (ghost_i + 1) % ghosts.size()
 	g[0].texture = tex
@@ -189,9 +200,10 @@ func ghost(tex: Texture2D, region: Rect2, pos: Vector2, flip: bool, color: Color
 	g[0].visible = true
 	g[1] = 0.25
 
+# Runs at every tier: rings, shake and colour split feed the fog and the post
+# shader, and short lights are their own part. The particle, flash, scorch and
+# ring drawing checks `enabled` itself (the split test turns them off alone).
 func on_event(e: Array) -> void:
-	if not enabled:
-		return
 	var pos := Vector2(e[1], e[2])
 	var type: int = e[0]
 	if type == P.E_JUMP:
@@ -307,11 +319,21 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
+	if not enabled:
+		return
 	for r in rings:
 		var k: float = r[1] / r[4]
 		var col: Color = r[3]
 		col.a = 1.0 - k
 		draw_arc(r[0], r[2] * (0.25 + 0.75 * k), 0.0, TAU, 28, col, 6.0 * (1.0 - k) + 3.0)
+
+# Emitters that are shown and emitting now (the split test's proof that particles are on or off).
+func count_drawn() -> int:
+	var n := 0
+	for e in all_emitters:
+		if e.emitting and e.is_visible_in_tree():
+			n += 1
+	return n
 
 func count_active() -> int:
 	var n := 0

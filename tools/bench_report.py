@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# The 8-player benchmark's report (branch bench/8p). Reads one day's results:
+# The 8-player benchmark's report (branch beta). Reads one day's results:
 # bench_results/<date>/server.jsonl (a line a second from bench_server.gd),
 # synth.jsonl (bench_synth.py) and cards.jsonl (a card per phone step), and
 # prints a table each with the pass marks of docs/reference/bench-8p-plan.md.
@@ -91,6 +91,69 @@ def trend_lines(cards):
         # the heat mark since 2026-09-13 is "held 60 in every step"; the old 90% mark passed run C at 1 of 10
         print(f"      held 60 in {held} of {len(g)} (every step: {mark(held == len(g))})" + (f" | first miss: step {miss}" if miss else "") + f" | last against first: {ratio * 100:.0f}% (old mark >= 90%: {mark(ratio >= 0.9)})")
 
+# The split test (split=t2|lights|t3): each step turns one part on or off. The
+# card says what was asked ("parts") and what the nodes really had on; this
+# checks the two agree.
+SPLIT_REF = {"t2": "t1", "lights": "l4", "t3": "t3"}
+
+def switches(c):
+    p, bad = c.get("parts") or {}, []
+    if not p:
+        return "?"
+    static = int(p.get("torch_lights", 0)) + int(p.get("grid_lights", 0))
+    drawn, fed, em = int(c.get("lights_drawn", -1)), int(c.get("fog_lights_fed", -1)), int(c.get("emitters_drawn", -1))
+    mode = p.get("lights_draw", "all")
+    want = {"all": static, "base": min(4, static), "none": 0}.get(mode, static)
+    # short lights (blasts, fire) come and go, so "all" can draw more than the fixed ones
+    if drawn < want or (mode != "all" and drawn != want):
+        bad.append(f"lights drawn {drawn}, want {want}")
+    if int(c.get("fog_layers_on", -1)) != int(p.get("fog", 0)):
+        bad.append(f"fog layers {c.get('fog_layers_on')}")
+    if int(p.get("fog", 0)) > 0:
+        if p.get("fog_loops", True) and fed < min(32, static):
+            bad.append(f"fog got {fed} lights")
+        if not p.get("fog_loops", True) and fed != 0:
+            bad.append(f"plain fog got {fed} lights")
+    if bool(c.get("post_on")) != bool(p.get("post")):
+        bad.append("post")
+    if bool(p.get("particles")) != (em > 0):
+        bad.append(f"{em} emitters")
+    return "ok" if not bad else "WRONG: " + ", ".join(bad)
+
+def split_table(cards):
+    steps = [c for c in cards if c.get("variant") and c.get("tier") != "done" and not c.get("skipped")]
+    if not steps:
+        return
+    split = steps[0].get("split", "?")
+    order, by = [], {}
+    for c in steps:
+        if c["variant"] not in by:
+            order.append(c["variant"])
+            by[c["variant"]] = []
+        by[c["variant"]].append(c)
+    ref_id = SPLIT_REF.get(split, order[0]) if SPLIT_REF.get(split) in by else order[0]
+    def avg(g, k):
+        v = [float(x[k]) for x in g if k in x and float(x[k]) >= 0]
+        return sum(v) / len(v) if v else None
+    def per_pass(g, k, fmt):
+        return "/".join(fmt(float(x[k])) if k in x and float(x[k]) >= 0 else "-" for x in g)
+    rg, rs = avg(by[ref_id], "gpu_p95"), avg(by[ref_id], "slow_share")
+    print(f"   split {split}: {len(order)} settings, {len(steps)} steps of {float(steps[0].get('seconds', 0)):.0f} s, forward then back (first/second pass)")
+    print(f"   {'setting':15} {'fps':>7} {'at 30 %':>7} {'p99 ms':>7} {'work p95':>9} {'gpu p95':>9} {'gpu vs ' + ref_id:>14} {'at 30 vs':>8} {'held 60':>7}  switches")
+    for v in order:
+        g = by[v]
+        ga, sa = avg(g, "gpu_p95"), avg(g, "slow_share")
+        dg = f"{ga - rg:+.1f} ms" if ga is not None and rg is not None else "-"
+        ds = f"{(sa - rs) * 100:+.0f} pt" if sa is not None and rs is not None else "-"
+        sw = "; ".join(sorted(set(switches(x) for x in g)))
+        print(f"   {g[0]['tier']:15} {per_pass(g, 'fps', lambda x: f'{x:.0f}'):>7} {per_pass(g, 'slow_share', lambda x: f'{x * 100:.0f}'):>7}"
+              f" {per_pass(g, 'ft_p99', lambda x: f'{x:.0f}'):>7} {per_pass(g, 'work_p95', lambda x: f'{x:.1f}'):>9}"
+              f" {per_pass(g, 'gpu_p95', lambda x: f'{x:.1f}'):>9} {dg:>14} {ds:>8} {sum(1 for x in g if held60(x)):>5}/{len(g)}  {sw}")
+    n = sum(int(float(x.get("gpu_n", 0))) for x in steps)
+    lost = sum(int(float(x.get("gpu_lost", 0))) for x in steps)
+    errs = sorted({str(x.get("timing_err") or x.get("timing") or "") for x in steps} - {""})
+    print(f"   GPU samples {n}, given up {lost}" + (f" | timer: {', '.join(errs)}" if errs else ""))
+
 def cards_table(recs):
     runs = {}
     for c in recs:
@@ -104,7 +167,7 @@ def cards_table(recs):
         cards.sort(key=lambda c: c.get("recv_t", 0))  # the order they arrived (stable: old cards keep file order)
         dev = cards[0].get("device", {})
         print(f"\n{name} (run {run}) | {dev.get('gpu', dev.get('adapter', '?'))} | screen {dev.get('sw','?')}x{dev.get('sh','?')} dpr {dev.get('dpr','?')} cores {dev.get('cores','?')} mem {dev.get('mem','?')} GB")
-        print(f"   {'#':>2} {'ended':8} {'tier':12} {'res':6} {'cpu':3} {'render':10} {'fps':>5} {'p50':>6} {'p95':>6} {'p99':>6} {'max':>7} {'hitch':>5} {'proc':>5} {'draws':>5} {'lights':>6} {'rtt95':>5} {'gap99':>6} {'stall':>5}  verdict")
+        print(f"   {'#':>2} {'ended':8} {'tier':14} {'res':6} {'cpu':3} {'render':10} {'fps':>5} {'p50':>6} {'p95':>6} {'p99':>6} {'max':>7} {'hitch':>5} {'proc':>5} {'draws':>5} {'lights':>6} {'rtt95':>5} {'gap99':>6} {'stall':>5}  verdict")
         best = {}
         w0 = next((c['window'] for c in cards if c.get('window')), None)
         for n, c in enumerate(cards, 1):
@@ -119,18 +182,21 @@ def cards_table(recs):
                 for k in ("level", "fog_layers", "fighters", "lights"):
                     lv[k] = int(lv[k])
             if c.get("skipped"):
-                print(f"   {step} {c['tier']:12} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} skipped: {c['skipped']}")
+                print(f"   {step} {c['tier']:14} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} skipped: {c['skipped']}")
                 continue
             if c.get("levels"):
-                print(f"   {step} {c['tier']:12} {c['res']:6} limit test: stopped at level {len(c['levels'])}")
+                print(f"   {step} {c['tier']:14} {c['res']:6} limit test: stopped at level {len(c['levels'])}")
                 for lv in c["levels"]:
                     print(f"      level {lv['level']:2d}: particles x{lv['particles']:.2f} fog layers {lv['fog_layers']} fighters {lv['fighters']:2d} lights {lv['lights']:2d} | {lv['fps']:5.0f} fps p95 {lv['ft_p95']:6.1f} p99 {lv['ft_p99']:6.1f} ms proc {lv['proc_ms']:4.1f} | {mark(held60(lv))}")
                 continue
             rs = "x".join(str(v) for v in c.get("render_size", []))
-            print(f"   {step} {c['tier']:12} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} {rs:10} {c['fps']:5.0f} {c['ft_p50']:6.1f} {c['ft_p95']:6.1f} {c['ft_p99']:6.1f} {c['ft_max']:7.1f} {c['hitches_50ms']:5d} {c['proc_ms']:5.1f} {c['draw_calls_max']:5d} {c['lights_now']:6d} {c['rtt_p95']:5.0f} {c['gap_p99']:6.1f} {c['stalls_150ms']:5d}  {mark(held60(c))}" + (f"  (window changed to {c['window'][0]:.0f}x{c['window'][1]:.0f})" if w0 and c.get('window') != w0 else ""))
-            if held60(c) and not c.get("cpu_particles"):
+            print(f"   {step} {c['tier']:14} {c['res']:6} {'cpu' if c.get('cpu_particles') else '':3} {rs:10} {c['fps']:5.0f} {c['ft_p50']:6.1f} {c['ft_p95']:6.1f} {c['ft_p99']:6.1f} {c['ft_max']:7.1f} {c['hitches_50ms']:5d} {c['proc_ms']:5.1f} {c['draw_calls_max']:5d} {c['lights_now']:6d} {c['rtt_p95']:5.0f} {c['gap_p99']:6.1f} {c['stalls_150ms']:5d}  {mark(held60(c))}" + (f"  (window changed to {c['window'][0]:.0f}x{c['window'][1]:.0f})" if w0 and c.get('window') != w0 else ""))
+            if held60(c) and not c.get("cpu_particles") and not c.get("variant"):
                 best[c["res"]] = max(best.get(c["res"], -1), c["tier_i"])
         trend_lines(cards)
+        split_table(cards)
+        if all(c.get("variant") for c in cards if c.get("tier") != "done"):
+            continue
         names = ["T0 plain", "T1 lights", "T2 effects", "T3 shaders", "T4 live 3D", "T5 stress", "T6 max", "T7 limit"]
         print("   highest tier held at 60 fps: " + ", ".join(f"{res}: {names[t] if t >= 0 else 'none'}" for res, t in best.items()) if best else "   highest tier held at 60 fps: none")
 

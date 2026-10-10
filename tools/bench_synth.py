@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# The 8-player benchmark's synthetic clients (branch bench/8p). N threads, each a
+# The 8-player benchmark's synthetic clients (branch beta). N threads, each a
 # websocket client of bench/server/bench_server.gd: 60 inputs a second (4 ticks
 # per packet), a ping every 0.5 s, and it reads every snapshot. It fills the
 # seats the phones don't, so the server carries 8 real sockets, and it measures

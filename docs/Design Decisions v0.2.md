@@ -21,6 +21,12 @@ One entry per decision, written when the user makes it: the decision, the option
 - **What it means:** every combat number starts from TowerFall's value in the decompiled code, scaled to our size. A tuning table keeps "TowerFall's number → ours → why" for each one. The art is modern and our own, with Dead Cells as the inspiration, not a pixel-exact copy. D3 is reopened as "how characters differ".
 - **First step:** the 8-player benchmark of the server and the phones ([[bench-8p-plan]]).
 
+### D18. Build the game now, tune the look later — decided 2026-10-10 (the user)
+- **Decision, in the user's words:** "I'd really like to get this game off the ground and playable with my kids. They aren't really interested in the benchmarking. The game looks great from the benchmark on my phone. Can we just proceed and tweak optimizations as we go? The graphics tweaks are a great lever to pull, but we don't even know exactly how the game is played. If we see performance issues in the future, we can revisit tweaking lighting or having settings so devices that struggle can tone down areas that impact their performance."
+- **What it settles:** G0 (the benchmark) ends with its verdict ([[bench-8p-results]]); the iPhone and lights ladders are dropped. The first build is the first playable ([[first-playable-plan]]), grown from the bench: the simulation, the server, the client and the arena it already has, with real buttons, seats, rounds, a lobby, a HUD and the phone controls. The look is tuned by playing, and a quality setting (high / normal / low) handles phones that struggle (P2).
+- **Placeholders, not decisions:** P1 plays TowerFall's rules as written (one life a round and the catch dodge, D2 A and D4 A; hold to aim and let go to fire, D5 A). The first play night's sheet judges them.
+- **Not picked:** finishing the split test first; building the long plan's phases in order (G1 to G4 before anyone plays).
+
 **How the old list folds in:**
 
 | Old item | Where it goes |

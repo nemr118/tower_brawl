@@ -1,4 +1,4 @@
-# Branch bench/8p. Runs the bench server with different settings, one stage after
+# Branch beta. Runs the bench server with different settings, one stage after
 # another, locally or on the laptop (a copy in ~/tower_brawl_bench there), with the
 # fake players from this PC. Used for the network thread tests in bench-8p-results.md.
 #   python3 tools/bench_ab.py <out_dir> local|laptop <port> name:fighters:cap:clients:secs:netthread[:sleep_ms[:cores]] ...

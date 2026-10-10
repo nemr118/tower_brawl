@@ -1,6 +1,6 @@
 ---
 tags: [reference, plan, test]
-status: plan 2026-09-10, waits on "go"
+status: done 2026-10-10 (G0 closed by the user; the verdict is in bench-8p-results)
 ---
 # The 8-player benchmark (phase G0)
 
@@ -142,3 +142,49 @@ godot --headless --path bench res://server/bench_server.tscn -- --fighters 8    
 - **A parse error in a script started with `--script` never quits Godot** (it looks like a hang). Run `godot --headless --path bench --check-only --script res://<file>` first.
 
 **First phone try (2026-09-11): nothing saved.** The phones ran the ladder while no bench server was running. The page drew an empty arena (no fighters, arrows or effects, because those come from the server) and quietly dropped every card. The numbers on the phone screens are too kind and are not used. Fixed: the page now waits for the server (see the steps above). Run B again.
+
+## 8. The split test (2026-09-14, same branch)
+**The questions** (the user, 2026-09-13): (1) what in T2 slows the iPhone: particles, fog or light shafts; (2) how many lights the Androids carry: 8, 16, 24 or 32; (3) what in T3 costs the most on the S25 Ultra: fog layers, lights, particles or the post shader. Run C showed T3 at 1080 has no room to spare.
+
+**60 fps is a ceiling.** A phone never draws faster than its screen, so a step with room to spare and a step that only just makes it both read 16.7 ms frames. So every card now also carries:
+- `slow_share`: the share of the step spent on frames over 25 ms (the time Android drew at 30). Measured, not estimated.
+- `work_p50` / `work_p95` (ms): the page's own frame code, timed around every `requestAnimationFrame` callback (Godot's frame loop goes through it).
+- `gpu_p50` / `gpu_p95` (ms): how long the graphics chip takes to finish a frame, on 1 frame in 15: a WebGL2 fence placed after the frame, checked until it is done (given up after 100 ms: `gpu_lost`). Compare it only between steps on the same phone. If a phone has no fence, `timing_err` says so, and we judge by fps, p99 and `slow_share`. `notime` in the link turns the timer off.
+
+**The ladders.** One link each, all drawn at 1080, no CPU-particle step. Each runs forward and then back, so every step runs once early and once late, and a slow warm-up hits all steps alike. The first 3 s of each step are not counted. The step names are in `world.gd` `VARIANTS`.
+
+| Link | Who | Steps | Step length | Time |
+|---|---|---|---|---|
+| `split=t2` | iPhone | `t1` (normal maps, 4 lights), `t1.particles` (all emitters, and the flashes, rings, afterimages and scorch marks that come with them), `t1.fog` (1 layer, fed T2's light list, while only T1's 4 lights draw), `t1.fogplain` (the same layer without its loops over fighters, lights and smoke), `t1.shafts`, `t1.lights` (8 torches and the short lights of blasts, fire arrows, fire and poison), `t2` | 30 s | 7 min |
+| `split=lights` | S25 Ultra, Pixel | `l4`, `l8`, `l16`, `l24`, `l32`: T1 (no fog) with that many torch-sized lights, the 8 torches first, then a 6 x 4 grid | 30 s | 5 min |
+| `split=t3` | S25 Ultra | `t3`, `t3-fog1` (1 fog layer), `t3-fog` (none), `t3-lights` (no light draws, but the fog still gets them, so this is the cost of the lights alone), `t3-particles`, `t3-post` | 60 s | 12 min |
+
+The fighter shader, the shake and the hit flashes stay on in every T3 step. A light that is "not drawn" is hidden (`visible = false`) and stays `enabled`, so the fog still finds it. `steps=t3,t3-fog` runs your own list; `look=t3-fog` shows one step without a ladder.
+
+**How we pick** (decided before the run):
+- **Q1:** a part is the cost if the iPhone falls under 58 fps with it alone. If no part does, but T2 does, it is the sum, and `gpu_p95` shows the biggest share.
+- **Q2:** the limit is the highest count that held 60 in both passes with `gpu_p95` at 13 ms or less (about a fifth of the frame free).
+- **Q3:** run C again uses T3 minus the part that saved the most GPU time. If that step did not hold 60 in both its minutes, cut the second part too. Without GPU numbers: by `slow_share`, then p99.
+
+**What changed.** `world.gd`: a step is a tier plus a dictionary of parts (`parts_for_tier`, `set_variant`, `apply_parts`), 24 grid lights, `lights_drawn()`, and the fog's loops can be turned off. `fx.gd`: events always run (rings, shake and colour split feed the fog and the post shader); the drawing checks `enabled`. `bench_client.gd`: `SPLITS`, the timer (`TIMING_JS`), and on each card `variant`, `split`, `pass_i`, `parts`, `slow_share`, and what the nodes really had on (`lights_drawn`, `fog_layers_on`, `fog_lights_fed`, `emitters_drawn`, `post_on`). `bench_report.py`: a split table per run (both passes, the change against `t1`, `l4` or `t3`, and a "switches" column that checks what was on against what was asked). `bench_shot.py`: `--looks` and `--ladder`.
+
+**How to run.** The bench server and 7 fake players as in section 6, then:
+- iPhone: `https://192.168.4.21:8443/bench/index.html?name=iphone-split&split=t2` (Low Power Mode off, 50% charge or more)
+- S25 Ultra, cool: `…/bench/index.html?name=S25-split&split=t3`; rest 15 minutes; then `…?name=S25-lights&split=lights`
+- Pixel: `…/bench/index.html?name=pixel-lights&split=lights`
+- The report: `./venv/bin/python tools/bench_report.py` (the split table follows each run's rows).
+
+**Checked on the PC (2026-09-14).**
+- `--check-only` on `world.gd`, `fx.gd` and `bench_client.gd`: no parse error.
+- A bench server with `--port 8092 --out <scratch>`, 7 fake players, and a headless Godot client through each ladder in 4 s steps: `t2` 14 cards, `lights` 10, `t3` 12, and the switch check says `ok` on every step. The server: 0.28 ms a tick, 2.6% CPU. (Headless Godot has no web timer, so its cards say `timing: off`.)
+- The old ladder (T0 to T7, with T4's 3D archers, the limit test and CPU particles) still runs to the end with no script error.
+- The switch check says WRONG for each field changed by hand on a card: lights drawn, fog lights, fog layers, post, emitters.
+- Headless Chromium ran `split=t3`. It draws in software at about 7 fps, so it reached 5 of 12 steps in 100 s. The timer works: 10 GPU samples, none given up. There `t3-lights` cut the GPU time from 765 to 145 ms, which proves the hidden lights really stop drawing (the size means nothing for a phone).
+- A picture of each of the 16 steps: every part shows or goes as asked. `t3-lights` is darker, but the fog still glows around the torches; `t3-fog` loses only the fog; `lights 32` lights the ledges all over the arena.
+- `https://192.168.4.21:8443/bench/index.html` serves the new pck (`index_20260914155606.pck`).
+
+**Found on the way.**
+- The timer checks the fence from the page's own thread, again and again, until the chip is done (1 frame in 15). That costs the page a little time, the same on every step.
+- Events now run at every tier, so T0 and T1 now also track rings and shake (a few numbers a frame). Nothing more is drawn.
+
+**Stopped (2026-10-10).** The S25 Ultra ran `split=t3` ([[bench-8p-results]], "The split test, part 1"). The iPhone and lights ladders were not run: the user chose to build the game now and tune the look later ([[Design Decisions v0.2]] D18, [[first-playable-plan]]). The page and the ladders stay for later.

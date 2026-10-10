@@ -8,6 +8,10 @@
 #   server=wss://host:8091  name=S25  auto  quit  seconds=20  tiers=0,1,2,3,4,5
 #   res=native,1080  no-cpu  tier=3 (look only: no ladder)  view-res=1080  nopost
 #   level=5 (the look of a limit-test level)  levels=10  level-seconds=5
+# The split test (2026-09-14): split=t2|lights|t3 runs one preset ladder at 1080,
+# forward then back (steps=t3,t3-fog for your own list); look=t3-fog shows one
+# step without a ladder (names: world.gd VARIANTS). notime turns off the frame
+# timer (work_ms: the page's frame code; gpu_ms: a WebGL2 fence, 1 frame in 15).
 # ==============================================================================
 extends Node
 
@@ -15,6 +19,56 @@ const Net = preload("res://client/net.gd")
 const World = preload("res://client/world.gd")
 const TIER_NAMES := ["T0 plain", "T1 lights", "T2 effects", "T3 shaders", "T4 live 3D", "T5 stress", "T6 max", "T7 limit"]
 const BOOST := 2.5      # particle amounts in the max tiers (T6, T7)
+const SPLITS := {
+	"t2": {"steps": ["t1", "t1.particles", "t1.fog", "t1.fogplain", "t1.shafts", "t1.lights", "t2"], "seconds": 30},
+	"lights": {"steps": ["l4", "l8", "l16", "l24", "l32"], "seconds": 30},
+	"t3": {"steps": ["t3", "t3-fog1", "t3-fog", "t3-lights", "t3-particles", "t3-post"], "seconds": 60},
+}
+# Frames run at most at the screen's 60 Hz, so a frame with room to spare and one
+# that only just makes it both read 16.7 ms. This times the work itself: every
+# requestAnimationFrame callback (Godot's frame loop goes through it), and on
+# 1 frame in 15 a WebGL2 fence placed after the frame, polled until the graphics
+# chip has finished it (given up after 100 ms: gpu_lost).
+const TIMING_JS := """(function(){
+if (window.__tbTime) { return 'ok'; }
+var T = window.__tbTime = {work: [], gpu: [], lost: 0, polls: 0, frames: 0, ts: -1, acc: 0, job: null, gl: null, err: ''};
+try {
+	var cv = document.querySelector('canvas');
+	T.gl = cv ? cv.getContext('webgl2') : null;
+	if (!T.gl || typeof T.gl.fenceSync !== 'function') { T.err = 'no webgl2 fence'; T.gl = null; }
+} catch (e) { T.err = String(e); T.gl = null; }
+var ch = new MessageChannel();
+ch.port1.onmessage = function() {
+	var j = T.job, gl = T.gl;
+	if (!j || !gl) { return; }
+	T.polls++;
+	var st = gl.getSyncParameter(j.s, gl.SYNC_STATUS), now = performance.now();
+	if (st === gl.SIGNALED) { T.gpu.push(now - j.t); }
+	else if (now - j.t < 100) { ch.port2.postMessage(0); return; }
+	else { T.lost++; }
+	gl.deleteSync(j.s);
+	T.job = null;
+};
+var orig = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = function(cb) {
+	return orig(function(ts) {
+		var t0 = performance.now();
+		cb(ts);
+		var t1 = performance.now();
+		if (ts !== T.ts) { if (T.ts >= 0) { T.work.push(T.acc); } T.ts = ts; T.acc = 0; T.frames++; }
+		T.acc += t1 - t0;
+		if (T.gl && !T.job && T.frames % 15 === 0) {
+			try { T.job = {s: T.gl.fenceSync(T.gl.SYNC_GPU_COMMANDS_COMPLETE, 0), t: t1}; ch.port2.postMessage(0); }
+			catch (e) { T.err = String(e); T.gl = null; T.job = null; }
+		}
+	});
+};
+function pct(a, p) { if (!a.length) { return -1; } var s = a.slice().sort(function(x, y) { return x - y; }); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; }
+T.reset = function() { T.work = []; T.gpu = []; T.lost = 0; T.polls = 0; };
+T.summary = function() { return JSON.stringify({work_p50: pct(T.work, 0.5), work_p95: pct(T.work, 0.95), work_n: T.work.length,
+	gpu_p50: pct(T.gpu, 0.5), gpu_p95: pct(T.gpu, 0.95), gpu_n: T.gpu.length, gpu_lost: T.lost, gpu_polls: T.polls, timing_err: T.err}); };
+return T.err === '' ? 'ok' : T.err;
+})()"""
 
 var opts := {}
 var net
@@ -77,8 +131,11 @@ func _ready() -> void:
 	add_child(display)
 	_build_ui()
 	device = _device_info()
+	if OS.has_feature("web") and not opts.has("notime"):
+		device["timing"] = str(JavaScriptBridge.eval(TIMING_JS, true))
 	device_name = str(opts.get("name", device.get("guess", "device")))
-	seg_len = float(opts.get("seconds", 20))
+	var split: Dictionary = SPLITS.get(str(opts.get("split", "")), {})
+	seg_len = float(opts.get("seconds", split.get("seconds", 20)))
 	warm = minf(3.0, seg_len * 0.3)
 	levels_max = int(opts.get("levels", 10))
 	level_len = float(opts.get("level-seconds", 5))
@@ -97,7 +154,14 @@ func _ready() -> void:
 		total += levels_max * level_len if sg["tier"] == 7 else seg_len
 	info_base = "%s\n%s\nserver %s\n%d steps, about %.0f minutes. Lay the phone down and keep the screen on." % [
 		device_name, str(device.get("gpu", "")), url, segments.size(), total / 60.0]
-	if opts.has("tier"):
+	if opts.has("look"):
+		_build_world(str(opts.get("view-res", "1080")), opts.has("cpu"))
+		if not world.set_variant(str(opts["look"])):
+			printerr("📱 [Bench] no split step called %s (world.gd VARIANTS)" % opts["look"])
+		title.visible = false
+		info.visible = false
+		start_btn.visible = false
+	elif opts.has("tier"):
 		var vt := int(opts["tier"])
 		_build_world(str(opts.get("view-res", "1080")), opts.has("cpu"), BOOST if vt >= 6 else 1.0)
 		world.set_tier(vt)
@@ -129,6 +193,18 @@ func _read_opts() -> Dictionary:
 	return o
 
 func _plan() -> Array:
+	var split_name := str(opts.get("split", ""))
+	if split_name != "" or opts.has("steps"):
+		var steps: Array = Array(str(opts["steps"]).split(",", false)) if opts.has("steps") else SPLITS.get(split_name, {}).get("steps", [])
+		var back := steps.duplicate()
+		back.reverse()
+		var res := str(opts.get("res", "1080")).get_slice(",", 0)
+		var out_split: Array = []
+		for pass_i in 2:
+			for id in [steps, back][pass_i]:
+				out_split.append({"tier": World.VARIANTS[id][0] if World.VARIANTS.has(id) else 1, "variant": id, "res": res,
+					"cpu": false, "boost": 1.0, "pass": pass_i + 1, "split": split_name if split_name != "" else "custom"})
+		return out_split
 	var tiers: Array = []
 	for t in str(opts.get("tiers", "0,1,2,3,4,5,6,7")).split(",", false):
 		tiers.append(int(t))
@@ -240,8 +316,9 @@ func _next_segment() -> void:
 	if key != built_key:
 		_build_world(sg["res"], sg["cpu"], sg["boost"])
 		built_key = key
-	if not world.set_tier(sg["tier"]):
-		_send_card(sg, {"skipped": "tier not available (no untracked 3D model)"})
+	var ok: bool = world.set_variant(sg["variant"]) if sg.has("variant") else world.set_tier(sg["tier"])
+	if not ok:
+		_send_card(sg, {"skipped": "no split step called %s" % sg["variant"] if sg.has("variant") else "tier not available (no untracked 3D model)"})
 		_next_segment()
 		return
 	seg_t = 0.0
@@ -290,6 +367,7 @@ func _process(delta: float) -> void:
 				if not measuring:
 					measuring = true
 					net.take_window()
+					_timing_reset()
 				else:
 					_collect(now)
 			if seg_t >= seg_len:
@@ -300,7 +378,7 @@ func _process(delta: float) -> void:
 	if overlay_t >= 0.5:
 		overlay_t = 0.0
 		var lv_txt := (" level %d" % ramp_level) if running and seg_i >= 0 and seg_i < segments.size() and segments[seg_i]["tier"] == 7 else ""
-		var sg_txt := "look only" if not running else ("%s · %s%s · %d/%d · %.0f s" % [TIER_NAMES[segments[seg_i]["tier"]], segments[seg_i]["res"],
+		var sg_txt := "look only" if not running else ("%s · %s%s · %d/%d · %.0f s" % [_label(segments[seg_i]), segments[seg_i]["res"],
 			" cpu" if segments[seg_i]["cpu"] else "", seg_i + 1, segments.size(), seg_len - seg_t] if seg_i >= 0 and seg_i < segments.size() else "")
 		overlay.text = "%s%s   %.0f fps   rtt %d ms%s" % [sg_txt, lv_txt, fps_now, net.last_rtt,
 			"" if net.state == WebSocketPeer.STATE_OPEN else "   NO SERVER: cards not saved"]
@@ -333,6 +411,7 @@ func _ramp_step(now: int, delta: float) -> void:
 		if not measuring:
 			measuring = true
 			_reset_metrics()
+			_timing_reset()
 			if ramp_level == 1:
 				net.take_window()
 		else:
@@ -347,6 +426,7 @@ func _ramp_step(now: int, delta: float) -> void:
 		"ft_p99": _pct(s, 0.99), "ft_max": _pct(s, 1.0), "hitches_50ms": hitches, "proc_ms": proc_sum * 1000.0 / n,
 		"draw_calls_max": draw_max, "particles": ramp_info.get("particles", 0.0), "fog_layers": ramp_info.get("fog_layers", 0),
 		"fighters": world.fighter_count, "lights": world.light_count(), "emitters": world.fx.count_active()}
+	lv.merge(_timing())
 	# At 60 Hz frame times wobble around 16.7 ms, so a p95 <= 16.7 rule fails a steady 60.
 	lv["pass"] = lv["fps"] >= 58.0 and lv["ft_p99"] <= 25.0 and hitches == 0
 	ramp_levels.append(lv)
@@ -390,11 +470,44 @@ func _finish_segment() -> void:
 	}
 	d.merge(net.take_window())
 	d["pass"] = d["fps"] >= 58.0 and d["ft_p99"] <= 25.0 and hitches == 0
+	# the share of the step spent on frames over 25 ms: the time Android drew at 30
+	var slow := 0.0
+	var total := 0.0
+	for ft in frame_ms:
+		total += ft
+		if ft > 25.0:
+			slow += ft
+	d["slow_share"] = slow / total if total > 0.0 else 0.0
+	d.merge(_timing())
+	# what was really on, read from the nodes (the report checks it against "parts")
+	d["parts"] = world.parts
+	d["lights_drawn"] = world.lights_drawn()
+	d["fog_layers_on"] = world.fog_on
+	d["fog_lights_fed"] = world.fog_nl
+	d["emitters_drawn"] = world.fx.count_drawn()
+	d["post_on"] = world.post.visible
 	_send_card(sg, d)
 
+func _label(sg: Dictionary) -> String:
+	return World.variant_label(sg["variant"]) if sg.has("variant") else TIER_NAMES[sg["tier"]]
+
+func _timing_reset() -> void:
+	if device.has("timing"):
+		JavaScriptBridge.eval("window.__tbTime && window.__tbTime.reset()", true)
+
+func _timing() -> Dictionary:
+	if not device.has("timing"):
+		return {"timing": "off"}
+	var parsed = JSON.parse_string(str(JavaScriptBridge.eval("window.__tbTime ? window.__tbTime.summary() : ''", true)))
+	return parsed if typeof(parsed) == TYPE_DICTIONARY else {"timing": "no summary"}
+
 func _send_card(sg: Dictionary, d: Dictionary) -> void:
-	var card := {"kind": "bench_card", "run": run_id, "name": device_name, "tier": TIER_NAMES[sg["tier"]],
+	var card := {"kind": "bench_card", "run": run_id, "name": device_name, "tier": _label(sg),
 		"tier_i": sg["tier"], "res": sg["res"], "cpu_particles": sg["cpu"], "seconds": seg_len, "device": device}
+	if sg.has("variant"):
+		card["variant"] = sg["variant"]
+		card["split"] = sg["split"]
+		card["pass_i"] = sg["pass"]
 	card.merge(d)
 	if not net.send_card(card):
 		lost_cards += 1
