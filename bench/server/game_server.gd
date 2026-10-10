@@ -6,11 +6,12 @@
 # writes a line every REPORT_S seconds about its own cost.
 #   godot --headless --path bench res://server/game_server.tscn -- \
 #       [--port 8091] [--no-tls] [--cert <pem>] [--key <pem>] [--bots 7]
-#       [--power-arrows] [--goal N] [--out <dir>] [--seconds N] [--quiet]
+#       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet]
 #       [--net-thread 0|1] [--net-sleep-ms 4]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --goal N: points to win, instead of the rule by player count (a test knob).
+# --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # Two threads, as in the benchmark: the network thread owns the sockets (TLS and
 # websocket handshakes, reading, pongs, sending); this thread owns the seats and
 # the simulation. They trade messages under net_mutex: net_in (open, text, input,
@@ -34,7 +35,8 @@ const MAX_BOTS := 7
 const HOLD_TICKS := 480          # a dropped person's seat is held 8 s
 const COUNTDOWN_TICKS := 180     # START to the first round: 3 s
 const ROUND_START_TICKS := 90    # the ROUND N banner, nobody moves: 1.5 s
-const ROUND_MAX_TICKS := 3600    # a round with no end is a draw at 60 s (backlog 28's rule; the miasma comes later)
+const ROUND_MAX_TICKS := 3600    # a round with no end is a draw at 60 s (a backstop: the purple walls kill everyone left by 48 s)
+const WALLS_S := 25              # the purple walls (TowerFall's miasma) come 25 s after FIGHT
 const ROUND_END_TICKS := 90      # one fighter left: TowerFall waits 1.5 s before the point
 const DRAW_TICKS := 60           # nobody left: a shorter DRAW banner
 const MATCH_END_TICKS := 420     # the winner's screen: 7 s, then the lobby
@@ -142,6 +144,7 @@ func _ready() -> void:
 	sim = SimScript.new(0, 24, int(Time.get_unix_time_from_system()))
 	sim.respawn = false
 	sim.power_arrows = o.has("power-arrows")
+	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	for i in SEATS:
 		var s := Seat.new()
 		s.i = i
@@ -165,12 +168,14 @@ func _ready() -> void:
 	sec_start_ms = started_ms
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
 		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "goal_override": goal_override,
+		"walls_s": sim.walls_start / 60,
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(),
 		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
-	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots fill the empty seats, power arrows %s, cpu %s x%d, report in %s" % [
+	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots fill the empty seats, power arrows %s, %s, cpu %s x%d, report in %s" % [
 		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, "on" if sim.power_arrows else "off",
+		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls",
 		info["cpu"], info["cores"], log_path])
 	if net_thread_on:
 		net_thread = Thread.new()

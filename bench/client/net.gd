@@ -135,6 +135,9 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	s["left"] = b.get_u16()
 	s["goal"] = b.get_u8()
 	s["winner"] = b.get_u8()
+	var walls := b.get_u16()
+	s["walls"] = float(walls & 0x7FFF)
+	s["walls_deadly"] = (walls & P.WALLS_DEADLY_BIT) != 0
 	var nf := b.get_u8()
 	var na := b.get_u16()
 	var nz := b.get_u8()
@@ -196,7 +199,8 @@ static func _wlerp(a: float, b: float, t: float, size: float) -> float:
 		d += size
 	return fposmod(a + d * t, size)
 
-# The world at render tick rt: {fighters: [..], arrows: {id: ..}, zones: [..]}.
+# The world at render tick rt: {fighters: [..], arrows: {id: ..}, zones: [..],
+# walls: each purple wall's width in px, walls_deadly}.
 # Fighters are matched by seat between the two snapshots. own_id >= 0: that
 # fighter comes from the newest snapshot instead (your own, with less lag).
 func sample(rt: float, own_id: int = -1) -> Dictionary:
@@ -239,7 +243,8 @@ func sample(rt: float, own_id: int = -1) -> Dictionary:
 				"y": _wlerp(aa["y"], ab["y"], t, H), "ang": ab["ang"]}
 		else:
 			arrows[id] = ab
-	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"]}
+	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"],
+		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false)}
 
 # The network numbers since the last call, for a bench card.
 func take_window() -> Dictionary:

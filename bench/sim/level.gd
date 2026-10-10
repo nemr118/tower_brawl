@@ -45,9 +45,14 @@ func _init() -> void:
 		_add(p[0], p[1], p[2], p[3], p[4])
 		if p[5] == 1:
 			_add(COLS - p[0] - p[2], p[1], p[2], p[3], p[4])
-	spawns = [Vector2i(240, 1020), Vector2i(1680, 1020), Vector2i(300, 900), Vector2i(1620, 900),
-		Vector2i(255, 540), Vector2i(1665, 540), Vector2i(270, 180), Vector2i(1650, 180),
-		Vector2i(960, 420), Vector2i(960, 660)]
+	# No spot sits one drop above another (dropping through your own ledge only):
+	# p1.2 had 7 such pairs, and a fighter could stomp the one below in the first
+	# second. TowerFall keeps its spawn spots apart too. input_probe rule 27. The
+	# low ledge spots sit at the ledge ends, under the pillars, out of the way of a
+	# fighter running off the side ledge (v0.2.0-p1.3's page has the numbers).
+	spawns = [Vector2i(240, 1020), Vector2i(1680, 1020), Vector2i(690, 780), Vector2i(1230, 780),
+		Vector2i(360, 540), Vector2i(1560, 540), Vector2i(210, 180), Vector2i(1710, 180),
+		Vector2i(960, 180), Vector2i(960, 660)]
 	torches = [Vector2(78, 300), Vector2(1842, 300), Vector2(78, 800), Vector2(1842, 800),
 		Vector2(660, 560), Vector2(1260, 560), Vector2(960, 120), Vector2(960, 930)]
 

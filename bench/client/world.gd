@@ -1,7 +1,7 @@
 # The arena as the phone draws it, inside the render SubViewport. Layers:
 # 0 the lit world (background, tiles, torches, back fog, fighters, dust and
-# smoke, lights), 1 threats (arrows, miasma clouds, the 3D fighters: never
-# darkened), 2 glow (added fire, sparks, flashes, front fog, shafts, rain,
+# smoke, lights), 1 threats (arrows, miasma clouds, the purple walls, the 3D
+# fighters: never darkened), 2 glow (added fire, sparks, flashes, front fog, shafts, rain,
 # lightning, spirit lights), 3 the post shader. set_tier() switches what a
 # ladder tier asks for, set_variant() a split-test step (one part on or off),
 # set_level() turns the limit test's dial, render() draws.
@@ -31,6 +31,7 @@ const SH_FIGHTER := preload("res://shaders/fighter.gdshader")
 const SH_FOG := preload("res://shaders/fog_dynamic.gdshader")
 const SH_SHAFT := preload("res://shaders/shaft.gdshader")
 const SH_MIASMA := preload("res://shaders/miasma.gdshader")
+const SH_WALLS := preload("res://shaders/walls.gdshader")
 const SH_POST := preload("res://shaders/post.gdshader")
 const SH_WISP := preload("res://shaders/wisp.gdshader")
 const TRAIL := {0: "trail_plain", 1: "trail_fire", 2: "trail_fuse", 3: "trail_miasma", 4: "trail_smoke"}
@@ -109,6 +110,8 @@ var distort_on := false
 var copies := 1
 var fighters: Array = []     # [sprite, material, plain tex, lit tex, ghost timer, ground tick when dead]
 var aim_pointer := Line2D.new()
+var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
+var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
 var zones := {}              # key -> [kind, nodes...]
 var zone_seen := {}
@@ -305,6 +308,17 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	aim_pointer.default_color = Color(1.0, 0.95, 0.6, 0.85)
 	aim_pointer.visible = false
 	threats.add_child(aim_pointer)
+	for i in 2:
+		var wall: Sprite2D = [walls_l, walls_r][i]
+		wall.texture = PX
+		wall.centered = false
+		wall.visible = false
+		var wm := ShaderMaterial.new()
+		wm.shader = SH_WALLS
+		wm.set_shader_parameter("noise", NOISE)
+		wm.set_shader_parameter("side", float(i))
+		wall.material = wm
+		threats.add_child(wall)
 	fx.prewarm(Vector2(960, 1200))
 
 # Your own aim while you hold shoot: a short line from the bow (the game client).
@@ -497,6 +511,7 @@ func render(s: Dictionary, delta: float) -> void:
 				fx.ghost(FIGHTER_TEX[i % 8], spr.region_rect, spr.position + Vector2(0, -58), spr.flip_h, TEAM[i % 8])
 	_render_arrows(s["arrows"])
 	_render_zones(s["zones"])
+	_render_walls(s)
 	for t in torches:
 		if t[1].enabled:
 			t[1].energy = 1.1 + 0.18 * sin(time * 17.0 + t[0].position.x) + 0.1 * sin(time * 7.3)
@@ -753,6 +768,22 @@ func _take_light(c: Color, energy: float, sc: float) -> PointLight2D:
 func _give_light(l: PointLight2D) -> void:
 	l.enabled = false
 	_light_free.append(l)
+
+# The purple walls: each one walls px wide at its edge of the arena.
+func _render_walls(s: Dictionary) -> void:
+	var w: float = s.get("walls", 0.0)
+	var on := w >= 1.0
+	walls_l.visible = on
+	walls_r.visible = on
+	if not on:
+		return
+	walls_l.scale = Vector2(w, 1080.0) / 4.0
+	walls_r.scale = walls_l.scale
+	walls_r.position = Vector2(1920.0 - w, 0.0)
+	var deadly := 1.0 if s.get("walls_deadly", false) else 0.0
+	for wall in [walls_l, walls_r]:
+		wall.material.set_shader_parameter("deadly", deadly)
+		wall.material.set_shader_parameter("size_px", Vector2(w, 1080.0))
 
 func _render_zones(zl: Array) -> void:
 	zone_seen.clear()

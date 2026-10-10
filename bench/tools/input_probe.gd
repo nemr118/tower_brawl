@@ -18,6 +18,9 @@ func _init() -> void:
 	_bots_wait_at_fight()
 	_aim_help()
 	_bench_path_alive()
+	_walls_at_the_edge()
+	_walls_close()
+	_spawns_apart()
 	if fails == 0:
 		print("✅ input_probe: every check passed")
 		quit(0)
@@ -307,3 +310,97 @@ func _bench_path_alive() -> void:
 	var ok: bool = counts.get(P.E_SHOOT, 0) > 20 and counts.get(P.E_DEATH, 0) > 0 and counts.get(P.E_SPAWN, 0) > 8 and sim.fighters.size() == 8
 	_check("the benchmark's 8 bots still play (shoot, die, respawn)", ok,
 		"shots=%d deaths=%d spawns=%d, snapshot %d bytes" % [counts.get(P.E_SHOOT, 0), counts.get(P.E_DEATH, 0), counts.get(P.E_SPAWN, 0), buf.data_array.size()])
+
+# The purple walls (D2, TowerFall's miasma): none before 25 s, deadly from 27 s.
+# A still person at the left edge dies the tick they turn deadly, the other one
+# (in the middle) lives, and the walls melt at once (one fighter left).
+func _walls_at_the_edge() -> void:
+	var sim = _game(2)
+	sim.walls_start = 1500
+	sim._place(sim.fighters[0], Vector2i(80, 1020))    # the floor by the left edge
+	sim._place(sim.fighters[1], Vector2i(960, 660))    # the middle ledge
+	var first_w := -1
+	var first_deadly := -1
+	var dead_t := -1
+	var cause := -1
+	var gone_t := -1
+	for t in range(1, 1800):
+		sim.step()
+		for e in sim.take_events():
+			if e[0] == P.E_DEATH and e[3] == 0:
+				dead_t = t
+				cause = e[4]
+		if first_w < 0 and sim.walls_width() > 0:
+			first_w = t
+		if first_deadly < 0 and sim.walls_deadly():
+			first_deadly = t
+		if dead_t > 0 and gone_t < 0 and sim.walls_width() == 0:
+			gone_t = t
+	var ok: bool = first_w > 1500 and first_w < 1560 and first_deadly == 1620 and dead_t == 1620 and cause == 6 \
+		and sim.fighters[1].state != P.F_DEAD and gone_t > dead_t and gone_t <= dead_t + 20
+	_check("the purple walls come at 25 s, kill at the edge from 27 s, melt when one is left", ok,
+		"the walls show at %.2f s, deadly at %.2f s, the person at the edge dies at %.2f s (cause %d), gone %d ticks later, the one in the middle %s" % [
+		first_w / 60.0, first_deadly / 60.0, dead_t / 60.0, cause, gone_t - dead_t, "lives" if sim.fighters[1].state != P.F_DEAD else "died"])
+
+# Two still people in the middle of the middle ledge: nobody dies before the walls
+# close, then both on the same tick (a draw), about 44.6 s after FIGHT.
+func _walls_close() -> void:
+	var sim = _game(2)
+	sim.walls_start = 1500
+	sim._place(sim.fighters[0], Vector2i(900, 660))
+	sim._place(sim.fighters[1], Vector2i(1020, 660))
+	var deaths: Array = []
+	for t in range(1, 3000):
+		sim.step()
+		for e in sim.take_events():
+			if e[0] == P.E_DEATH:
+				deaths.append([t, e[3], e[4]])
+	var ok: bool = deaths.size() == 2 and deaths[0][0] == deaths[1][0] and deaths[0][2] == 6 and deaths[1][2] == 6 \
+		and deaths[0][0] > 2600 and deaths[0][0] < 2880 and sim.walls_width() == 0
+	_check("the walls close on the last ones in the middle by 48 s (both die, a draw)", ok,
+		"deaths %s (tick, seat, cause); the walls afterwards %d px" % [str(deaths), sim.walls_width()])
+
+# No spawn spot sits one drop above another: dropping through your own ledge and
+# steering up to 150 px sideways, you would land on the one below (p1.2 had 7 such
+# pairs, the source of the first second's stomps). Every spot stands on a floor or
+# a ledge with room for the body.
+func _spawns_apart() -> void:
+	var lv = SimScript.LevelScript.new()
+	var bad: Array = []
+	for a in lv.spawns:
+		if not _stands(lv, a):
+			bad.append("%s does not stand" % a)
+		for b in lv.spawns:
+			if a != b and _one_drop(lv, a, b, 150):
+				bad.append("%s over %s" % [a, b])
+	_check("no spawn spot sits one drop above another", bad.is_empty(),
+		"%d spots; %s" % [lv.spawns.size(), "none over another" if bad.is_empty() else ", ".join(bad)])
+
+func _stands(lv, s: Vector2i) -> bool:
+	if s.y % 30 != 0:
+		return false
+	var under := false
+	for cx in range(floori((s.x - 18) / 30.0), floori((s.x + 17) / 30.0) + 1):
+		if lv.cell(cx, s.y / 30) != 0:
+			under = true
+		for cy in range(floori((s.y - 63) / 30.0), floori((s.y - 1) / 30.0) + 1):
+			if lv.cell(cx, cy) == 1:
+				return false
+	return under
+
+# b is below a, less than reach px to the side, and some column between them is
+# open (no solid block, no other ledge) from under a's ledge down to b's head.
+func _one_drop(lv, a: Vector2i, b: Vector2i, reach: int) -> bool:
+	if b.y <= a.y or absi(a.x - b.x) >= reach:
+		return false
+	var top: int = a.y / 30 + 1
+	var head: int = floori((b.y - 63) / 30.0)
+	for cx in range(floori((mini(a.x, b.x) - 18) / 30.0), floori((maxi(a.x, b.x) + 17) / 30.0) + 1):
+		var open := true
+		for cy in range(top, head):
+			if lv.cell(cx, cy) != 0:
+				open = false
+				break
+		if open:
+			return true
+	return false

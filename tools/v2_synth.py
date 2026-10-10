@@ -44,9 +44,9 @@ def pct(vals, p):
     return s[min(len(s) - 1, int(len(s) * p))]
 
 def decode_snapshot(data):
-    tick, phase, rnd, left, goal, winner = struct.unpack_from("<IBBHBB", data, 1)
-    nf, na, nz, ne = struct.unpack_from("<BHBH", data, 11)
-    off = 17
+    tick, phase, rnd, left, goal, winner, walls = struct.unpack_from("<IBBHBBH", data, 1)
+    nf, na, nz, ne = struct.unpack_from("<BHBH", data, 13)
+    off = 19
     fighters = {}
     for _ in range(nf):
         sid, state, x, y, vx, vy, flags, aim, arrows, st, points, flags2 = struct.unpack_from("<BBhhbbBBBBBB", data, off)
@@ -58,7 +58,7 @@ def decode_snapshot(data):
         arrows.append({"state": ks >> 4, "x": x, "y": y, "ang": ang * math.tau / 256.0})
         off += 8
     return {"tick": tick, "phase": phase, "round": rnd, "goal": goal, "winner": winner,
-            "fighters": fighters, "arrows": arrows}
+            "walls": walls & 0x7FFF, "fighters": fighters, "arrows": arrows}
 
 class Synth(threading.Thread):
     def __init__(self, idx, url, seconds, version, start, bots):

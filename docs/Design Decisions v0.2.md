@@ -48,6 +48,7 @@ One entry per decision, written when the user makes it: the decision, the option
 - **A. One life a round, and the miasma** (recommended): Last Man Standing, the miasma at 25 s with TowerFall's timings, the 1.5 s wait at the round end, the crown, autobalance on.
 - **B. Keep 3 stocks and the respawn, add the miasma.** Longer rounds, less tension per shot.
 - **C. Keep stocks, add a plain timer.** Simplest; least like TowerFall.
+- **In play since v0.2.0-p1.3 (2026-10-10):** A's walls, as a placeholder (the user picked the stand-off note before the first night): 25 s, TowerFall's timings, melted on any round end. The sheet judges them.
 - **Open:** points to win with 5 to 8 players (TowerFall: 5 / 4 / 3 for 2 / 3 / 4; 3 is the natural guess for more). Headhunters as a second mode later?
 
 ### D3. How characters differ (reopened by D0c; open for ideas)

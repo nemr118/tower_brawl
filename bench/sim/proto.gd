@@ -3,7 +3,8 @@
 # fake players (tools/v2_synth.py, tools/bench_synth.py copy the numbers).
 # All binary, little endian.
 #   snapshot  u8 T_SNAP, u32 tick, u8 phase, u8 round, u16 phase ticks left, u8 goal,
-#             u8 winner (NO_ONE = none), u8 fighters, u16 arrows, u8 zones, u16 events,
+#             u8 winner (NO_ONE = none), u16 walls (each purple wall's width in px,
+#             + 0x8000 when they kill), u8 fighters, u16 arrows, u8 zones, u16 events,
 #             fighter x14 B, arrow x8 B, zone x9 B, event x7 B
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
@@ -17,7 +18,7 @@ extends RefCounted
 
 # The game's version. tools/v2_build.sh bumps the last number on every build and
 # names the pck after it; the server turns away a client with another version.
-const VERSION := "v0.2.0-p1.2"
+const VERSION := "v0.2.0-p1.3"
 
 const PORT := 8091
 const T_SNAP := 1
@@ -74,7 +75,7 @@ const E_STICK := 5       # a = kind, b = 1 floor / 0 wall
 const E_EXPLODE := 6     # a = owner
 const E_IGNITE := 7      # a = 1 floor / 0 wall
 const E_MIASMA := 8
-const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma)
+const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls)
 const E_CATCH := 10      # a = fighter, b = kind
 const E_PICKUP := 11     # a = fighter, b = kind
 const E_SPAWN := 12      # a = fighter
@@ -92,4 +93,5 @@ const F2_AIMING := 2
 const F2_AWAY := 4
 
 # the death causes, for the log lines
-const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma"}
+const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls"}
+const WALLS_DEADLY_BIT := 0x8000

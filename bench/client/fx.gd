@@ -257,7 +257,7 @@ func on_event(e: Array) -> void:
 		shake = maxf(shake, 6.0)
 		if e[4] == 4:
 			_burst("flame_burst", pos)
-		elif e[4] == 5:
+		elif e[4] == 5 or e[4] == 6:
 			_burst("miasma_burst", pos)
 	elif type == P.E_CATCH:
 		_burst("catch_star", pos)

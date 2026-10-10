@@ -12,6 +12,8 @@
 # at 60 fps; x4.5 gives ours (a 63 px body in 1920 x 1080).
 # A person's seat gets its buttons through apply_input(); a seat with no person
 # is played by the bot brain (_brain). P1 (2026-10-10, first-playable-plan.md).
+# The game turns on the purple walls (walls_start, TowerFall's miasma): from 25 s
+# after FIGHT they close in from the left and right edges and end a long round.
 # ==============================================================================
 extends RefCounted
 
@@ -64,6 +66,15 @@ const MIASMA_KILL_TICKS := 45
 const RESPAWN_TICKS := 90
 const BOT_WAIT_MIN := 60            # after FIGHT a bot stands still 1 to 1.5 s, then plays (ours: the
 const BOT_WAIT_MAX := 90            # benchmark's brain shot or stomped within 0.1 s, before a person could move)
+const WALLS_HALF := 960.0           # a purple wall's reach is a share of half the arena (Miasma.cs: 160 of 320)
+const WALLS_DEADLY := 120           # the walls kill from 2 s after they appear
+const WALLS_EDGE := 22              # the deadly part stops this far inside the drawn edge (Miasma.cs: 5 px)
+const WALLS_GONE := -0.1            # the share before they come and after they melt
+# The walls' steps, back to back: [ticks, from, to, ease] (ease 0: fast then slow,
+# 1: slow, fast, slow; 2: slow then fast). They reach a third of the way in 9 s,
+# pull back to 15% in 3 s, then close all the way (105%) in 11 s, then go in 4 s.
+const WALLS_STEPS := [[540, -0.1, 0.33, 0], [180, 0.33, 0.15, 0], [660, 0.15, 1.05, 1], [240, 1.05, -0.1, 2]]
+const WALLS_KEEP_AWAY := 240        # a bot keeps this far from a wall's edge
 const SMOKE_R := 230.0
 const SMOKE_TICKS := 480
 const HURT_TICKS := 18
@@ -155,6 +166,11 @@ var arrow_cap: int = 24
 var respawn := true             # the benchmark: a death respawns after 1 s. The game: one life a round
 var power_arrows := true        # the benchmark's arrow mix. The game: plain arrows unless --power-arrows
 var frozen := false             # the round's first moment: nobody moves, nobody shoots
+var walls_start := 0            # the game: the purple walls come this many ticks after FIGHT (0: never, the benchmark)
+var play_t := 0                 # ticks since FIGHT (counts while not frozen; start_round sets 0)
+var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the arena (0 or below: not there)
+var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
+var walls_melt_from := WALLS_GONE
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
 var kind_weights: Array = [30, 17, 17, 17, 19]   # normal, fire, bomb, miasma, smoke
@@ -184,6 +200,8 @@ func take_events() -> Array:
 
 func step() -> void:
 	tick += 1
+	if not frozen:
+		play_t += 1
 	for f in fighters:
 		_update_fighter(f)
 	_stomps()
@@ -192,6 +210,7 @@ func step() -> void:
 	_tinks()
 	_pickups()
 	_update_zones()
+	_update_walls()
 	_enforce_cap()
 	for i in range(arrows.size() - 1, -1, -1):
 		if arrows[i].dead:
@@ -209,6 +228,7 @@ func start_round(seat_list: Array) -> void:
 	arrows.clear()
 	zones.clear()
 	events.clear()
+	_reset_walls()
 	var spots: Array = level.spawns.duplicate()
 	for i in range(spots.size() - 1, 0, -1):
 		var j := rng.randi_range(0, i)
@@ -228,6 +248,13 @@ func clear() -> void:
 	arrows.clear()
 	zones.clear()
 	events.clear()
+	_reset_walls()
+
+func _reset_walls() -> void:
+	play_t = 0
+	walls_share = WALLS_GONE
+	walls_melt_t = -1
+	walls_melt_from = WALLS_GONE
 
 func fighter(id: int) -> Fighter:
 	for f in fighters:
@@ -613,6 +640,12 @@ func _brain(f: Fighter) -> void:
 			if rng.randf() < 0.35:
 				f.want_jump = true
 				f.hold_jump = 14
+	if walls_share > 0.0:   # the purple walls are coming: head for the middle
+		var reach := walls_width() + WALLS_KEEP_AWAY
+		if f.x + HALF_W < reach:
+			f.move_dir = 1
+		elif f.x + HALF_W > W - reach:
+			f.move_dir = -1
 	if f.move_dir != 0 and f.on_ground and box_hits_solid(f.x + f.move_dir * 4, f.y, BODY_W, BODY_H):
 		f.want_jump = true
 		f.hold_jump = 16
@@ -1009,6 +1042,55 @@ func _fighter_zones(f: Fighter) -> void:
 	elif f.miasma_t >= MIASMA_KILL_TICKS:
 		_kill(f, 255, 5)
 
+# ------------------------------------------------------------------ the walls
+# The purple walls (TowerFall's miasma, D2): walls_start ticks after FIGHT they
+# grow in from the left and right edges along WALLS_STEPS, and anyone touching a
+# wall dies once it is deadly. When one fighter or none is left, they melt away
+# at once (TowerFall melts them on a kill that leaves one; ours on any end, so the
+# winner is never caught in the 1.5 s before the point).
+func _update_walls() -> void:
+	if walls_start <= 0 or play_t < walls_start:
+		return
+	if walls_melt_t < 0 and alive_count() <= 1:
+		walls_melt_t = 0
+		walls_melt_from = walls_share
+	if walls_melt_t >= 0:
+		walls_melt_t += 1
+		var n := maxi(20, int(60.0 * walls_melt_from))
+		walls_share = lerpf(walls_melt_from, WALLS_GONE, _ease(minf(1.0, float(walls_melt_t) / n), 1))
+		return
+	walls_share = walls_at(play_t - walls_start)
+	if not walls_deadly():
+		return
+	var dw := walls_width() - WALLS_EDGE
+	if dw <= 0:
+		return
+	for f in fighters:
+		if f.state != P.F_DEAD and (f.x < dw or f.x + BODY_W > W - dw):
+			_kill(f, 255, 6)
+
+# The walls' share t ticks after they appear.
+static func walls_at(t: int) -> float:
+	for st in WALLS_STEPS:
+		if t < st[0]:
+			return lerpf(st[1], st[2], _ease(float(t) / st[0], st[3]))
+		t -= st[0]
+	return WALLS_GONE
+
+static func _ease(x: float, kind: int) -> float:
+	if kind == 0:
+		return 1.0 - pow(1.0 - x, 3.0)
+	if kind == 2:
+		return x * x * x
+	return 4.0 * x * x * x if x < 0.5 else 1.0 - pow(-2.0 * x + 2.0, 3.0) * 0.5
+
+# Each wall's width in px (0: no walls).
+func walls_width() -> int:
+	return maxi(0, roundi(walls_share * WALLS_HALF))
+
+func walls_deadly() -> bool:
+	return walls_start > 0 and walls_melt_t < 0 and play_t >= walls_start + WALLS_DEADLY and walls_share > 0.0
+
 # ------------------------------------------------------------------ snapshot
 func live_arrow_count() -> int:
 	var n := 0
@@ -1019,6 +1101,7 @@ func live_arrow_count() -> int:
 
 # The whole state for the clients (the format: proto.gd). head carries the
 # match: phase, round, left (ticks), goal, winner; the benchmark passes none.
+# The walls' width comes from the sim itself.
 func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) -> void:
 	buf.clear()
 	buf.put_u8(P.T_SNAP)
@@ -1028,6 +1111,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 	buf.put_u16(clampi(int(head.get("left", 0)), 0, 65535))
 	buf.put_u8(int(head.get("goal", 0)))
 	buf.put_u8(int(head.get("winner", P.NO_ONE)))
+	buf.put_u16(walls_width() | (0x8000 if walls_deadly() else 0))
 	buf.put_u8(fighters.size())
 	buf.put_u16(live_arrow_count())
 	buf.put_u8(zones.size())
