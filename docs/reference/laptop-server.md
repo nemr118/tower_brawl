@@ -8,6 +8,8 @@ An old laptop runs the game server so the main PC stays free to play. It has no 
 - The SSD holds the system. The 1 TB drive is mounted at `/storage` for backups and media.
 - The game lives in `~/tower_brawl` (server script, certs, `build/web`, `tools/`, a venv for the deck).
 - `towerbrawl.service` starts the game server at boot and restarts it if it dies.
+- `towerbrawl-v2.service` (since 2026-10-10) runs the new game's server: headless Godot from `~/tower_brawl/bench`, wss on 8091, the same cert pair. The old service still serves both pages (`/play` and `/v2/`). It runs with `--quiet`, so its report line (every 5 s) goes only to `~/tower_brawl/bench_results/<date>/v2_server.jsonl`; the journal has the `[JOIN] [ROUND] [KILL] [MATCH]` lines (`journalctl -u towerbrawl-v2`).
+- **The game cores** (2026-09-16): `/etc/systemd/system.conf.d/10-cpu-housekeeping.conf` starts everything on CPUs 0,1,4,5 (Ignition and PostgreSQL live there); both game services ask for CPUs 2,3,6,7 at `Nice=-10` (the old one by its drop-in `20-cores.conf`, the new one in `tools/towerbrawl-v2.service`). `tb-cpu-tune.service` keeps those cores awake and free of interrupts (`tb-cpu-tune.sh show`).
 - The lid can be closed. Sleep is off.
 - The screen logs in by itself and opens a one-window graphical terminal (`cage` + `foot`, JetBrainsMono Nerd Font, the Omarchy colours under `[colors-dark]` in `~/.config/foot/foot.ini`, the section name foot 1.28 wants, so it looks like the PC's deck). It prints a help box with the play link and every command, then opens the deck (`tbdash --controls`). If the graphics fail, it falls back to the plain text console.
 - The deck has a SERVER panel at the top: the play link, buttons for **+ bot**, **- bot**, **clear bots** and **wifi help**. Keys do the same: `a`, `r`, `x`, `w`. `a` (or **+ bot**) opens the bot menu (v0.0.41): press `1` to `6` or click a chip to add that persona (wanderer, chaser, sniper, turtle, rusher, griefer), `a` again adds the next one in the list, Esc closes it. `i` (or **info**) shows the about panel with the public GitHub link, for anyone who asks about the code. Press `q` to leave the deck and get a shell; `tbdash` brings it back, `tbhelp` prints the box again.
@@ -51,7 +53,7 @@ Kernel log noise that is harmless: `b43` probes the wifi chip and fails before `
 
 ```
 ./bump_build.sh --title "..."          # as usual
-tools/deploy_laptop.sh <laptop ip>     # copies the build + source, restarts the service (asks the laptop's sudo password)
+tools/deploy_laptop.sh <laptop ip>     # copies both games + source, restarts both services (asks the laptop's sudo password)
 TB_SUDO_PASS=... tools/deploy_laptop.sh <laptop ip>   # the same with no prompt (a script or an agent)
 ```
 
