@@ -13,7 +13,11 @@ WorkingDirectory=/home/nemr/tower_brawl
 ExecStart=/usr/bin/env godot --headless --path /home/nemr/tower_brawl/bench res://server/game_server.tscn -- --port 8091 --cert /home/nemr/tower_brawl/cert.pem --key /home/nemr/tower_brawl/key.pem --out /home/nemr/tower_brawl/bench_results --quiet
 Restart=always
 RestartSec=3
-Nice=-5
+# the game cores, as the old game's 20-cores.conf drop-in: physical cores 2 and 3 (CPUs 2,3,6,7);
+# without this line the laptop's system.conf.d starts it on CPUs 0,1,4,5 beside Ignition and PostgreSQL.
+# Both games share these cores; only one is played at a time.
+CPUAffinity=2 3 6 7
+Nice=-10
 OOMScoreAdjust=-500
 TimeoutStopSec=10
 
