@@ -22,6 +22,7 @@ const Lobby = preload("res://client/lobby.gd")
 const Sticks = preload("res://client/touch_sticks.gd")
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
+const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
 const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb_up": [KEY_W, KEY_UP],
 	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT]}
 
@@ -40,6 +41,7 @@ var token := ""
 var seats_msg := {}
 var phase := -1
 var retry_t := 0.0
+var stuck_t := 0.0
 var version_bad := false
 var auto_join := false
 var auto_start := false
@@ -171,13 +173,19 @@ func _process(delta: float) -> void:
 		if status_t <= 0.0:
 			status = ""
 	var connected: bool = net.state == WebSocketPeer.STATE_OPEN
+	stuck_t = 0.0 if connected else stuck_t + delta
+	# a phone's browser drops a wss to a certificate it has not accepted, and never asks:
+	# the page's own port (8443) was accepted, the game server's (8091) must be too
+	var stuck_url := ""
+	if stuck_t >= STUCK_S and server_url.begins_with("wss://"):
+		stuck_url = "https://" + server_url.trim_prefix("wss://")
 	if sticks.active != lobby.phone:
 		lobby.set_phone(sticks.active)
 	var show_lobby: bool = my_seat < 0 or phase < 0 or phase <= P.PH_COUNTDOWN or not connected
 	hud.update(seats_msg, s, my_seat, delta, fps_now, net.last_rtt, opts.has("info"), show_lobby)
 	lobby.visible = show_lobby
 	sticks.visible = sticks.active and not show_lobby
-	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad)
+	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad, stuck_url)
 
 func _keep_connected(delta: float) -> void:
 	if version_bad:

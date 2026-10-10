@@ -15,6 +15,7 @@ func _init() -> void:
 	_kill_stays_dead()
 	_drop_through_a_ledge()
 	_frozen_round_start()
+	_bots_wait_at_fight()
 	_aim_help()
 	_bench_path_alive()
 	if fails == 0:
@@ -214,6 +215,59 @@ func _frozen_round_start() -> void:
 	sim.frozen = false
 	_press(sim, f, P.B_RIGHT, 0, 30)
 	_check("unfrozen: they work again", f.x > x0 + 100, "x=%d" % f.x)
+
+# After FIGHT the bots stand still BOT_WAIT_MIN..MAX ticks (no move, no shot), so
+# people move first; then they play. 20 rounds: 1 person standing still + 7 bots.
+func _bots_wait_at_fight() -> void:
+	var firsts: Array = []
+	var never := 0
+	var moved_early := 0
+	var deaths_early := 0
+	var moved_later := 0
+	for sd in range(1, 21):
+		var sim = SimScript.new(0, 24, sd)
+		sim.respawn = false
+		sim.power_arrows = false
+		var seats: Array = [{"id": 0, "bot": false}]
+		for i in range(1, 8):
+			seats.append({"id": i, "bot": true})
+		sim.start_round(seats)
+		sim.frozen = true
+		for t in 90:
+			sim.step()
+		sim.take_events()
+		sim.frozen = false
+		var at_fight := {}
+		for f in sim.fighters:
+			at_fight[f.id] = Vector2i(f.x, f.y)
+		var first := -1
+		for t in 300:
+			sim.step()
+			var evs: Array = sim.take_events()
+			if first < 0 and _has(evs, P.E_SHOOT):
+				first = t + 1
+			if t + 1 < SimScript.BOT_WAIT_MIN and _has(evs, P.E_DEATH):
+				deaths_early += 1
+			if t + 1 == SimScript.BOT_WAIT_MIN - 1 or t + 1 == 300:
+				var n := 0
+				for f in sim.fighters:
+					if f.bot and f.state != P.F_DEAD and Vector2i(f.x, f.y) != at_fight[f.id]:
+						n += 1
+				if t + 1 == 300:
+					moved_later += 1 if n > 0 else 0
+				else:
+					moved_early += n
+		if first < 0:
+			never += 1
+		else:
+			firsts.append(first)
+	firsts.sort()
+	var ok: bool = never == 0 and firsts[0] >= SimScript.BOT_WAIT_MIN and moved_early == 0 and deaths_early == 0 and moved_later == 20
+	_check("bots stand still and hold fire 1 to 1.5 s after FIGHT", ok,
+		"20 rounds: bots that moved in the first %d ticks: %d, deaths: %d; the first shot came %d to %d ticks after FIGHT (median %d); rounds with no shot in 5 s: %d, with the bots moving by 5 s: %d" % [
+			SimScript.BOT_WAIT_MIN - 1, moved_early, deaths_early,
+			firsts[0] if firsts.size() > 0 else -1, firsts[-1] if firsts.size() > 0 else -1,
+			firsts[firsts.size() / 2] if firsts.size() > 0 else -1, never, moved_later])
 
 func _aim_help() -> void:
 	var sim = _game(2)

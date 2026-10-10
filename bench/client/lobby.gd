@@ -114,7 +114,9 @@ func _on_join_btn() -> void:
 	else:
 		join_pressed.emit(name_edit.text)
 
-func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, connected: bool, version_bad: bool) -> void:
+# stuck_url: the game server's https address once the connection has failed for
+# a while (game_client.gd STUCK_S), else "".
+func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, connected: bool, version_bad: bool, stuck_url: String = "") -> void:
 	seated = my_seat >= 0
 	join_btn.text = "LEAVE" if seated else "JOIN"
 	join_btn.disabled = not connected or version_bad
@@ -177,6 +179,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 	if line == "":
 		if version_bad:
 			line = "Wrong version: reload the page."
+		elif not connected and stuck_url != "":
+			line = "Still connecting. Open %s once in this browser, accept the warning, then come back here." % stuck_url
 		elif not connected:
 			line = "Connecting to the server…"
 		elif not seated:

@@ -511,6 +511,8 @@ func _match_tick() -> void:
 				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points()}))
 				print("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s" % [round_no, winner, seats[winner].name, _score_line()])
 				seats_dirty = true
+			elif _people() + _bots_now() < 2:
+				_stop_match()
 			else:
 				round_no += 1
 				_start_round()
@@ -573,6 +575,14 @@ func _start_round() -> void:
 	print("🏰 [ROUND] %d start: %d fighters (%d people, %d bots) %s" % [round_no, seat_list.size(), _people(), _bots_now(), _score_line()])
 	seats_dirty = true
 
+# Fewer than 2 fighters for the next round (people left, no bots fill in):
+# nobody wins the match, everyone goes back to the lobby (backlog 35).
+func _stop_match() -> void:
+	var n := _people() + _bots_now()
+	print("🏰 [MATCH] stopped after %d round%s: %d fighter%s left %s" % [round_no, "" if round_no == 1 else "s", n, "" if n == 1 else "s", _score_line()])
+	_out(0, JSON.stringify({"kind": "note", "text": "The match stopped: a match needs 2 fighters."}))
+	_to_lobby()
+
 func _to_lobby() -> void:
 	sim.clear()
 	sim.frozen = false
@@ -616,12 +626,13 @@ func _log_deaths(evs: Array) -> void:
 		var killer: int = f.killer if f != null else 255
 		var cause: String = P.CAUSES.get(e[4], str(e[4]))
 		var vn: String = seats[victim].name if victim < SEATS else "?"
+		var when := _round_secs()
 		if killer == victim:
-			print("🏰 [KILL] seat %d '%s' killed themselves (%s), %d left" % [victim, vn, cause, sim.alive_count()])
+			print("🏰 [KILL] seat %d '%s' killed themselves (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
 		elif killer < SEATS:
-			print("🏰 [KILL] seat %d '%s' killed seat %d '%s' (%s), %d left" % [killer, seats[killer].name, victim, vn, cause, sim.alive_count()])
+			print("🏰 [KILL] seat %d '%s' killed seat %d '%s' (%s) %.2f s after FIGHT, %d left" % [killer, seats[killer].name, victim, vn, cause, when, sim.alive_count()])
 		else:
-			print("🏰 [KILL] seat %d '%s' died (%s), %d left" % [victim, vn, cause, sim.alive_count()])
+			print("🏰 [KILL] seat %d '%s' died (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
 
 # The seat list, to one client (id) or to all (0).
 func _send_seats(target: int) -> void:

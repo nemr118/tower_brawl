@@ -62,6 +62,8 @@ const MIASMA_R := 150.0
 const MIASMA_TICKS := 300
 const MIASMA_KILL_TICKS := 45
 const RESPAWN_TICKS := 90
+const BOT_WAIT_MIN := 60            # after FIGHT a bot stands still 1 to 1.5 s, then plays (ours: the
+const BOT_WAIT_MAX := 90            # benchmark's brain shot or stomped within 0.1 s, before a person could move)
 const SMOKE_R := 230.0
 const SMOKE_TICKS := 480
 const HURT_TICKS := 18
@@ -106,6 +108,7 @@ class Fighter:
 	var burn_t: int = 0
 	var miasma_t: int = 0
 	var think_t: int = 0        # the bot brain
+	var wait_t: int = 0         # the brain does nothing until this counts down (set at a round's start)
 	var move_dir: int = 0
 	var want_jump: bool = false
 	var jump_buf: int = 0
@@ -218,6 +221,7 @@ func start_round(seat_list: Array) -> void:
 		f.bot = bool(seat_list[i]["bot"])
 		fighters.append(f)
 		_place(f, spots[i % spots.size()])
+		f.wait_t = rng.randi_range(BOT_WAIT_MIN, BOT_WAIT_MAX)   # only the brain reads it; it counts from FIGHT
 
 func clear() -> void:
 	fighters.clear()
@@ -578,6 +582,11 @@ func _update_fighter(f: Fighter) -> void:
 	_fighter_zones(f)
 
 func _brain(f: Fighter) -> void:
+	if f.wait_t > 0:   # the round's first moment: stand still, people move first
+		f.wait_t -= 1
+		f.move_dir = 0
+		f.want_jump = false
+		return
 	if f.shoot_cd > 0:
 		f.shoot_cd -= 1
 	var tgt: Fighter = _nearest_enemy(f)
