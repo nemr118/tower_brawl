@@ -180,7 +180,7 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 		if version_bad:
 			line = "Wrong version: reload the page."
 		elif not connected and stuck_url != "":
-			line = "Still connecting. Open %s once in this browser, accept the warning, then come back here." % stuck_url
+			line = "Still connecting. Open %s in this browser once and accept the warning (an error page after that is fine), then come back here." % stuck_url
 		elif not connected:
 			line = "Connecting to the server…"
 		elif not seated:
@@ -192,3 +192,6 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 		else:
 			line = "A match is on. You join at the next round."
 	status_label.text = line
+	# the certificate hint takes two or three lines: it gets the help line's room
+	help.visible = stuck_url == ""
+	status_label.size.y = 64.0 if help.visible else 128.0

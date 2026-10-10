@@ -177,7 +177,7 @@ func _process(delta: float) -> void:
 	# a phone's browser drops a wss to a certificate it has not accepted, and never asks:
 	# the page's own port (8443) was accepted, the game server's (8091) must be too
 	var stuck_url := ""
-	if stuck_t >= STUCK_S and server_url.begins_with("wss://"):
+	if stuck_t >= STUCK_S and server_url.begins_with("wss://") and not version_bad:
 		stuck_url = "https://" + server_url.trim_prefix("wss://")
 	if sticks.active != lobby.phone:
 		lobby.set_phone(sticks.active)

@@ -9,7 +9,7 @@ godot --headless --path bench res://server/game_server.tscn -- --bots 7   # the 
 godot --path bench -- --server=wss://192.168.4.21:8091 --name=Dad          # the game in a window on the PC (keyboard + mouse)
 tools/v2_build.sh --title "Short Title"   # check, bump v0.2.0-p1.N (bench/sim/proto.gd), export build/web/v2/, name the pck, patch page; `none` = re-export only
 godot --headless --path bench --script res://tools/check_scripts.gd       # the check alone (scripts + scenes)
-godot --headless --path bench --script res://tools/input_probe.gd         # 23 rules of the sim, offline, PASS/FAIL lines
+godot --headless --path bench --script res://tools/input_probe.gd         # 24 rules of the sim, offline, PASS/FAIL lines
 godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws://127.0.0.1:8091 --name=Me --start --bots=7 --move --watch=300   # a headless person: the move proof, then a match watched
 ./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --seconds 300 --start --bots 0   # 7 fake players (a small brain)
 ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot [--phone]            # Chromium pictures: lobby, round, fight (the Python service + a wss server on 8091)
