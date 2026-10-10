@@ -1,18 +1,47 @@
-# The benchmark's packet and entity codes, shared by the server, the clients and
-# tools/bench_synth.py (which copies the numbers). All binary, little endian.
-#   snapshot  u8 T_SNAP, u32 tick, u8 fighters, u16 arrows, u8 zones, u16 events,
-#             fighter x12 B, arrow x8 B, zone x9 B, event x7 B
-#   input     (u8 T_INPUT, u32 client tick, u8 buttons, u16 aim) x4 (the last 4 ticks)
+# The game's packet and entity codes, shared by the server (server/game_server.gd),
+# the clients (client/net.gd), the benchmark (server/bench_server.gd) and the Python
+# fake players (tools/v2_synth.py, tools/bench_synth.py copy the numbers).
+# All binary, little endian.
+#   snapshot  u8 T_SNAP, u32 tick, u8 phase, u8 round, u16 phase ticks left, u8 goal,
+#             u8 winner (NO_ONE = none), u8 fighters, u16 arrows, u8 zones, u16 events,
+#             fighter x14 B, arrow x8 B, zone x9 B, event x7 B
+#   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
+#             u8 arrows, u8 state ticks, u8 points, u8 flags2
+#   input     (u8 T_INPUT, u32 client tick, u8 buttons, u16 aim in 0.1 degree steps) x4 (the last 4 ticks)
 #   ping      u8 T_PING, u32 client ms, u16 last rtt ms, u16 worst snapshot gap ms
 #   pong      u8 T_PONG, u32 client ms (echoed), u32 server tick
-# Text frames are JSON: {"kind": "bench_card", ...} and {"kind": "hello", ...}.
+# Text frames are JSON, {"kind": ...}: hello, join, leave, start, bots, name from a
+# client; welcome, version_error, full, seats, round_end, match_end from the server
+# (the fields are listed in server/game_server.gd). The benchmark adds bench_card.
 extends RefCounted
+
+# The game's version. tools/v2_build.sh bumps the last number on every build and
+# names the pck after it; the server turns away a client with another version.
+const VERSION := "v0.2.0-p1.1"
 
 const PORT := 8091
 const T_SNAP := 1
 const T_INPUT := 2
 const T_PING := 3
 const T_PONG := 4
+
+# input buttons (one byte)
+const B_LEFT := 1
+const B_RIGHT := 2
+const B_UP := 4           # the stick points up: a dodge goes that way (W on the keyboard also jumps)
+const B_DOWN := 8         # held: fall faster, drop through a ledge with jump, a dodge goes down
+const B_JUMP := 16        # held: a higher jump
+const B_SHOOT := 32       # held: aim (standing still on the ground); let go: fire
+const B_DODGE := 64
+
+# the match, in the snapshot header
+const PH_LOBBY := 0
+const PH_COUNTDOWN := 1   # START was pressed: 3 s
+const PH_ROUND_START := 2 # the fighters stand on their spots, nobody moves: 1.5 s
+const PH_PLAY := 3
+const PH_ROUND_END := 4   # one fighter left (1.5 s), or none (a draw)
+const PH_MATCH_END := 5   # the winner, 7 s, then the lobby
+const NO_ONE := 255
 
 # fighter states
 const F_NORMAL := 0
@@ -54,5 +83,13 @@ const E_TINK := 14
 const E_HURT := 15       # a = fighter
 const E_LEDGE := 16      # a = fighter, b = 1 wall on the right
 const E_SMOKE := 17
+const E_DRYFIRE := 18    # a = fighter: let go of shoot with an empty quiver
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
+# fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)
+const F2_BOT := 1
+const F2_AIMING := 2
+const F2_AWAY := 4
+
+# the death causes, for the log lines
+const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma"}
