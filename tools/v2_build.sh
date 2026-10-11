@@ -4,6 +4,7 @@
 #
 #   tools/v2_build.sh --title "Short Title"   bump the build number (v0.2.0-p1.N -> N+1),
 #                                             check, export, name the pck, make the patch page
+#   tools/v2_build.sh --phase 2 --title "..." the first build of a phase: v0.2.0-p2.1
 #   tools/v2_build.sh none                    re-export the CURRENT version (no bump, no page)
 #
 # The version lives in bench/sim/proto.gd (const VERSION := "v0.2.0-p1.N"), the
@@ -20,13 +21,15 @@ OUT="build/web/v2"
 PRESET="Web v2"
 NOTES_DIR="docs/Patch Notes"
 
-BUMP="patch"; TITLE=""
+BUMP="patch"; TITLE=""; PHASE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     none) BUMP="none" ;;
     --title) TITLE="$2"; shift ;;
     --title=*) TITLE="${1#--title=}" ;;
-    -h|--help) sed -n '3,14p' "$0"; exit 0 ;;
+    --phase) PHASE="$2"; shift ;;
+    --phase=*) PHASE="${1#--phase=}" ;;
+    -h|--help) sed -n '3,15p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -36,6 +39,10 @@ current=$(grep -oE 'const VERSION := "v[^"]+"' "$PROTO" | grep -oE 'v[0-9][^"]*'
 [[ -n "$current" ]] || { echo "could not read VERSION from $PROTO" >&2; exit 1; }
 if [[ "$BUMP" == "none" ]]; then
   NEW="$current"
+elif [[ -n "$PHASE" ]]; then
+  [[ "$PHASE" =~ ^[0-9]+$ ]] || { echo "--phase takes a number" >&2; exit 2; }
+  NEW="${current%-p*}-p$PHASE.1"
+  [[ "$NEW" != "$current" ]] || { echo "already at $NEW: drop --phase to bump the build number" >&2; exit 2; }
 else
   base="${current%.*}"; n="${current##*.}"
   [[ "$n" =~ ^[0-9]+$ ]] || { echo "VERSION $current does not end in a build number" >&2; exit 1; }
@@ -50,6 +57,7 @@ if ! out=$(godot --headless --path bench --script res://tools/check_scripts.gd 2
 fi
 echo "$out" | grep 'check_scripts' || true
 
+PH=$(printf '%s' "$NEW" | sed -E 's/.*-p([0-9]+)\..*/\1/')
 echo "== [2/4] Version $current -> $NEW =="
 if [[ "$BUMP" != "none" ]]; then
   sed -i -E "s/(const VERSION := \")v[^\"]+\"/\1$NEW\"/" "$PROTO"
@@ -62,9 +70,9 @@ if [[ "$BUMP" != "none" ]]; then
     title_esc=$(printf '%s' "$TITLE" | sed 's/[&/\]/\\&/g')
     prev_esc=$(printf '%s' "${prev_page:-Changelog}" | sed 's/[&/\]/\\&/g')
     sed -e "s/{VERSION}/$NEW/g" -e "s/{DATE}/$(date +%F)/g" -e "s/{TITLE}/$title_esc/g" \
-        -e "s/{PHASE}/tbd/g" -e "s/{HARNESS}/the P1 proofs (no relay harness: the new server)/g" -e "s/{PREVIOUS}/$prev_esc/g" \
+        -e "s/{PHASE}/tbd/g" -e "s/{HARNESS}/the P$PH proofs (no relay harness: the new server)/g" -e "s/{PREVIOUS}/$prev_esc/g" \
         docs/patch_note_template.md > "$page"
-    sed -i "/<!-- bump_build.sh inserts new versions directly below this line -->/a - [[$NEW - $TITLE]] — $(date +%F) · tbd · P1 proofs tbd" docs/Changelog.md
+    sed -i "/<!-- bump_build.sh inserts new versions directly below this line -->/a - [[$NEW - $TITLE]] — $(date +%F) · tbd · P$PH proofs tbd" docs/Changelog.md
     [[ -n "$prev_page" ]] && sed -i "s/^Previous: \(.*\) · Next: — /Previous: \1 · Next: [[$NEW - $title_esc]] /" "$NOTES_DIR/$prev_page.md"
     echo "📝 patch-notes page created: $page (fill in summary / changes / checked / metrics)"
   fi
