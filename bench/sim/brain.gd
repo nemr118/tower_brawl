@@ -13,6 +13,12 @@
 # By level: the aim's error, how far they lead a runner, the draw, the pause.
 # They fly each arrow coming at them forward, and with the level's chance (rolled
 # once an arrow) dodge into it just before it lands: a dodge catches it.
+# They get around by the route map (sim/routes.gd, from sim/routes.json): the
+# fastest moves between floors and ledges, found offline with the sim's own
+# movement; a bot walks to a move's start place and presses its buttons. Every 2
+# to 4 s a bot either hunts (heads for its target's floor; more often at a higher
+# level) or roams (heads for another floor somewhere), shooting whenever a path
+# opens; one that has not moved for 3 s roams.
 # TowerFall has no archer bots; its quest skeleton archers draw for 10 frames,
 # aim in 22.5 degree steps and are one step off half the time, and fail a dodge
 # 1 time in 10 to 1 in 5, more after each dodge (numbers only).
@@ -21,6 +27,7 @@ extends RefCounted
 
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
+const Routes = preload("res://sim/routes.gd")
 
 const OLD := 0
 const EASY := 1
@@ -41,6 +48,14 @@ const CATCH := [0.0, 0.2, 0.5, 0.8]   # the chance it dodges into an arrow comin
 const SEE_T := 12               # an arrow that will reach it within this many ticks is seen (about 216 px)
 const DODGE_AT := 8             # from this many ticks away it looks for a dodge that meets the arrow
 const SEE_R2 := 90000.0         # arrows farther than 300 px are not looked at
+const PLAN_EVERY := 30          # ticks between plans while it walks (its goal moves)
+const WALK_GIVE_UP := 120       # ticks to reach a move's start place, then another way
+const BAD_TICKS := 300          # a move that did not land where it should is not used for 5 s
+const CROWD_TICKS := 40         # another fighter on the start place this long: another way
+const NEAR_TARGET := 260.0      # on its target's floor it stops this far from it (and shoots)
+const HUNT := [0.0, 0.3, 0.5, 0.8]    # by level: the chance a new plan hunts the target (else it roams)
+const MODE_TICKS := [120, 240]  # a plan (hunt or roam) lasts 2 to 4 s
+const IDLE_TICKS := 150         # not 90 px from where it was for 2.5 s with no shot: it lowers the bow and roams
 # the 8 ways, from right going clockwise (y grows down): the dodge into an arrow
 const WAYS8 := [P.B_RIGHT, P.B_DOWN | P.B_RIGHT, P.B_DOWN, P.B_DOWN | P.B_LEFT, P.B_LEFT, P.B_UP | P.B_LEFT,
 	P.B_UP, P.B_UP | P.B_RIGHT]
@@ -67,6 +82,26 @@ class Mind:
 	var lower := false          # the bow is being lowered with a jump (no path): shoot comes up next tick, no shot
 	var seen := {}              # an arrow's id -> true: dodge into it when it is close; false: let it come
 	var only_dodge := false     # a test knob (the bot probe's catch test): stand, hold fire, only dodge
+	var goal_s := -1            # the routes: the surface it heads for (-1: none yet)
+	var goal_x := 960.0         # and the feet x it wants there
+	var edge: Array = []        # the move it walks to: [from cx, move index, to cx, ticks, flags]
+	var edge_to := -1           # the surface that move lands on
+	var player = null           # a Routes.MovePlayer while a move plays
+	var walk_t := 0             # ticks walking to the move's start place
+	var plan_t := 0             # ticks to the next plan
+	var bad := {}               # Vector3i(surface, from cx, move) -> the tick until which that move is not used
+	var force_goal := -1        # a test knob (the bot probe's reach test): head for this surface
+	var hunting := true         # the plan: hunt the target, or roam to roam_s
+	var mode_t := 0             # ticks until it picks hunt or roam again
+	var roam_s := -1
+	var idle_at := Vector2.ZERO # where it was idle_t ticks ago (the idle check)
+	var idle_t := 0
+	var quit_draw := false      # idle while drawing: lower the bow this tick
+	var walls_goal := false     # goal_s is a safe floor picked while the purple walls come
+	var crowd_t := 0            # ticks another fighter has stood on the move's start place
+	var still_t := 0            # ticks a playing move has stood still on the ground
+	var near_t := 0             # ticks it has stood near its target on the target's floor with no shot
+	var still_x := 0
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
 static func think(sim, f) -> void:
@@ -74,7 +109,9 @@ static func think(sim, f) -> void:
 		f.mind = Mind.new()
 	var m: Mind = f.mind
 	var b := 0
-	if f.state == P.F_NORMAL or f.state == P.F_DODGE:
+	if f.level != OLD and m.player != null:
+		b = _play(sim, f, m)   # a move plays on in every state (a ledge hang is part of it)
+	elif f.state == P.F_NORMAL or f.state == P.F_DODGE:
 		b = _old(sim, f, m) if f.level == OLD else _play(sim, f, m)
 	elif m.drawing:
 		m.drawing = false   # knocked out of it: the bow is down
@@ -190,7 +227,8 @@ static func _old_dodge(sim, f) -> int:
 	return 0
 
 # ------------------------------------------------------------------ EASY, NORMAL, HARD
-# OLD's walking for now (G6 step 5 replaces it); the dodge (_dodge) and the shot are new:
+# The walking is the routes' (_route_move; OLD's walking when there is no route
+# map); the dodge (_dodge) and the shot are their own:
 # every LOOK_EVERY ticks it looks for a path to one of its 3 nearest enemies; with
 # one it draws the bow (standing still on the ground, as a person does), aims at
 # the target while it draws, and lets go when the draw is done and the path is
@@ -207,9 +245,16 @@ static func _play(sim, f, m: Mind) -> int:
 	if m.only_dodge:
 		return _dodge(sim, f, m)
 	var tgt = nearest_enemy(sim, f)
-	_old_move(sim, f, m, tgt)
+	var rm = Routes.map_for(sim.level)
+	var walk := 0
+	if rm != null:
+		walk = _route_move(sim, f, m, rm, tgt)
+	else:
+		_old_move(sim, f, m, tgt)
 	var dodge := _dodge(sim, f, m)
 	if dodge != 0:
+		m.player = null     # the dodge breaks a move: it plans again once it stands
+		m.plan_t = 0
 		if m.drawing:       # shoot stays down on the dodge tick: the dodge lowers the bow, no shot
 			m.drawing = false
 			return dodge | P.B_SHOOT
@@ -222,11 +267,17 @@ static func _play(sim, f, m: Mind) -> int:
 	elif m.drawing:
 		m.jump = 0          # a jump would lower the bow
 		m.jump_wait = false
-		_draw(sim, f, m)
+		if m.quit_draw and f.on_ground:
+			m.lower = true
+			f.shoot_cd = 60
+		else:
+			_draw(sim, f, m)
+		m.quit_draw = false
 		if m.lower:
 			m.down = 0      # down + jump on a ledge would drop through it, and the bow would stay up
 			_jump(m, 4)
-	elif f.arrows > 0 and f.shoot_cd == 0 and f.state == P.F_NORMAL and not f.aiming:
+	elif f.arrows > 0 and f.shoot_cd == 0 and f.state == P.F_NORMAL and not f.aiming and m.player == null \
+			and (m.edge.is_empty() or absf(SimScript.wrap_d(f.x + SimScript.HALF_W, m.edge[0] * 30.0, W)) > 40.0):
 		m.look_t -= 1
 		if m.look_t <= 0:
 			m.look_t = LOOK_EVERY
@@ -240,7 +291,263 @@ static func _play(sim, f, m: Mind) -> int:
 				m.draw_need = sim.rng.randi_range(d[0], d[1])
 				m.jump = 0
 				m.jump_wait = false
-	return _buttons(m)
+	if rm == null:
+		return _buttons(m)
+	if m.lower or m.jump > 0:   # lowering the bow: a jump with shoot still down
+		m.jump = 0
+		return P.B_JUMP | P.B_SHOOT
+	if m.drawing:
+		return (walk & (P.B_LEFT | P.B_RIGHT)) | P.B_SHOOT   # no jump or drop while the bow is drawn
+	return walk
+
+# ------------------------------------------------------------------ the routes
+# The walking buttons for this tick, by the route map: a move that plays goes on
+# until it lands; on the ground the bot plans every PLAN_EVERY ticks (its goal
+# surface: under its target, or the middle when the purple walls come), walks to
+# the start place of the fastest move toward it, stands still there, and plays the
+# move. A move that lands on another surface, or a start place it cannot reach in
+# WALK_GIVE_UP ticks, is not used for BAD_TICKS. In the air with no move (after a
+# dodge, a knock) it steers toward its goal.
+static func _route_move(sim, f, m: Mind, rm, tgt) -> int:
+	if m.player != null:
+		if m.player.airborne and f.on_ground and f.state == P.F_NORMAL:
+			var landed: int = rm.surface_of(Routes.place_at(f, rm.at))
+			if landed != m.edge_to and not m.edge.is_empty():
+				m.bad[Vector3i(m.edge_to, m.edge[0], m.edge[1])] = sim.tick + BAD_TICKS
+			m.player = null
+			m.plan_t = 0
+		elif m.player.t >= Routes.MAX_T:
+			m.player = null
+			m.plan_t = 0
+		else:
+			# a move that stands still on the ground (as the probe's runner gives up on one)
+			if not m.player.airborne and f.on_ground and f.x == m.still_x:
+				m.still_t += 1
+			else:
+				m.still_t = 0
+			m.still_x = f.x
+			if m.player.t > 40 and m.still_t > 10:
+				m.bad[Vector3i(m.edge_to, m.edge[0], m.edge[1])] = sim.tick + BAD_TICKS
+				m.player = null
+				m.plan_t = 0
+				return 0
+			return m.player.buttons(f)
+	if not f.on_ground or f.state != P.F_NORMAL:
+		return _toward(f, m.goal_x, 0.0)
+	var place := Routes.place_at(f, rm.at)
+	var here: int = rm.surface_of(place)
+	if here < 0:
+		return _toward(f, m.goal_x, 0.0)
+	# idle for IDLE_TICKS (no 90 px from where it was, no shot): roam somewhere else
+	m.idle_t += 1
+	if absf(SimScript.wrap_d(m.idle_at.x, f.x, W)) > 90.0 or absf(SimScript.wrap_d(m.idle_at.y, f.y, H)) > 90.0:
+		m.idle_at = Vector2(f.x, f.y)
+		m.idle_t = 0
+	elif m.idle_t > IDLE_TICKS:
+		m.idle_at = Vector2(f.x, f.y)
+		m.idle_t = 0
+		if m.drawing:
+			m.quit_draw = true   # put the bow down (the drawing step lowers it with a jump), then go
+		_roam(sim, m, rm, here)
+		m.plan_t = 0
+	m.mode_t -= 1
+	if m.mode_t <= 0:
+		m.mode_t = sim.rng.randi_range(MODE_TICKS[0], MODE_TICKS[1])
+		if sim.rng.randf() < HUNT[f.level] and tgt != null:
+			m.hunting = true
+		else:
+			_roam(sim, m, rm, here)
+		m.plan_t = 0
+	m.plan_t -= 1
+	if m.plan_t <= 0 or m.goal_s < 0:
+		m.plan_t = PLAN_EVERY
+		_goal(sim, f, m, rm, tgt, here)
+		_pick_edge(sim, m, rm, place, here)
+		m.walk_t = 0
+	if here == m.goal_s and m.walls_goal:
+		m.plan_t = 0        # reached a safe floor: the next one
+	elif here == m.goal_s and not m.hunting and m.force_goal < 0 and sim.walls_share <= 0.0:
+		m.mode_t = 0        # roamed there: pick the next plan
+	if here == m.goal_s or m.edge.is_empty():
+		var near := m.hunting and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
+		var b := _toward(f, m.goal_x, NEAR_TARGET if near else 0.0)
+		if near and b == 0 and not m.drawing:
+			m.near_t += 1
+			if m.near_t > 60:   # standing by its target with no shot for a second (a wall between): go round
+				m.near_t = 0
+				_roam(sim, m, rm, here)
+				m.mode_t = sim.rng.randi_range(MODE_TICKS[0], MODE_TICKS[1])
+				m.plan_t = 0
+		else:
+			m.near_t = 0
+		return b
+	var sx: float = m.edge[0] * 30.0
+	if not m.drawing:
+		m.walk_t += 1
+	if m.walk_t > WALK_GIVE_UP:
+		m.bad[Vector3i(m.edge_to, m.edge[0], m.edge[1])] = sim.tick + BAD_TICKS
+		m.plan_t = 0
+		return 0
+	var dx := SimScript.wrap_d(f.x + SimScript.HALF_W, sx, W)
+	if absf(dx) <= 40.0 and _crowded(sim, f, sx):
+		m.crowd_t += 1
+		if m.crowd_t > CROWD_TICKS:   # someone stands there: another way
+			m.crowd_t = 0
+			m.bad[Vector3i(m.edge_to, m.edge[0], m.edge[1])] = sim.tick + BAD_TICKS
+			m.plan_t = 0
+		return 0
+	m.crowd_t = 0
+	var go := _toward(f, sx, 0.0)
+	if go != 0 and not m.drawing and (m.prev & P.B_JUMP) == 0 and _blocked(sim, f, 1 if go == P.B_RIGHT else -1):
+		return go | P.B_JUMP   # someone stands in the way: hop over (or onto) them
+	if absf(dx) <= 1.0 and absf(f.vx) < 0.1 and not m.drawing and not f.aiming \
+			and (m.prev & (P.B_JUMP | P.B_DODGE | P.B_SHOOT)) == 0 \
+			and (f.dodge_cd == 0 or (m.edge[4] & Routes.F_DODGE) == 0):
+		# (the last tick's buttons were all up: the move's first jump or dodge is a fresh press, as in the probe)
+		m.player = Routes.MovePlayer.new(rm.mvs[m.edge[1]])
+		m.still_t = 0
+		m.still_x = f.x
+		return m.player.buttons(f)
+	return go
+
+# Another living fighter's body just ahead (within 45 px the way it walks) at about
+# its height.
+static func _blocked(sim, f, dir: int) -> bool:
+	for o in sim.fighters:
+		if o == f or o.state == P.F_DEAD:
+			continue
+		var dx := SimScript.wrap_d(f.x, o.x, W) * dir
+		if dx > 0.0 and dx < 45.0 and absf(SimScript.wrap_d(f.y, o.y, H)) < 30.0:
+			return true
+	return false
+
+# Another living fighter's body over the start place (feet x sx, on f's row).
+static func _crowded(sim, f, sx: float) -> bool:
+	for o in sim.fighters:
+		if o != f and o.state != P.F_DEAD and absf(SimScript.wrap_d(o.x + SimScript.HALF_W, sx, W)) < 40.0 \
+				and absf(SimScript.wrap_d(o.y, f.y, H)) < 70.0:
+			return true
+	return false
+
+# Left or right toward feet x (none within near px; it lets go early enough to
+# stop there: friction takes vx * vx / 1.8 px; the last pixels in taps).
+static func _toward(f, x: float, near: float) -> int:
+	var dx := SimScript.wrap_d(f.x + SimScript.HALF_W, x, W)
+	if absf(dx) <= maxf(near, 1.0):
+		return 0
+	if absf(dx) <= 4.0 and absf(f.vx) > 0.0:
+		return 0       # a tap at a time: let it stop first
+	if f.on_ground and signf(dx) == signf(f.vx) and absf(dx) <= f.vx * f.vx / (2.0 * SimScript.FRICTION) + 1.0:
+		return 0
+	return P.B_RIGHT if dx > 0.0 else P.B_LEFT
+
+# The goal: the test knob's surface; the middle when the purple walls come (the
+# surface it reaches soonest with a place inside the safe band); else the surface
+# under its target, at the target's x.
+static func _goal(sim, f, m: Mind, rm, tgt, here: int) -> void:
+	if m.force_goal >= 0:
+		m.goal_s = m.force_goal
+		var cols: Array = rm.surfs[m.goal_s][1]
+		m.goal_x = cols[cols.size() / 2] * 30.0
+		return
+	if sim.walls_share > 0.0:
+		# a safe floor (a place inside the band the walls leave), one after another
+		var reach: float = sim.walls_width() + SimScript.WALLS_KEEP_AWAY
+		if m.walls_goal and m.goal_s >= 0 and m.goal_s != here and _safe_x(rm, m.goal_s, reach) >= 0.0:
+			return
+		var safe: Array = []
+		for s in rm.surfs.size():
+			if s != here and rm.cost[here][s] < INF and _safe_x(rm, s, reach) >= 0.0:
+				safe.append(s)
+		if not safe.is_empty():
+			m.goal_s = safe[sim.rng.randi() % safe.size()]
+			m.goal_x = _safe_x(rm, m.goal_s, reach)
+			m.walls_goal = true
+			return
+		if _safe_x(rm, here, reach) >= 0.0:
+			m.goal_s = here
+			m.goal_x = tgt.x + SimScript.HALF_W if tgt != null else 960.0
+			m.walls_goal = true
+			return
+	m.walls_goal = false
+	if not m.hunting and m.roam_s >= 0:
+		m.goal_s = m.roam_s
+		var rc: Array = rm.surfs[m.roam_s][1]
+		m.goal_x = rc[rc.size() / 2] * 30.0
+		return
+	if tgt != null:
+		var s := _surface_under(rm, tgt)
+		if s >= 0:
+			m.goal_s = s
+			m.goal_x = tgt.x + SimScript.HALF_W
+
+# The place of surface s inside the band the walls leave nearest the middle (its
+# feet x), or -1.
+static func _safe_x(rm, s: int, reach: float) -> float:
+	var best := -1.0
+	for cx in rm.surfs[s][1]:
+		var x: float = cx * 30.0
+		if x > reach and x < W - reach and (best < 0.0 or absf(x - 960.0) < absf(best - 960.0)):
+			best = x
+	return best
+
+# Roam: a floor or ledge other than this one that it can reach, picked at random.
+static func _roam(sim, m: Mind, rm, here: int) -> void:
+	m.hunting = false
+	var n: int = rm.surfs.size()
+	for k in 8:
+		var s: int = sim.rng.randi() % n
+		if s != here and rm.cost[here][s] < INF:
+			m.roam_s = s
+			return
+	m.roam_s = -1
+	m.hunting = true
+
+# The fastest move from here toward the goal: the next surface on the way
+# (rm.hop), then of the moves that land there the one with the least walking plus
+# ticks (the bad ones left out); with none, any move out of here that ends nearer.
+static func _pick_edge(sim, m: Mind, rm, place: Vector2i, here: int) -> void:
+	m.edge = []
+	m.edge_to = -1
+	if m.goal_s < 0 or here == m.goal_s:
+		return
+	var best_c := INF
+	var nxt: int = rm.hop[here][m.goal_s]
+	var row: int = rm.surfs[here][0]
+	for key in ([Vector2i(here, nxt)] if nxt >= 0 else []):
+		for e in rm.cand.get(key, []):
+			if m.bad.get(Vector3i(key.y, e[0], e[1]), -1) > sim.tick:
+				continue
+			var c: float = rm.walk_ticks(place, Vector2i(e[0], row)) + e[3]
+			if c < best_c:
+				best_c = c
+				m.edge = e
+				m.edge_to = key.y
+	if not m.edge.is_empty():
+		return
+	for key in rm.cand:
+		if key.x != here or rm.cost[key.y][m.goal_s] == INF:
+			continue
+		for e in rm.cand[key]:
+			if m.bad.get(Vector3i(key.y, e[0], e[1]), -1) > sim.tick:
+				continue
+			var c: float = rm.walk_ticks(place, Vector2i(e[0], row)) + e[3] + rm.cost[key.y][m.goal_s]
+			if c < best_c:
+				best_c = c
+				m.edge = e
+				m.edge_to = key.y
+
+# The surface a fighter stands on, or the first one under its feet.
+static func _surface_under(rm, o) -> int:
+	var cx := roundi((o.x + SimScript.HALF_W) / 30.0)
+	var r0 := floori((o.y + SimScript.BODY_H) / 30.0)
+	for dr in 36:
+		var r := posmod(r0 + dr, 36)
+		for k in [0, -1, 1]:
+			var s: int = rm.at.get(Vector2i(posmod(cx + k, 64), r), -1)
+			if s >= 0:
+				return s
+	return -1
 
 # The dodge into an arrow: each enemy arrow coming its way within 300 px is flown
 # on SEE_T ticks against the bot's body (moving as it moves now); one that will
@@ -321,12 +628,13 @@ static func _draw(sim, f, m: Mind) -> void:
 	if is_nan(ang):
 		if past >= AIM_HOLD and f.on_ground:
 			m.lower = true
-			f.shoot_cd = 20
+			f.shoot_cd = 60     # and move a while before drawing again
 		if past < AIM_HOLD_MAX:
 			return
 	if not is_nan(ang):
 		m.aim = aim_steps(ang + sim.rng.randfn(0.0, AIM_ERR[f.level]))
 	m.drawing = false   # shoot is up this tick: the shot
+	m.idle_t = 0
 	var pz: Array = PAUSE[f.level]
 	f.shoot_cd = sim.rng.randi_range(pz[0], pz[1])
 

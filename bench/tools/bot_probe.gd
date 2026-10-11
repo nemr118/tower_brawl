@@ -1,7 +1,7 @@
 # The bot probe (G6, server bots): measures the bot brain offline, on each arena
 # of sim/level.gd. No server, no drawing.
 #   godot --headless --path bench --script res://tools/bot_probe.gd -- [--layout=N] [--rounds=N] [--png=DIR] [--seed=N]
-#       [--level=old,easy,normal,hard] [--catch]
+#       [--level=old,easy,normal,hard] [--catch] [--reach]
 # Rounds of 8 bots, as the server plays them (one life, the purple walls at 25 s,
 # the 60 s backstop, plain arrows): how long they last, draws, how the bots die
 # and where (the death spots: how many of the 144 squares of 120 px see a death,
@@ -22,6 +22,10 @@
 # that stands and only dodges (the Mind's test knob only_dodge), 200 arrows a level,
 # from 200 to 600 px, along a path that reaches it (on all three arenas, random
 # places); of the arrows that reach the bot, the share it catches.
+# --reach: the reach test instead of rounds (G6 step 5): a lone bot (NORMAL; the
+# Mind's test knob force_goal) starts in the middle of each floor or ledge and is
+# sent to every other one; it must stand there within 8 s. The share that made
+# it, per arena, the slowest, and the ones that did not.
 # --png DIR: a death-spot map per arena (deaths_N.png): blocks grey, ledges amber,
 # each square of 120 px red by its share of the deaths.
 extends SceneTree
@@ -30,6 +34,7 @@ const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const LevelScript = preload("res://sim/level.gd")
 const Brain = preload("res://sim/brain.gd")
+const Routes = preload("res://sim/routes.gd")
 
 const W := 1920
 const H := 1080
@@ -73,6 +78,7 @@ func _init() -> void:
 	var seed_value := 2000
 	var levels: Array = [SimScript.new(0).bot_level]
 	var catch_test := false
+	var reach_test := false
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--layout="):
 			only = int(a.get_slice("=", 1))
@@ -84,6 +90,8 @@ func _init() -> void:
 			seed_value = int(a.get_slice("=", 1))
 		elif a == "--catch":
 			catch_test = true
+		elif a == "--reach":
+			reach_test = true
 		elif a.begins_with("--level="):
 			levels.clear()
 			for name in a.get_slice("=", 1).split(","):
@@ -100,11 +108,68 @@ func _init() -> void:
 			_catch(lv, seed_value)
 		quit(0)
 		return
+	if reach_test:
+		var all_ok := true
+		for n in LevelScript.count():
+			if only < 0 or n == only:
+				all_ok = _reach(n) and all_ok
+		quit(0 if all_ok else 1)
+		return
 	for n in LevelScript.count():
 		if only < 0 or n == only:
 			for lv in levels:
 				_rounds(n, lv, rounds, seed_value + n, png_dir)
 	quit(0)
+
+# The reach test: from the middle of every surface to every other, a lone bot.
+func _reach(n: int) -> bool:
+	var t0 := Time.get_ticks_msec()
+	var lv = LevelScript.new(n)
+	var rm = Routes.map_for(lv)
+	if rm == null:
+		print("== the reach test, %s: no route map (run arena_probe.gd -- --write-routes)" % lv.name)
+		return false
+	var sim = SimScript.new(0, 24, 3000 + n)
+	sim.set_arena(n)
+	sim.respawn = false
+	sim.power_arrows = false
+	var tries := 0
+	var made := 0
+	var times: Array = []
+	var failed: Array = []
+	for a in rm.surfs.size():
+		var cols: Array = rm.surfs[a][1]
+		var start := Vector2i(cols[cols.size() / 2] * 30, rm.surfs[a][0] * 30)
+		for b in rm.surfs.size():
+			if a == b:
+				continue
+			tries += 1
+			sim.start_round([{"id": 0, "bot": true, "level": Brain.NORMAL}])
+			var f = sim.fighters[0]
+			sim._place(f, start)
+			f.wait_t = 0
+			f.mind = Brain.Mind.new()
+			f.mind.force_goal = b
+			var ok := false
+			for t in 480:
+				sim.step()
+				sim.take_events()
+				if f.on_ground and f.state == P.F_NORMAL and rm.surface_of(Routes.place_at(f, rm.at)) == b:
+					ok = true
+					times.append(t / 60.0)
+					break
+			if ok:
+				made += 1
+			else:
+				failed.append("%s -> %s" % [Routes.surf_name(rm.surfs[a]), Routes.surf_name(rm.surfs[b])])
+	times.sort()
+	var share := 100.0 * made / maxi(1, tries)
+	print("== the reach test, %s: %d of %d trips made it within 8 s (%.1f%%); median %.1f s, the slowest %.1f s (%.1f s)" % [
+		lv.name, made, tries, share, times[times.size() / 2] if not times.is_empty() else 0.0, times[-1] if not times.is_empty() else 0.0,
+		(Time.get_ticks_msec() - t0) / 1000.0])
+	if not failed.is_empty():
+		print("   did not make it: %s%s" % ["; ".join(failed.slice(0, 8)), "; ..." if failed.size() > 8 else ""])
+	return share >= 95.0
 
 # The catch test: 200 arrows at a bot of this level that stands and only dodges.
 func _catch(level: int, seed_value: int) -> void:

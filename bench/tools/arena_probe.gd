@@ -2,6 +2,7 @@
 # docs/reference/v0.2-transformation-plan.md (section 3) as checks, for each
 # layout in sim/level.gd. Offline: no server, no drawing.
 #   godot --headless --path bench --script res://tools/arena_probe.gd -- [--layout=N] [--png=DIR] [--rounds=N] [--quick] [--list]
+#       [--write-routes]
 # Spawn fairness: no spawn spot has a clear straight shot at another within
 # 600 px (through the wrap too; a block stops the line, a ledge only from above,
 # the way an arrow sticks); each spot stands with room for the body, and none
@@ -19,6 +20,12 @@
 # --png DIR: a flat map per layout (arena_N.png): blocks grey, ledges amber,
 # surfaces green (plain moves reach them), cyan (only a wall jump or a dodge),
 # red (a dead end), spawn spots white with their number, clear shots red lines.
+# --write-routes: instead of the checks, run every move from every place of every
+# arena (from the five starts of Routes.STURDY: a move counts when all of them land
+# on the same surface, and stop there once it lets go) and keep the fastest move from each place to each other
+# surface in sim/routes.json, with each arena's grid hash and the moves' hash (the bot brain
+# replays them, G6; input_probe fails when an arena or the moves changed and the
+# file did not).
 # Exits 1 when a layout other than the bench arena fails a rule (the bench
 # arena, layout 0, is the test arena: reported, never a fail).
 extends SceneTree
@@ -26,6 +33,7 @@ extends SceneTree
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const LevelScript = preload("res://sim/level.gd")
+const Routes = preload("res://sim/routes.gd")
 
 const COLS := 64
 const ROWS := 36
@@ -34,11 +42,6 @@ const H := 1080
 const SHOT_RANGE := 600.0
 const BOW_UP := 35                # the arrow leaves the body 28 px below its top (sim ARROW_Y): 35 px above the feet
 const AIM_POINTS := [Vector2(0, -55), Vector2(0, -32), Vector2(0, -8), Vector2(-14, -32), Vector2(14, -32)]
-const MAX_T := 240                # a move gives up after 4 s
-const J := P.B_JUMP
-const F_WJ := 1                   # a move's flags: it used a wall jump,
-const F_DODGE := 2                # a dodge,
-const F_GRAB := 4                 # a ledge grab
 const WRAP_NAMES := ["right", "left", "down", "up"]
 const DIGITS := ["111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001",
 	"111100111001111", "111100111101111", "111001001001001", "111101111101111", "111101111001111"]
@@ -62,6 +65,9 @@ func _init() -> void:
 			quick = true
 		elif a == "--list":
 			list = true
+		elif a == "--write-routes":
+			_write_routes()
+			return
 	if png_dir != "":
 		DirAccess.make_dir_recursive_absolute(png_dir)
 	for n in LevelScript.count():
@@ -73,6 +79,30 @@ func _init() -> void:
 	else:
 		printerr("❌ arena_probe: %d rule(s) failed" % fails)
 		quit(1)
+
+func _write_routes() -> void:
+	var t0 := Time.get_ticks_msec()
+	var arenas: Array = []
+	var edges_n := 0
+	for n in LevelScript.count():
+		var lv = LevelScript.new(n)
+		var sim = SimScript.new(0, 24, 7)
+		sim.set_arena(n)
+		sim.respawn = false
+		sim.power_arrows = false
+		var all: Dictionary = Routes.run_all(lv, sim, 1, false, Routes.STURDY, true)
+		var flat := Routes.keep_fastest(lv, all["results"], all["sf"]["surfs"])
+		edges_n += flat.size() / 7
+		arenas.append({"id": n, "name": lv.name, "grid": Routes.grid_hash(lv), "edges": Array(flat)})
+		print("   %s: %d places, %d moves run, %d edges kept" % [lv.name, all["places"], all["runs"], flat.size() / 7])
+	var data := {"version": Routes.FILE_VERSION, "moves": Routes.moves_hash(), "made_by": "tools/arena_probe.gd --write-routes", "arenas": arenas}
+	var path := ProjectSettings.globalize_path(Routes.FILE)
+	var fa := FileAccess.open(path, FileAccess.WRITE)
+	fa.store_string(JSON.stringify(data))
+	fa.close()
+	print("✅ arena_probe: %s written: %d arenas, %d edges, %d bytes (%.1f s)" % [Routes.FILE, arenas.size(), edges_n,
+		FileAccess.get_file_as_bytes(path).size(), (Time.get_ticks_msec() - t0) / 1000.0])
+	quit(0)
 
 func _rule(bench: bool, name: String, ok: bool, detail: String) -> void:
 	if not ok and not bench:
@@ -185,121 +215,29 @@ func _line_clear(lv, from: Vector2, to: Vector2) -> bool:
 	return true
 
 # ------------------------------------------------------------------ the routes
-# The places to stand: the feet at a cell's left edge (cx * 30) on top of row r.
-# A surface: a run of places side by side on one row (joined across the wrap).
-func _surfaces(lv) -> Dictionary:
-	var at := {}          # Vector2i(cx, r) -> surface index
-	var surfs: Array = [] # [row, [cx, ...]]
-	for r in ROWS:
-		var runs: Array = []
-		var cur: Array = []
-		for cx in COLS:
-			if lv.stands(Vector2i(cx * 30, r * 30)):
-				cur.append(cx)
-			elif not cur.is_empty():
-				runs.append(cur)
-				cur = []
-		if not cur.is_empty():
-			runs.append(cur)
-		if runs.size() > 1 and runs[0][0] == 0 and runs[-1][-1] == COLS - 1:
-			runs[-1].append_array(runs[0])
-			runs.remove_at(0)
-		for run in runs:
-			for cx in run:
-				at[Vector2i(cx, r)] = surfs.size()
-			surfs.append([r, run])
-	return {"at": at, "surfs": surfs}
-
+# The places, the moves and the runs are sim/routes.gd's (the bot brain replays
+# the same moves): every second place of each surface (and both ends), each move.
 func _surf_name(s: Array) -> String:
-	var cols: Array = s[1]
-	return "row %d cols %d-%d" % [s[0], cols[0], cols[-1]]
-
-func _dir(d: int) -> int:
-	return P.B_RIGHT if d > 0 else (P.B_LEFT if d < 0 else 0)
-
-# The moves, each a list of [from tick, to tick, buttons] held together; "let_go"
-# lets go of left and right once in the air; "steer" + "wall": hold that way, and
-# at a wall in the air jump off it (up to 4 times), steer away for "wall" ticks,
-# then back toward it.
-func _moves() -> Array:
-	var m: Array = []
-	for d in [-1, 1]:
-		m.append({"segs": [[0, 999, _dir(d)]]})
-		m.append({"segs": [[0, 999, _dir(d)]], "let_go": true})
-	for hold in ([1, 30] if quick else [1, 6, 30]):
-		m.append({"segs": [[0, hold, J]]})
-		for d in [-1, 1]:
-			for at in ([0, 12] if quick else [0, 12, 24]):
-				m.append({"segs": [[0, hold, J], [at, 999, _dir(d)]]})
-	for d in [-1, 1]:
-		for run in ([10] if quick else [8, 20]):
-			for hold in [6, 30]:
-				m.append({"segs": [[0, run, _dir(d)], [run, run + hold, J], [run, 999, _dir(d)]]})
-				m.append({"segs": [[0, run, _dir(d)], [run, run + hold, J]]})
-				m.append({"segs": [[0, run, _dir(d)], [run, run + hold, J], [run + 12, 999, _dir(-d)]]})
-	for d in [-1, 0, 1]:
-		m.append({"segs": [[0, 3, P.B_DOWN], [0, 1, J], [0, 999, _dir(d)]], "drop": true})
-		if d != 0:
-			m.append({"segs": [[0, 3, P.B_DOWN], [0, 1, J], [10, 999, _dir(d)]], "drop": true})
-	for d in [-1, 1]:
-		for back in [4, 10, 999]:
-			m.append({"segs": [[0, 30, J]], "steer": d, "wall": back})
-		m.append({"segs": [[20, 50, J]], "steer": d, "wall": 8})
-	var ways := [P.B_RIGHT, P.B_LEFT, P.B_UP, P.B_UP | P.B_RIGHT, P.B_UP | P.B_LEFT, P.B_DOWN | P.B_RIGHT, P.B_DOWN | P.B_LEFT]
-	for at in ([10] if quick else [6, 14]):
-		for w in ways:
-			var steer := P.B_RIGHT if w & P.B_RIGHT else (P.B_LEFT if w & P.B_LEFT else 0)
-			m.append({"segs": [[0, 30, J], [at, at + 1, P.B_DODGE | w], [at, 999, steer]]})
-	for w in [P.B_RIGHT, P.B_LEFT, P.B_UP, P.B_UP | P.B_RIGHT, P.B_UP | P.B_LEFT]:
-		var steer := P.B_RIGHT if w & P.B_RIGHT else (P.B_LEFT if w & P.B_LEFT else 0)
-		m.append({"segs": [[0, 1, P.B_DODGE | w], [0, 999, steer]]})
-	for d in [-1, 1]:
-		m.append({"segs": [[0, 1, P.B_DODGE | _dir(d)], [4, 34, J], [0, 999, _dir(d)]]})
-	return m
+	return Routes.surf_name(s)
 
 func _routes(lv) -> Dictionary:
-	var sf := _surfaces(lv)
-	var at: Dictionary = sf["at"]
-	var surfs: Array = sf["surfs"]
 	var sim = SimScript.new(0, 24, 7)
 	sim.set_arena(lv.id)
 	sim.respawn = false
 	sim.power_arrows = false
-	var moves := _moves()
+	var all: Dictionary = Routes.run_all(lv, sim, 4 if quick else 2, quick)
+	var sf: Dictionary = all["sf"]
+	var at: Dictionary = sf["at"]
+	var surfs: Array = sf["surfs"]
 	var edges := {}       # Vector2i(from, to) -> true when a plain move does it (false: only a wall jump or a dodge)
 	var wraps := [0, 0, 0, 0]
-	var runs := 0
-	var starts := 0
-	var places := 0
-	for si in surfs.size():
-		var cols: Array = surfs[si][1]
-		places += cols.size()
-		var on_ledge := false
-		for cx in cols:
-			if lv.cell(cx, surfs[si][0]) == LevelScript.LEDGE or lv.cell(cx - 1, surfs[si][0]) == LevelScript.LEDGE:
-				on_ledge = true
-		var picks: Array = []
-		var stride := 4 if quick else 2
-		for k in cols.size():
-			if k % stride == 0 or k == cols.size() - 1:
-				picks.append(cols[k])
-		for cx in picks:
-			starts += 1
-			var spot := Vector2i(cx * 30, surfs[si][0] * 30)
-			for mv in moves:
-				if mv.has("drop") and not on_ledge:
-					continue
-				runs += 1
-				var res := _run_move(sim, spot, mv, at)
-				var to: int = res[0]
-				if to < 0 or to == si:
-					continue
-				var key := Vector2i(si, to)
-				var plain: bool = (res[1] & (F_WJ | F_DODGE)) == 0
-				edges[key] = edges.get(key, false) or plain
-				for k in 4:
-					if res[2] & (1 << k):
-						wraps[k] += 1
+	for r in all["results"]:
+		var key := Vector2i(r[0], r[3])
+		var plain: bool = (r[6] & (Routes.F_WJ | Routes.F_DODGE)) == 0
+		edges[key] = edges.get(key, false) or plain
+		for k in 4:
+			if r[7] & (1 << k):
+				wraps[k] += 1
 	# the joined part: the biggest set of surfaces that all reach each other
 	var n := surfs.size()
 	var fwd: Array = []
@@ -351,7 +289,8 @@ func _routes(lv) -> Dictionary:
 	for i in n:
 		min_out = mini(min_out, outs[i])
 	return {"surfs": surfs, "at": at, "comp": comp, "why": why, "outs": outs, "min_out": min_out, "plain_in": plain_in,
-		"wraps": wraps, "edges": edges, "edge_n": edges.size(), "runs": runs, "starts": starts, "places": places, "moves": moves.size()}
+		"wraps": wraps, "edges": edges, "edge_n": edges.size(), "runs": all["runs"], "starts": all["starts"],
+		"places": all["places"], "moves": all["moves"]}
 
 func _reach(from: int, adj: Array) -> Dictionary:
 	var seen := {from: true}
@@ -363,97 +302,6 @@ func _reach(from: int, adj: Array) -> Dictionary:
 				seen[k] = true
 				todo.append(k)
 	return seen
-
-# One move from a place: [the surface it lands on (-1: none, or it never left),
-# flags, the wrap edges it crossed (bits: right, left, down, up)].
-func _run_move(sim, spot: Vector2i, mv: Dictionary, at: Dictionary) -> Array:
-	var f = SimScript.Fighter.new()
-	f.id = 0
-	f.bot = false
-	sim.fighters = [f]
-	sim.arrows.clear()
-	sim._place(f, spot)
-	sim.events.clear()
-	var segs: Array = mv["segs"]
-	var flags := 0
-	var wrapped := 0
-	var airborne := false
-	var prev := 0
-	var steer: int = mv.get("steer", 0)
-	var walls := 0
-	var wall_side := 0
-	var wall_t := 0
-	var hold_t := 0
-	var still := 0
-	for t in MAX_T:
-		var b := 0
-		for s in segs:
-			if t >= s[0] and t < s[1]:
-				b |= s[2]
-		if mv.get("let_go", false) and airborne:
-			b &= ~(P.B_LEFT | P.B_RIGHT)
-		if mv.has("wall"):
-			if wall_t > 0:
-				wall_t -= 1
-				if wall_t == 0:
-					steer = wall_side
-			if hold_t > 0:
-				hold_t -= 1
-				b |= J               # hold it: a higher jump off the wall
-			elif f.wall != 0 and not f.on_ground and f.state == P.F_NORMAL and walls < 4:
-				if prev & J:
-					b &= ~J          # let go for a tick: the jump off the wall needs a fresh press
-				else:
-					b |= J           # still steering into the wall on this tick, or there is no wall jump
-			b |= _dir(steer)
-		var x0: int = f.x
-		var y0: int = f.y
-		sim.apply_input(f, b, 0)
-		sim.step()
-		prev = b
-		for e in sim.take_events():
-			if e[0] == P.E_WALLJUMP:
-				flags |= F_WJ
-				if mv.has("wall"):
-					walls += 1
-					wall_side = 1 if e[4] == 1 else -1
-					steer = -wall_side
-					wall_t = mv["wall"]
-					hold_t = 12
-			elif e[0] == P.E_DODGE:
-				flags |= F_DODGE
-			elif e[0] == P.E_LEDGE:
-				flags |= F_GRAB
-		if f.x - x0 < -900:
-			wrapped |= 1
-		elif f.x - x0 > 900:
-			wrapped |= 2
-		if f.y - y0 < -500:
-			wrapped |= 4
-		elif f.y - y0 > 500:
-			wrapped |= 8
-		if not f.on_ground:
-			airborne = true
-			still = 0
-		elif airborne and f.state == P.F_NORMAL:
-			return [_surface_at(f, at), flags, wrapped]
-		elif f.x == x0 and t > 40:
-			still += 1
-			if still > 10:
-				break      # on the ground and not going anywhere
-	return [-1, flags, wrapped]
-
-func _surface_at(f, at: Dictionary) -> int:
-	var feet: int = f.y + 63
-	if posmod(feet, 30) != 0:
-		return -1
-	var r := posmod(feet / 30, ROWS)
-	var cx := roundi((f.x + 18) / 30.0)
-	for k in [0, -1, 1, -2, 2]:
-		var key := Vector2i(posmod(cx + k, COLS), r)
-		if at.has(key):
-			return at[key]
-	return -1
 
 # ------------------------------------------------------------------ balance
 func _balance(lv) -> Dictionary:

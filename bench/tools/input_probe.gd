@@ -11,6 +11,7 @@ const Present = preload("res://client/present.gd")
 const Net = preload("res://client/net.gd")
 const Brain = preload("res://sim/brain.gd")
 const LevelScript = preload("res://sim/level.gd")
+const Routes = preload("res://sim/routes.gd")
 
 var fails := 0
 
@@ -30,6 +31,7 @@ func _init() -> void:
 	_prediction_alone()
 	_arrows_in_the_present()
 	_brain_arrow_copy()
+	_route_file_fresh()
 	if fails == 0:
 		print("✅ input_probe: every check passed")
 		quit(0)
@@ -619,4 +621,23 @@ func _brain_arrow_copy() -> void:
 		shots == 210 and same_tick == stuck and stuck + flying == shots and worst <= 2.0,
 		"%d shots on %d arenas: %d stuck, the copy on the same tick for %d, the worst %.2f px apart; %d still flying after 400 ticks, both" % [
 			shots, LevelScript.count(), stuck, same_tick, worst, flying])
+
+# G6: the bots walk by the route file (sim/routes.json, made by arena_probe.gd
+# --write-routes). It must have been made for every arena as it is now (each
+# arena's grid hash) and for the moves as they are now (their hash); a changed
+# arena or move list with an old file fails here, not in a round.
+func _route_file_fresh() -> void:
+	var bad: Array = []
+	var edges := 0
+	for n in LevelScript.count():
+		var lv = LevelScript.new(n)
+		var rm = Routes.map_for(lv)
+		if rm == null:
+			bad.append(lv.name)
+			continue
+		for key in rm.cand:
+			edges += rm.cand[key].size()
+	_check("the route file matches every arena and the moves (sim/routes.json; else: arena_probe.gd -- --write-routes)",
+		bad.is_empty(), "%d arenas, %d moves kept between their floors and ledges%s" % [LevelScript.count(), edges,
+			"" if bad.is_empty() else "; no match for " + ", ".join(bad)])
 
