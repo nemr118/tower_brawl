@@ -8,7 +8,8 @@
 # user agent, so the twin sticks show.
 #
 #   ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot            # PC: lobby, round, fight
-#   ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot_phone --phone
+#   ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot_phone --phone [--ios]
+#   --extra "slow=25&lag=60": more page options; --ios: an iPhone's browser (with --phone)
 #   -> <out>_lobby.png, <out>_round.png, <out>_fight.png; the page's console in <out>_chrome.log
 # Needs the venv's websocket-client. The game server should have bots (--bots 7
 # is the default) so a START with one person makes a match.
@@ -22,6 +23,10 @@ ap.add_argument("--server", default="wss://127.0.0.1:8091")
 ap.add_argument("--out", default="/tmp/v2shot")
 ap.add_argument("--name", default="Shot")
 ap.add_argument("--phone", action="store_true")
+ap.add_argument("--ios", action="store_true", help="with --phone: an iPhone's user agent (the page starts on LOW)")
+ap.add_argument("--extra", default="", help="more page options, a=1&b=2")
+ap.add_argument("--watch", type=float, default=0.0, help="after the fight shots, wait this long and shoot <out>_late.png")
+ap.add_argument("--look-tap", action="store_true", help="tap the lobby's LOOK button once, then reload the page (the pick is kept)")
 ap.add_argument("--port", type=int, default=9334)
 ap.add_argument("--wait", type=float, default=9.0, help="seconds for the page to load and join")
 a = ap.parse_args()
@@ -108,16 +113,27 @@ cmd("Page.enable")
 if a.phone:
     cmd("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=True)
     cmd("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
-    cmd("Emulation.setUserAgentOverride", userAgent="Mozilla/5.0 (Linux; Android 15; SM-S938B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
+    ua = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
+          if a.ios else "Mozilla/5.0 (Linux; Android 15; SM-S938B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
+    cmd("Emulation.setUserAgentOverride", userAgent=ua)
 else:
     cmd("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=False)
-url = f"{a.url}?server={a.server}&name={a.name}&join&info"
+url = f"{a.url}?server={a.server}&name={a.name}&join&info" + (f"&{a.extra}" if a.extra else "")
 cmd("Page.navigate", url=url)
 drain(a.wait)
 # the old shell's full-screen gate ("Tap to play full screen") sits over the canvas on a phone: tap it away
 cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('fs-gate'); if(g){g.click(); g.remove();} return 'ok'})()")
 drain(1.0)
 shot("lobby")
+if a.look_tap:
+    tap(931, 853)       # LOOK (lobby.gd: the button at 852..1010 x 818..888)
+    drain(1.5)
+    shot("lobby_look")
+    cmd("Page.reload")
+    drain(a.wait)
+    cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('fs-gate'); if(g){g.click(); g.remove();} return 'ok'})()")
+    drain(1.0)
+    shot("lobby_reload")
 tap(1230, 854)          # START (lobby.gd: the button at 1020..1440 x 812..896)
 drain(4.3)              # 3 s countdown + the ROUND 1 banner
 shot("round")
@@ -125,6 +141,9 @@ drain(2.5)              # FIGHT
 shot("fight")
 drain(4.0)
 shot("fight2")
+if a.watch > 0:
+    drain(a.watch)
+    shot("late")
 with open(f"{a.out}_console.log", "w") as f:
     f.write("\n".join(console))
 joined = any("[Client]" in c for c in console)

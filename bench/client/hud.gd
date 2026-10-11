@@ -27,6 +27,8 @@ var banner := ""
 var banner_color := Color.WHITE
 var info_text := ""
 var show_info := false
+var note := ""                 # a short line at the bottom (the look stepped down), for note_t seconds
+var note_t := 0.0
 var hidden := true
 var canvas := _Canvas.new()
 
@@ -70,6 +72,11 @@ func match_end(m: Dictionary) -> void:
 	banner = "%s WINS THE MATCH" % str(m.get("name", "")).to_upper()
 	banner_color = World.TEAM[w % 8]
 
+# A short line at the bottom for secs seconds (P2: the look stepped down).
+func say(text: String, secs: float) -> void:
+	note = text
+	note_t = secs
+
 func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: float, rtt: int, info: bool, lobby_shown: bool) -> void:
 	if not seats_msg.is_empty():
 		seats = seats_msg["seats"]
@@ -78,6 +85,7 @@ func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: 
 	my_seat = seat
 	hidden = lobby_shown
 	fight_t = maxf(0.0, fight_t - delta)
+	note_t = maxf(0.0, note_t - delta)
 	show_info = info
 	info_text = "%s · %.0f fps · ping %d ms" % [P.VERSION, fps, rtt]
 	canvas.queue_redraw()
@@ -101,6 +109,10 @@ func _paint(c: Control) -> void:
 	if show_info:
 		c.draw_string_outline(font, Vector2(16, 1066), info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, 4, Color.BLACK)
 		c.draw_string(font, Vector2(16, 1066), info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 1, 1, 0.8))
+	if note_t > 0.0:
+		var a := minf(1.0, note_t * 2.0)
+		c.draw_string_outline(font, Vector2(0, 1030), note, HORIZONTAL_ALIGNMENT_CENTER, 1920, 30, 5, Color(0, 0, 0, a))
+		c.draw_string(font, Vector2(0, 1030), note, HORIZONTAL_ALIGNMENT_CENTER, 1920, 30, Color(1, 0.9, 0.6, a))
 	if hidden or phase <= P.PH_COUNTDOWN:
 		return
 	var by_id: Dictionary = snap.get("by_id", {})

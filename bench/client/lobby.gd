@@ -1,4 +1,5 @@
-# The lobby: your name, JOIN or LEAVE, the 8 seats, the bots, START and the
+# The lobby: your name, JOIN or LEAVE, the 8 seats, the bots, the look (LOW,
+# NORMAL or HIGH: P2's quality setting, kept on the device), START and the
 # countdown, and a status line. Built from Controls on a 1920 x 1080 design,
 # scaled to the window's height and centred. Shown when you have no seat and
 # between matches; the arena shows through behind it.
@@ -8,6 +9,7 @@ signal join_pressed(name: String)
 signal leave_pressed
 signal start_pressed
 signal bots_changed(n: int)
+signal look_pressed
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
@@ -23,6 +25,7 @@ var bots_label := Label.new()
 var bots_minus := Button.new()
 var bots_plus := Button.new()
 var start_btn := Button.new()
+var look_btn := Button.new()
 var status_label := Label.new()
 var help := Label.new()
 var seated := false
@@ -70,6 +73,8 @@ func _init() -> void:
 	_button(bots_plus, "+", Vector2(770, 818), Vector2(70, 70), 40)
 	bots_minus.pressed.connect(func(): bots_changed.emit(bots_wanted - 1))
 	bots_plus.pressed.connect(func(): bots_changed.emit(bots_wanted + 1))
+	_button(look_btn, "LOOK", Vector2(852, 818), Vector2(158, 70), 22)
+	look_btn.pressed.connect(func(): look_pressed.emit())
 	_button(start_btn, "START", Vector2(1020, 812), Vector2(420, 84), 44)
 	start_btn.pressed.connect(func(): start_pressed.emit())
 	_label(status_label, "", Vector2(470, 904), Vector2(980, 64), 28, Color(1, 0.9, 0.6), HORIZONTAL_ALIGNMENT_LEFT)
@@ -103,6 +108,10 @@ func fit(win: Vector2) -> void:
 
 func set_name_text(n: String) -> void:
 	name_edit.text = n
+
+# The look's name on its button: LOW, NORMAL, HIGH (or a test look's name).
+func set_look(name: String) -> void:
+	look_btn.text = "LOOK: %s" % name.to_upper()
 
 func set_phone(on: bool) -> void:
 	phone = on
