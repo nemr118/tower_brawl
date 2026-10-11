@@ -1,6 +1,7 @@
 # The lobby: your name, JOIN or LEAVE, the 8 seats, the arena (G5: MIX or one
 # of them, for everyone), the look (LOW, NORMAL or HIGH: P2's quality setting,
-# kept on the device), the bots, START and the countdown, and a status line. Built from Controls on a 1920 x 1080 design,
+# kept on the device), the bots and their level (G6: EASY, NORMAL, HARD, for
+# everyone), START and the countdown, and a status line. Built from Controls on a 1920 x 1080 design,
 # scaled to the window's height and centred. Shown when you have no seat and
 # between matches; the arena shows through behind it.
 extends CanvasLayer
@@ -11,10 +12,12 @@ signal start_pressed
 signal bots_changed(n: int)
 signal look_pressed
 signal arena_pressed
+signal bot_level_pressed
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
 const LevelScript = preload("res://sim/level.gd")
+const LEVEL_NAMES := ["OLD", "EASY", "NORMAL", "HARD"]   # sim/brain.gd NAMES
 const HELP_PC := "PC: A D run · W or space jumps · S down, S + jump drops through a ledge · shift dodges the way you hold · hold the mouse button to aim, let go to fire"
 const HELP_PHONE := "Phone: left stick runs, push it up to jump, down + past the rim to drop · right stick aims, let go to fire · DODGE button, or flick the left stick past its rim"
 
@@ -26,6 +29,7 @@ var rows: Array = []
 var bots_label := Label.new()
 var bots_minus := Button.new()
 var bots_plus := Button.new()
+var bot_level_btn := Button.new()
 var start_btn := Button.new()
 var look_btn := Button.new()
 var arena_btn := Button.new()
@@ -78,6 +82,8 @@ func _init() -> void:
 	_button(bots_plus, "+", Vector2(770, 818), Vector2(70, 70), 40)
 	bots_minus.pressed.connect(func(): bots_changed.emit(bots_wanted - 1))
 	bots_plus.pressed.connect(func(): bots_changed.emit(bots_wanted + 1))
+	_button(bot_level_btn, "NORMAL", Vector2(850, 818), Vector2(160, 70), 28)
+	bot_level_btn.pressed.connect(func(): bot_level_pressed.emit())
 	_button(look_btn, "LOOK", Vector2(1020, 742), Vector2(420, 64), 28)
 	look_btn.pressed.connect(func(): look_pressed.emit())
 	_button(start_btn, "START", Vector2(1020, 812), Vector2(420, 84), 44)
@@ -180,6 +186,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 	var in_lobby := phase == P.PH_LOBBY
 	bots_minus.disabled = not seated or not in_lobby or bots_wanted <= 0
 	bots_plus.disabled = not seated or not in_lobby or bots_wanted >= 7
+	bot_level_btn.text = LEVEL_NAMES[clampi(int(m.get("bot_level", 2)), 0, 3)]
+	bot_level_btn.disabled = not seated or not in_lobby
 	var pick := int(m.get("arena", P.ARENA_MIX))
 	arena_btn.text = "ARENA: %s" % ("MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick))
 	arena_btn.disabled = not seated or not in_lobby

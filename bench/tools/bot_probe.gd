@@ -1,7 +1,7 @@
 # The bot probe (G6, server bots): measures the bot brain offline, on each arena
 # of sim/level.gd. No server, no drawing.
 #   godot --headless --path bench --script res://tools/bot_probe.gd -- [--layout=N] [--rounds=N] [--png=DIR] [--seed=N]
-#       [--level=old,easy,normal,hard] [--catch] [--reach]
+#       [--level=old,easy,normal,hard] [--catch] [--reach] [--kid]
 # Rounds of 8 bots, as the server plays them (one life, the purple walls at 25 s,
 # the 60 s backstop, plain arrows): how long they last, draws, how the bots die
 # and where (the death spots: how many of the 144 squares of 120 px see a death,
@@ -26,6 +26,11 @@
 # Mind's test knob force_goal) starts in the middle of each floor or ledge and is
 # sent to every other one; it must stand there within 8 s. The share that made
 # it, per arena, the slowest, and the ones that did not.
+# --kid: the stand-in for a kid instead of rounds (G6 step 7): one seat is a
+# person's (the bots see a person, brain.gd PEOPLE) whose buttons come from
+# p3.1's brain (OLD: it walks at the nearest, shoots at it, often into walls,
+# dodges at random), against 7 bots of the level, --rounds on each arena: how
+# often it is the last one standing (1 in 8 against 7 like it), how long it lives.
 # --png DIR: a death-spot map per arena (deaths_N.png): blocks grey, ledges amber,
 # each square of 120 px red by its share of the deaths.
 extends SceneTree
@@ -79,6 +84,7 @@ func _init() -> void:
 	var levels: Array = [SimScript.new(0).bot_level]
 	var catch_test := false
 	var reach_test := false
+	var kid_test := false
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--layout="):
 			only = int(a.get_slice("=", 1))
@@ -92,6 +98,8 @@ func _init() -> void:
 			catch_test = true
 		elif a == "--reach":
 			reach_test = true
+		elif a == "--kid":
+			kid_test = true
 		elif a.begins_with("--level="):
 			levels.clear()
 			for name in a.get_slice("=", 1).split(","):
@@ -108,6 +116,11 @@ func _init() -> void:
 			_catch(lv, seed_value)
 		quit(0)
 		return
+	if kid_test:
+		for lv in levels:
+			_kid(lv, rounds, seed_value)
+		quit(0)
+		return
 	if reach_test:
 		var all_ok := true
 		for n in LevelScript.count():
@@ -120,6 +133,61 @@ func _init() -> void:
 			for lv in levels:
 				_rounds(n, lv, rounds, seed_value + n, png_dir)
 	quit(0)
+
+# The stand-in for a kid: seat 0 plays OLD against 7 bots of this level, on each
+# arena, as the server plays a round.
+func _kid(level: int, count: int, seed_value: int) -> void:
+	var t0 := Time.get_ticks_msec()
+	var won := 0
+	var draws := 0
+	var lives: Array = []
+	var lengths: Array = []
+	var causes := {}
+	var n_rounds := 0
+	for n in LevelScript.count():
+		var sim = SimScript.new(0, 24, seed_value + 100 * n + level)
+		sim.set_arena(n)
+		sim.respawn = false
+		sim.power_arrows = false
+		sim.walls_start = WALLS_AT
+		var seats: Array = [{"id": 0, "bot": false, "level": Brain.OLD}]
+		for i in range(1, 8):
+			seats.append({"id": i, "bot": true, "level": level})
+		for r in count:
+			sim.start_round(seats)
+			sim.frozen = false
+			var t := 0
+			var died_at := -1
+			var kid = sim.fighters[0]
+			while t < ROUND_MAX:
+				if kid.state != P.F_DEAD:
+					Brain.think(sim, kid)   # the person's buttons, from OLD
+				sim.step()
+				t += 1
+				for e in sim.take_events():
+					if e[0] == P.E_DEATH and e[3] == 0 and died_at < 0:
+						died_at = t
+						causes[e[4]] = causes.get(e[4], 0) + 1
+				if sim.alive_count() <= 1:
+					break
+			n_rounds += 1
+			lengths.append(t / 60.0)
+			lives.append((died_at if died_at >= 0 else t) / 60.0)
+			if sim.alive_count() == 1 and sim.last_alive().id == 0:
+				won += 1
+			elif sim.alive_count() == 0 or t >= ROUND_MAX:
+				draws += 1
+	lives.sort()
+	lengths.sort()
+	var deaths := 0
+	for k in causes:
+		deaths += causes[k]
+	var parts: Array = []
+	for k in [1, 3, 6]:
+		parts.append("%s %d%%" % [P.CAUSES[k], roundi(100.0 * causes.get(k, 0) / maxi(1, deaths))])
+	print("== the stand-in for a kid (a person's seat played by OLD) against 7 %s bots, %d rounds on 3 arenas: it won %d (%.1f%%; 1 in 8 is 12.5%%), lived a median %.1f s (p90 %.1f) of rounds a median %.1f s; draws %d%%; it died by %s (%.1f s)" % [
+		Brain.NAMES[level], n_rounds, won, 100.0 * won / maxi(1, n_rounds), lives[lives.size() / 2], lives[int(lives.size() * 0.9)],
+		lengths[lengths.size() / 2], roundi(100.0 * draws / maxi(1, n_rounds)), ", ".join(parts), (Time.get_ticks_msec() - t0) / 1000.0])
 
 # The reach test: from the middle of every surface to every other, a lone bot.
 func _reach(n: int) -> bool:

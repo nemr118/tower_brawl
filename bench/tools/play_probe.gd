@@ -2,12 +2,13 @@
 # takes a seat, and either stands still, runs the move proof, or watches the
 # match and reports what happened. The first-playable plan, 3.7.
 #   godot --headless --path bench --script res://tools/play_probe.gd -- \
-#       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--arena=N] [--start] [--idle]
+#       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--arena=N] [--bot-level=N] [--start] [--idle]
 #       [--move] [--watch=SECONDS] [--token=abc] [--lag=MS] [--jitter=MS]
 #       [--predict [--exact=PCT]] [--shooter] [--catcher[=old]]
 # --start: press START once seated (the lobby needs 2 fighters: bots or others).
 # --arena=N: the lobby's ARENA once seated (-1 MIX, 1 THE KEEP, 2 THE BRIDGES, 0
 #   the bench); the move proof's local copy runs on the round's arena (G5).
+# --bot-level=N: the lobby's bots level once seated (1 EASY, 2 NORMAL, 3 HARD; G6).
 # --move: at the first FIGHT, hold right for 60 ticks, then jump (held 30 ticks),
 #   then stand; the server's answer is checked against the same buttons run on a
 #   local copy of the simulation from the same spot. --watch=N: stay up to N s
@@ -51,6 +52,7 @@ var mode_idle := false
 var start_sent := false
 var bots_sent := false
 var arena_sent := false
+var level_sent := false
 var script_t := -1
 var x0 := 0
 var y0 := 0
@@ -295,6 +297,9 @@ func _on_message(m: Dictionary) -> void:
 			if opts.has("arena") and not arena_sent:
 				arena_sent = true
 				net.send({"kind": "arena", "n": int(opts["arena"])})
+			if opts.has("bot-level") and not level_sent:
+				level_sent = true
+				net.send({"kind": "bot_level", "n": int(opts["bot-level"])})
 	elif kind == "version_error":
 		print("🧪 [PlayProbe] FAIL: version_error (server %s, mine %s)" % [m.get("server"), m.get("yours")])
 		fails += 1
@@ -311,7 +316,7 @@ func _on_message(m: Dictionary) -> void:
 		for s in m["seats"]:
 			if s["kind"] != 0:
 				names.append("%d:%s%s" % [s["i"], s["name"], "" if s["on"] else "(away)"])
-		print("🧪 [PlayProbe] seats: %s | people %d bots %d goal %d phase %s" % [" ".join(names), m["people"], m["bots"], m["goal"], PHASES[int(m["phase"])]])
+		print("🧪 [PlayProbe] seats: %s | people %d bots %d (level %d) goal %d phase %s" % [" ".join(names), m["people"], m["bots"], int(m.get("bot_level", -1)), m["goal"], PHASES[int(m["phase"])]])
 		if opts.has("start") and not start_sent and seat >= 0 and int(m["phase"]) == P.PH_LOBBY and int(m["people"]) + int(m["bots"]) >= 2:
 			start_sent = true
 			net.send({"kind": "start"})

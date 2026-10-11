@@ -123,6 +123,7 @@ func _ready() -> void:
 	lobby.bots_changed.connect(_on_bots)
 	lobby.look_pressed.connect(_on_look)
 	lobby.arena_pressed.connect(_on_arena)
+	lobby.bot_level_pressed.connect(_on_bot_level)
 	lobby.set_look(str(opts["look"]) if look_test else look)
 	sticks = Sticks.new()
 	add_child(sticks)
@@ -448,6 +449,10 @@ func _on_arena() -> void:
 
 func _on_bots(n: int) -> void:
 	net.send({"kind": "bots", "n": n})
+
+# The lobby's bots level button: EASY, NORMAL, HARD, then EASY (G6).
+func _on_bot_level() -> void:
+	net.send({"kind": "bot_level", "n": 1 + int(seats_msg.get("bot_level", 2)) % 3})
 
 # A saved value: localStorage on the web, user://tb_v2.cfg on the PC.
 func _storage_get(key: String) -> String:

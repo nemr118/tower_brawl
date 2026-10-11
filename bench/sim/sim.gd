@@ -177,7 +177,8 @@ var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the
 var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
 var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
-var bot_level := 0              # the level of the bot fighters a round makes (sim/brain.gd; OLD until G6 step 7)
+var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
+                                # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1

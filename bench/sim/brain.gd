@@ -47,6 +47,8 @@ const AIM_HOLD := 30            # drawn this long past the draw with no path, on
 const AIM_HOLD_MAX := 120       # and in the air, at most this long: then the shot goes anyway
 const SHOT_OFFSETS := [0.0, -0.07, 0.07, -0.14, 0.14, -0.21, 0.21]   # radians tried around the straight line past 420 px
 const CATCH := [0.0, 0.2, 0.5, 0.8]   # the chance it dodges into an arrow coming at it (rolled once an arrow)
+const PEOPLE := [1.0, 1.6, 1.0, 0.6]  # how far away a person seems when it picks a target (a factor on the
+                                      # distance): EASY bots go for each other first, HARD bots for people
 const SEE_T := 12               # an arrow that will reach it within this many ticks is seen (about 216 px)
 const DODGE_AT := 8             # from this many ticks away it looks for a dodge that meets the arrow
 const SEE_R2 := 90000.0         # arrows farther than 300 px are not looked at
@@ -247,7 +249,7 @@ static func _play(sim, f, m: Mind) -> int:
 		f.shoot_cd -= 1
 	if m.only_dodge:
 		return _dodge(sim, f, m)
-	var tgt = nearest_enemy(sim, f)
+	var tgt = nearest_enemy(sim, f, PEOPLE[f.level])
 	var rm = Routes.map_for(sim.level)
 	var walk := 0
 	if rm != null:
@@ -702,6 +704,8 @@ static func _pick_shot(sim, f) -> Array:
 		var d := dx * dx + dy * dy
 		if o.in_smoke and d > 22500.0:
 			continue
+		if not o.bot:
+			d *= PEOPLE[f.level] * PEOPLE[f.level]
 		near.append([d, o])
 	near.sort_custom(func(a, b): return a[0] < b[0])
 	for k in mini(3, near.size()):
@@ -794,7 +798,9 @@ static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: 
 	return [FLY_NONE, max_t, x, y]
 
 # ------------------------------------------------------------------ what a bot sees
-static func nearest_enemy(sim, f):
+# The nearest living enemy (one hidden in smoke only up close); a person's distance
+# times people_w (PEOPLE by level; OLD: 1).
+static func nearest_enemy(sim, f, people_w := 1.0):
 	var best = null
 	var bd := INF
 	for o in sim.fighters:
@@ -805,6 +811,8 @@ static func nearest_enemy(sim, f):
 		var d := dx * dx + dy * dy
 		if o.in_smoke and d > 22500.0:
 			continue
+		if not o.bot:
+			d *= people_w * people_w
 		if d < bd:
 			bd = d
 			best = o

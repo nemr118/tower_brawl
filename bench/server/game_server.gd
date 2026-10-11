@@ -19,8 +19,9 @@
 # --arena: the lobby's ARENA to start with (G5): mix (the default: THE KEEP and
 #   THE BRIDGES take turns each round), keep, bridges, or bench (the test arena,
 #   not in the lobby's list), or a layout number. The lobby can change it.
-# --bot-level: the bots' brain (sim/brain.gd, G6): old (p3.1's brain, the
-#   default until G6 step 7), easy, normal, hard.
+# --bot-level: the bots' brain level to start with (sim/brain.gd, G6): easy,
+#   normal (the default), hard, or old (p3.1's brain, a test knob). The lobby's
+#   BOTS level button changes it (EASY, NORMAL, HARD).
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -32,10 +33,10 @@
 # close) comes up, net_out (a snapshot for all, a JSON text for one) goes down.
 # The JSON (text frames). From a client: hello {name, version, token},
 # join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
-# name {name}. From the server: welcome {seat, version, name, phase},
+# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), name {name}. From the server: welcome {seat, version, name, phase},
 # version_error {server, yours}, full, note {text}, seats {phase, round, goal,
-# bots, bots_wanted, people, arena (the pick), arena_now (the round's, or the
-# next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
+# bots, bots_wanted, bot_level, people, arena (the pick), arena_now (the round's,
+# or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
 # round_end {round, winner, name,
 # draw, points}, match_end {winner, name, points}.
 # Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s), and
@@ -370,6 +371,13 @@ func _on_text(c: Conn, txt: String) -> void:
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN):
 			bots_wanted = clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
 			seats_dirty = true
+	elif kind == "bot_level":
+		var lv := int(d.get("n", sim.bot_level))
+		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and lv != sim.bot_level \
+				and lv >= SimScript.BrainScript.EASY and lv <= SimScript.BrainScript.HARD:
+			sim.bot_level = lv
+			print("🏰 [LOBBY] bots %s, picked by seat %d '%s'" % [SimScript.BrainScript.NAMES[lv], c.seat, seats[c.seat].name])
+			seats_dirty = true
 	elif kind == "arena":
 		var n := int(d.get("n", arena_pick))
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and n != arena_pick \
@@ -634,7 +642,7 @@ func _begin_match() -> void:
 	round_no = 1
 	var n := _people() + _bots_now()
 	goal = goal_override if goal_override > 0 else _goal_for(n)
-	print("🏰 [MATCH] start: %d people + %d bots, first to %d points" % [_people(), _bots_now(), goal])
+	print("🏰 [MATCH] start: %d people + %d bots (%s), first to %d points" % [_people(), _bots_now(), SimScript.BrainScript.NAMES[sim.bot_level], goal])
 	_start_round()
 
 # The arena of the next round: the pick, or MIX's next one (G5).
@@ -767,7 +775,7 @@ func _send_seats(target: int) -> void:
 		list.append({"i": s.i, "name": s.name, "kind": s.kind, "on": s.kind == 2 or s.client_id != 0,
 			"points": s.points, "crowns": s.crowns, "in": s.in_round})
 	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
-		"bots": _bots_now(), "bots_wanted": bots_wanted, "people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
+		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"seats": list}
 	_out(target, JSON.stringify(msg))
 	if target == 0:
