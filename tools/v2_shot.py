@@ -29,6 +29,7 @@ ap.add_argument("--watch", type=float, default=0.0, help="after the fight shots,
 ap.add_argument("--look-tap", action="store_true", help="tap the lobby's LOOK button once, then reload the page (the pick is kept)")
 ap.add_argument("--port", type=int, default=9334)
 ap.add_argument("--wait", type=float, default=9.0, help="seconds for the page to load and join")
+ap.add_argument("--round-wait", type=float, default=4.3, help="seconds from START to the round shot (3 s countdown + the ROUND banner; less on a slow page)")
 a = ap.parse_args()
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -126,7 +127,7 @@ cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('f
 drain(1.0)
 shot("lobby")
 if a.look_tap:
-    tap(931, 853)       # LOOK (lobby.gd: the button at 852..1010 x 818..888)
+    tap(1230, 774)      # LOOK (lobby.gd: the button at 1020..1440 x 742..806, since G5)
     drain(1.5)
     shot("lobby_look")
     cmd("Page.reload")
@@ -135,7 +136,7 @@ if a.look_tap:
     drain(1.0)
     shot("lobby_reload")
 tap(1230, 854)          # START (lobby.gd: the button at 1020..1440 x 812..896)
-drain(4.3)              # 3 s countdown + the ROUND 1 banner
+drain(a.round_wait)     # 3 s countdown + the ROUND 1 banner
 shot("round")
 drain(2.5)              # FIGHT
 shot("fight")
