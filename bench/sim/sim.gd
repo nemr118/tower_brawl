@@ -190,6 +190,12 @@ func _init(n_fighters: int = 8, cap: int = 24, seed_value: int = 7) -> void:
 		fighters.append(f)
 		_respawn(f)
 
+# The arena (sim/level.gd LAYOUTS; 0 the bench arena, the default). The server
+# sets it before each round; the client's copies follow the snapshot's arena.
+func set_arena(n: int) -> void:
+	if level.id != n:
+		level = LevelScript.new(n)
+
 static func wrap_d(a: float, b: float, size: float) -> float:
 	var d := b - a
 	if d > size * 0.5:

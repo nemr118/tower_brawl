@@ -374,42 +374,13 @@ func _spawns_apart() -> void:
 	var lv = SimScript.LevelScript.new()
 	var bad: Array = []
 	for a in lv.spawns:
-		if not _stands(lv, a):
+		if not lv.stands(a):
 			bad.append("%s does not stand" % a)
 		for b in lv.spawns:
-			if a != b and _one_drop(lv, a, b, 150):
+			if a != b and lv.one_drop(a, b, 150):
 				bad.append("%s over %s" % [a, b])
 	_check("no spawn spot sits one drop above another", bad.is_empty(),
 		"%d spots; %s" % [lv.spawns.size(), "none over another" if bad.is_empty() else ", ".join(bad)])
-
-func _stands(lv, s: Vector2i) -> bool:
-	if s.y % 30 != 0:
-		return false
-	var under := false
-	for cx in range(floori((s.x - 18) / 30.0), floori((s.x + 17) / 30.0) + 1):
-		if lv.cell(cx, s.y / 30) != 0:
-			under = true
-		for cy in range(floori((s.y - 63) / 30.0), floori((s.y - 1) / 30.0) + 1):
-			if lv.cell(cx, cy) == 1:
-				return false
-	return under
-
-# b is below a, less than reach px to the side, and some column between them is
-# open (no solid block, no other ledge) from under a's ledge down to b's head.
-func _one_drop(lv, a: Vector2i, b: Vector2i, reach: int) -> bool:
-	if b.y <= a.y or absi(a.x - b.x) >= reach:
-		return false
-	var top: int = a.y / 30 + 1
-	var head: int = floori((b.y - 63) / 30.0)
-	for cx in range(floori((mini(a.x, b.x) - 18) / 30.0), floori((maxi(a.x, b.x) + 17) / 30.0) + 1):
-		var open := true
-		for cy in range(top, head):
-			if lv.cell(cx, cy) != 0:
-				open = false
-				break
-		if open:
-			return true
-	return false
 
 # Random buttons held 4 to 30 ticks: runs, jumps (held and tapped), drops,
 # dodges, and (with shots) aims and shots, from a seeded rng.
