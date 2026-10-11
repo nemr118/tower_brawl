@@ -11,8 +11,11 @@
 # copy of the arrow (fly(): the sim's own arrow numbers) reaches the target
 # before a wall; they draw the bow a moment, then let go (the aim help applies).
 # By level: the aim's error, how far they lead a runner, the draw, the pause.
+# They fly each arrow coming at them forward, and with the level's chance (rolled
+# once an arrow) dodge into it just before it lands: a dodge catches it.
 # TowerFall has no archer bots; its quest skeleton archers draw for 10 frames,
-# aim in 22.5 degree steps and are one step off half the time (numbers only).
+# aim in 22.5 degree steps and are one step off half the time, and fail a dodge
+# 1 time in 10 to 1 in 5, more after each dodge (numbers only).
 # ==============================================================================
 extends RefCounted
 
@@ -34,6 +37,13 @@ const SHOT_RANGE := 900.0       # no shot at a target farther than this
 const AIM_HOLD := 30            # drawn this long past the draw with no path, on the ground: lower the bow with a jump
 const AIM_HOLD_MAX := 120       # and in the air, at most this long: then the shot goes anyway
 const SHOT_OFFSETS := [0.0, -0.07, 0.07, -0.14, 0.14, -0.21, 0.21]   # radians tried around the straight line past 420 px
+const CATCH := [0.0, 0.2, 0.5, 0.8]   # the chance it dodges into an arrow coming at it (rolled once an arrow)
+const SEE_T := 12               # an arrow that will reach it within this many ticks is seen (about 216 px)
+const DODGE_AT := 8             # from this many ticks away it looks for a dodge that meets the arrow
+const SEE_R2 := 90000.0         # arrows farther than 300 px are not looked at
+# the 8 ways, from right going clockwise (y grows down): the dodge into an arrow
+const WAYS8 := [P.B_RIGHT, P.B_DOWN | P.B_RIGHT, P.B_DOWN, P.B_DOWN | P.B_LEFT, P.B_LEFT, P.B_UP | P.B_LEFT,
+	P.B_UP, P.B_UP | P.B_RIGHT]
 
 const W := 1920
 const H := 1080
@@ -55,6 +65,8 @@ class Mind:
 	var draw_need := 0          # ticks to draw before the shot
 	var look_t := 0             # ticks until it looks for a shot again
 	var lower := false          # the bow is being lowered with a jump (no path): shoot comes up next tick, no shot
+	var seen := {}              # an arrow's id -> true: dodge into it when it is close; false: let it come
+	var only_dodge := false     # a test knob (the bot probe's catch test): stand, hold fire, only dodge
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
 static func think(sim, f) -> void:
@@ -178,7 +190,7 @@ static func _old_dodge(sim, f) -> int:
 	return 0
 
 # ------------------------------------------------------------------ EASY, NORMAL, HARD
-# OLD's walking and dodge for now (G6 steps 4 and 5 replace them); the shot is new:
+# OLD's walking for now (G6 step 5 replaces it); the dodge (_dodge) and the shot are new:
 # every LOOK_EVERY ticks it looks for a path to one of its 3 nearest enemies; with
 # one it draws the bow (standing still on the ground, as a person does), aims at
 # the target while it draws, and lets go when the draw is done and the path is
@@ -192,9 +204,11 @@ static func _play(sim, f, m: Mind) -> int:
 		return 0
 	if f.shoot_cd > 0:
 		f.shoot_cd -= 1
+	if m.only_dodge:
+		return _dodge(sim, f, m)
 	var tgt = nearest_enemy(sim, f)
 	_old_move(sim, f, m, tgt)
-	var dodge := _old_dodge(sim, f)
+	var dodge := _dodge(sim, f, m)
 	if dodge != 0:
 		if m.drawing:       # shoot stays down on the dodge tick: the dodge lowers the bow, no shot
 			m.drawing = false
@@ -227,6 +241,59 @@ static func _play(sim, f, m: Mind) -> int:
 				m.jump = 0
 				m.jump_wait = false
 	return _buttons(m)
+
+# The dodge into an arrow: each enemy arrow coming its way within 300 px is flown
+# on SEE_T ticks against the bot's body (moving as it moves now); one that will
+# land gets the level's roll once. With a yes, from DODGE_AT ticks away the bot
+# tries its 8 dodge ways (a copy of the dodge: DODGE_SPEED slowing by DODGE_DECAY
+# a tick, a slide on the ground) against a copy of the arrow and dodges the way
+# that meets it soonest: a catch; with no way yet, it waits, and on the last tick
+# dodges toward the arrow. With a no it lets it come. The buttons, or 0.
+static func _dodge(sim, f, m: Mind) -> int:
+	if f.state != P.F_NORMAL or f.dodge_cd > 0:
+		return 0
+	var cx := float(f.x + SimScript.HALF_W)
+	var cy := float(f.y + SimScript.MID_Y)
+	var best = null
+	var best_k := 999
+	for a in sim.arrows:
+		if a.dead or a.state != P.S_FLY or (a.owner == f.id and a.t < SimScript.ARROW_NO_SELF):
+			continue
+		var dx := SimScript.wrap_d(a.x, cx, W)
+		var dy := SimScript.wrap_d(a.y, cy, H)
+		if dx * dx + dy * dy > SEE_R2 or dx * a.vx + dy * a.vy <= 0.0:
+			continue
+		var r := fly(sim, a.x, a.y, a.vx, a.vy, SEE_T, [float(f.x), float(f.y), f.vx, 0.0 if f.on_ground else f.vy], a.t)
+		if r[0] != FLY_HIT:
+			continue
+		if not m.seen.has(a.id):
+			if m.seen.size() > 12:
+				m.seen.clear()
+			m.seen[a.id] = sim.rng.randf() < CATCH[f.level]
+		if m.seen[a.id] and r[1] <= DODGE_AT and r[1] < best_k:
+			best = a
+			best_k = r[1]
+	if best == null:
+		return 0
+	var way := -1
+	var soonest := 999
+	for w in 8:
+		var d := Vector2.from_angle(w * PI / 4.0)
+		var speed := SimScript.DODGE_SPEED
+		if f.on_ground and d.y > 0.1:   # a dodge down on the ground: a faster slide along it
+			d = Vector2(signf(d.x) if absf(d.x) > 0.1 else float(f.facing), 0.0)
+			speed *= SimScript.DODGE_SLIDE_MULT
+		var r := fly(sim, best.x, best.y, best.vx, best.vy, best_k + 4,
+			[float(f.x), float(f.y), d.x * speed, d.y * speed, SimScript.DODGE_DECAY], best.t)
+		if r[0] == FLY_HIT and r[1] < soonest:
+			soonest = r[1]
+			way = w
+	if way < 0:
+		if best_k > 1:
+			return 0       # no way meets it yet: wait a tick
+		var ang := atan2(SimScript.wrap_d(cy, best.y, H), SimScript.wrap_d(cx, best.x, W))
+		way = posmod(roundi(ang / (PI / 4.0)), 8)
+	return WAYS8[way] | P.B_DODGE
 
 # A tick of the drawn bow: aim at the target; once drawn long enough, let go along
 # a path that reaches it (another target will do). With no path for AIM_HOLD more
@@ -322,14 +389,18 @@ const FLY_HIT := 2      # met the box
 
 # A flying arrow's next max_t ticks, as sim._update_arrow moves it (straight for
 # ARROW_STRAIGHT ticks after the shot, then falling; whole steps of 4 px; a block
-# stops it, a ledge only from above). box: [x, y, vx, vy], a body's top-left and
-# how it moves a tick, met the way sim._arrow_hit_fighters meets one; [] for none.
+# stops it, a ledge only from above). box: [x, y, vx, vy] (and a slow-down a
+# tick, as a dodge has), a body's top-left and how it moves a tick, met the way
+# sim._arrow_hit_fighters meets one; [] for none.
 # t: the arrow's age now (0 for a shot not made yet). [FLY_*, ticks, x, y].
 static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: Array = [], t: int = 0) -> Array:
 	var g: PackedByteArray = sim.level.grid   # level.cell_at inlined: this runs thousands of times a second
 	var has_box := not box.is_empty()
-	var bx := 0.0
-	var by := 0.0
+	var bx: float = box[0] if has_box else 0.0
+	var by: float = box[1] if has_box else 0.0
+	var bvx: float = box[2] if has_box else 0.0
+	var bvy: float = box[3] if has_box else 0.0
+	var slow: float = box[4] if box.size() > 4 else 1.0
 	for k in range(1, max_t + 1):
 		t += 1
 		if t > SimScript.ARROW_STRAIGHT:
@@ -338,9 +409,11 @@ static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: 
 		var steps := maxi(1, ceili(maxf(absf(vx), absf(vy)) / 4.0))
 		var sx := vx / steps
 		var sy := vy / steps
-		if has_box:
-			bx = box[0] + box[2] * k
-			by = box[1] + box[3] * k
+		if has_box:      # the body moves before the arrows in a tick
+			bvx *= slow
+			bvy *= slow
+			bx += bvx
+			by += bvy
 		for i in steps:
 			var nx := x + sx
 			var ny := y + sy

@@ -1,7 +1,7 @@
 # The bot probe (G6, server bots): measures the bot brain offline, on each arena
 # of sim/level.gd. No server, no drawing.
 #   godot --headless --path bench --script res://tools/bot_probe.gd -- [--layout=N] [--rounds=N] [--png=DIR] [--seed=N]
-#       [--level=old,easy,normal,hard]
+#       [--level=old,easy,normal,hard] [--catch]
 # Rounds of 8 bots, as the server plays them (one life, the purple walls at 25 s,
 # the 60 s backstop, plain arrows): how long they last, draws, how the bots die
 # and where (the death spots: how many of the 144 squares of 120 px see a death,
@@ -18,6 +18,10 @@
 # --level: the brain's levels to measure, one after another (sim/brain.gd; the
 # default is the sim's bot_level, what the server plays). Arrows: the share of time a bot has none,
 # and pickups a round. Cost: the brains' share of a tick.
+# --catch: the catch test instead of rounds (G6 step 4): a person shoots at a bot
+# that stands and only dodges (the Mind's test knob only_dodge), 200 arrows a level,
+# from 200 to 600 px, along a path that reaches it (on all three arenas, random
+# places); of the arrows that reach the bot, the share it catches.
 # --png DIR: a death-spot map per arena (deaths_N.png): blocks grey, ledges amber,
 # each square of 120 px red by its share of the deaths.
 extends SceneTree
@@ -68,6 +72,7 @@ func _init() -> void:
 	var png_dir := ""
 	var seed_value := 2000
 	var levels: Array = [SimScript.new(0).bot_level]
+	var catch_test := false
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--layout="):
 			only = int(a.get_slice("=", 1))
@@ -77,6 +82,8 @@ func _init() -> void:
 			png_dir = a.get_slice("=", 1)
 		elif a.begins_with("--seed="):
 			seed_value = int(a.get_slice("=", 1))
+		elif a == "--catch":
+			catch_test = true
 		elif a.begins_with("--level="):
 			levels.clear()
 			for name in a.get_slice("=", 1).split(","):
@@ -88,11 +95,92 @@ func _init() -> void:
 				levels.append(k)
 	if png_dir != "":
 		DirAccess.make_dir_recursive_absolute(png_dir)
+	if catch_test:
+		for lv in levels:
+			_catch(lv, seed_value)
+		quit(0)
+		return
 	for n in LevelScript.count():
 		if only < 0 or n == only:
 			for lv in levels:
 				_rounds(n, lv, rounds, seed_value + n, png_dir)
 	quit(0)
+
+# The catch test: 200 arrows at a bot of this level that stands and only dodges.
+func _catch(level: int, seed_value: int) -> void:
+	if level == Brain.OLD:
+		print("== the catch test: OLD has no catch to test (its dodges are random; the rounds show its catches)")
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var caught := 0
+	var killed := 0
+	var missed := 0
+	var shots := 0
+	var tries := 0
+	var places: Array = []        # per arena: every place to stand (feet at a cell's left edge)
+	for n in LevelScript.count():
+		var lv = LevelScript.new(n)
+		var list: Array = []
+		for r in range(1, LevelScript.ROWS):
+			for cx in LevelScript.COLS:
+				if lv.stands(Vector2i(cx * 30, r * 30)):
+					list.append(Vector2i(cx * 30, r * 30))
+		places.append(list)
+	while shots < 200 and tries < 20000:
+		tries += 1
+		var n := shots % LevelScript.count()
+		var sim = SimScript.new(0, 24, seed_value + shots)
+		sim.set_arena(n)
+		sim.respawn = false
+		sim.power_arrows = false
+		var a: Vector2i = places[n][rng.randi() % places[n].size()]
+		var b: Vector2i = places[n][rng.randi() % places[n].size()]
+		var d := Vector2(SimScript.wrap_d(a.x, b.x, W), SimScript.wrap_d(a.y, b.y, H)).length()
+		if d < 200.0 or d > 600.0:
+			continue
+		sim.start_round([{"id": 0, "bot": false}, {"id": 1, "bot": true, "level": level}])
+		var shooter = sim.fighters[0]
+		var bot = sim.fighters[1]
+		sim._place(shooter, a)
+		sim._place(bot, b)
+		bot.wait_t = 0
+		bot.mind = Brain.Mind.new()
+		bot.mind.only_dodge = true
+		for k in 3:
+			sim.step()
+		var ang := Brain.find_shot(sim, shooter, bot, 0.0)
+		if is_nan(ang):
+			continue
+		shots += 1
+		var aim := Brain.aim_steps(ang)
+		sim.apply_input(shooter, P.B_SHOOT, aim)
+		sim.step()
+		sim.take_events()
+		sim.apply_input(shooter, 0, aim)
+		var fate := ""
+		for t in 120:
+			sim.step()
+			for e in sim.take_events():
+				if e[0] == P.E_CATCH and e[3] == 1:
+					fate = "caught"
+				elif e[0] == P.E_DEATH and e[3] == 1:
+					fate = "killed"
+			var flying := false
+			for ar in sim.arrows:
+				if not ar.dead and ar.state == P.S_FLY:
+					flying = true
+			if fate != "" or not flying:
+				break
+		if fate == "caught":
+			caught += 1
+		elif fate == "killed":
+			killed += 1
+		else:
+			missed += 1
+	var reached := caught + killed
+	print("== the catch test, level %s: %d arrows (200 to 600 px, along a path to it): %d reached the bot, %d caught (%.0f%%; the level's chance %.0f%%), %d killed it; %d missed it" % [
+		Brain.NAMES[level], shots, reached, caught, 100.0 * caught / maxi(1, reached), 100.0 * Brain.CATCH[level], killed, missed])
 
 func _rounds(n: int, level: int, count: int, seed_value: int, png_dir: String) -> void:
 	var t0 := Time.get_ticks_msec()
