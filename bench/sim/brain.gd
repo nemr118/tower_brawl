@@ -6,8 +6,13 @@
 # probes and the benchmark page run it inside the sim (sim.gd calls think()
 # for every bot fighter at the start of each tick; the client never does).
 # Its memory between ticks is a Mind on the fighter (f.mind).
-# Levels: OLD is p3.1's brain (kept as the probes' stand-in for a kid and as
-# the baseline).
+# Levels (f.level): OLD is p3.1's brain (kept as the probes' stand-in for a kid
+# and as the baseline). EASY, NORMAL and HARD shoot only along a path where a
+# copy of the arrow (fly(): the sim's own arrow numbers) reaches the target
+# before a wall; they draw the bow a moment, then let go (the aim help applies).
+# By level: the aim's error, how far they lead a runner, the draw, the pause.
+# TowerFall has no archer bots; its quest skeleton archers draw for 10 frames,
+# aim in 22.5 degree steps and are one step off half the time (numbers only).
 # ==============================================================================
 extends RefCounted
 
@@ -15,7 +20,20 @@ const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 
 const OLD := 0
-const NAMES := ["OLD"]
+const EASY := 1
+const NORMAL := 2
+const HARD := 3
+const NAMES := ["OLD", "EASY", "NORMAL", "HARD"]
+# By level (index: OLD, EASY, NORMAL, HARD; OLD uses none of them):
+const AIM_ERR := [0.0, 0.18, 0.07, 0.025]       # the aim's error: a normal spread, radians
+const LEAD := [0.0, 0.0, 0.5, 1.0]              # how far it aims ahead of a moving target (1: all the way)
+const DRAW := [[1, 1], [16, 24], [10, 16], [8, 12]]       # ticks the bow is drawn before the shot
+const PAUSE := [[20, 50], [70, 130], [40, 80], [25, 50]]  # ticks after a shot before the next one
+const LOOK_EVERY := 6           # a shot is looked for every 6 ticks
+const SHOT_RANGE := 900.0       # no shot at a target farther than this
+const AIM_HOLD := 30            # drawn this long past the draw with no path, on the ground: lower the bow with a jump
+const AIM_HOLD_MAX := 120       # and in the air, at most this long: then the shot goes anyway
+const SHOT_OFFSETS := [0.0, -0.07, 0.07, -0.14, 0.14, -0.21, 0.21]   # radians tried around the straight line past 420 px
 
 const W := 1920
 const H := 1080
@@ -31,6 +49,12 @@ class Mind:
 	var draw := 0               # ticks left to hold shoot (the bow drawn); the tick after, it lets go: the shot
 	var aim := 0                # the aim in 0.1 degree steps (proto's input aim)
 	var prev := 0               # the buttons pressed last tick
+	var target := -1            # the seat it aims at (the bot probe reads it)
+	var drawing := false        # shoot held, the bow drawn (the new levels)
+	var draw_t := 0             # ticks drawn so far
+	var draw_need := 0          # ticks to draw before the shot
+	var look_t := 0             # ticks until it looks for a shot again
+	var lower := false          # the bow is being lowered with a jump (no path): shoot comes up next tick, no shot
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
 static func think(sim, f) -> void:
@@ -39,7 +63,9 @@ static func think(sim, f) -> void:
 	var m: Mind = f.mind
 	var b := 0
 	if f.state == P.F_NORMAL or f.state == P.F_DODGE:
-		b = _old(sim, f, m)
+		b = _old(sim, f, m) if f.level == OLD else _play(sim, f, m)
+	elif m.drawing:
+		m.drawing = false   # knocked out of it: the bow is down
 	m.prev = b
 	sim.apply_input(f, b, m.aim)
 
@@ -64,6 +90,8 @@ static func _buttons(m: Mind) -> int:
 	if m.draw > 0:
 		b |= P.B_SHOOT
 		m.draw -= 1
+	elif m.drawing:
+		b |= P.B_SHOOT
 	return b
 
 static func aim_steps(ang: float) -> int:
@@ -84,6 +112,24 @@ static func _old(sim, f, m: Mind) -> int:
 	if f.shoot_cd > 0:
 		f.shoot_cd -= 1
 	var tgt = nearest_enemy(sim, f)
+	m.target = tgt.id if tgt != null else -1
+	_old_move(sim, f, m, tgt)
+	var dodge := _old_dodge(sim, f)
+	if dodge != 0:
+		return dodge
+	if tgt != null and f.arrows > 0 and f.shoot_cd == 0 and f.state != P.F_DODGE and m.draw == 0 and rng.randf() < 0.05:
+		var ax := SimScript.wrap_d(f.x, tgt.x, W)
+		var ay := SimScript.wrap_d(f.y, tgt.y, H) - 20.0
+		m.aim = aim_steps(atan2(ay, ax) + rng.randf_range(-0.12, 0.12))
+		m.draw = 1
+		f.shoot_cd = rng.randi_range(20, 50)
+	return _buttons(m)
+
+# OLD's walking: toward the target (or an arrow with an empty quiver), jumps at
+# walls and when the target is above, drops when it is below, the middle when the
+# purple walls come, leans into walls when falling.
+static func _old_move(sim, f, m: Mind, tgt) -> void:
+	var rng: RandomNumberGenerator = sim.rng
 	f.think_t -= 1
 	if f.think_t <= 0:
 		f.think_t = rng.randi_range(10, 36)
@@ -121,16 +167,197 @@ static func _old(sim, f, m: Mind) -> int:
 			if sim.box_hits_solid(f.x + dir * 30, f.y, SimScript.BODY_W, SimScript.BODY_H):
 				m.move = dir
 				break
+
+# OLD's dodge: a random way, often when an arrow comes near, now and then for no
+# reason. The buttons for it, or 0.
+static func _old_dodge(sim, f) -> int:
+	var rng: RandomNumberGenerator = sim.rng
 	if f.state != P.F_DODGE and f.dodge_cd == 0:
 		if (rng.randf() < 0.4 and arrow_incoming(sim, f)) or rng.randf() < 0.004:
 			return DODGE_WAYS[rng.randi() % DODGE_WAYS.size()] | P.B_DODGE
-	if tgt != null and f.arrows > 0 and f.shoot_cd == 0 and f.state != P.F_DODGE and m.draw == 0 and rng.randf() < 0.05:
-		var ax := SimScript.wrap_d(f.x, tgt.x, W)
-		var ay := SimScript.wrap_d(f.y, tgt.y, H) - 20.0
-		m.aim = aim_steps(atan2(ay, ax) + rng.randf_range(-0.12, 0.12))
-		m.draw = 1
-		f.shoot_cd = rng.randi_range(20, 50)
+	return 0
+
+# ------------------------------------------------------------------ EASY, NORMAL, HARD
+# OLD's walking and dodge for now (G6 steps 4 and 5 replace them); the shot is new:
+# every LOOK_EVERY ticks it looks for a path to one of its 3 nearest enemies; with
+# one it draws the bow (standing still on the ground, as a person does), aims at
+# the target while it draws, and lets go when the draw is done and the path is
+# still there (aimed with the level's error; the aim help applies).
+static func _play(sim, f, m: Mind) -> int:
+	if f.wait_t > 0:   # the round's first moment: stand still, people move first
+		f.wait_t -= 1
+		m.move = 0
+		m.jump = 0
+		m.drawing = false
+		return 0
+	if f.shoot_cd > 0:
+		f.shoot_cd -= 1
+	var tgt = nearest_enemy(sim, f)
+	_old_move(sim, f, m, tgt)
+	var dodge := _old_dodge(sim, f)
+	if dodge != 0:
+		if m.drawing:       # shoot stays down on the dodge tick: the dodge lowers the bow, no shot
+			m.drawing = false
+			return dodge | P.B_SHOOT
+		return dodge
+	if m.lower:             # the jump last tick lowered the bow: shoot comes up, no shot
+		m.lower = false
+		m.drawing = false
+	elif m.drawing and m.draw_t > 1 and not f.aiming:
+		m.drawing = false   # the bow never came up (a jump or a dodge took it): try again later
+	elif m.drawing:
+		m.jump = 0          # a jump would lower the bow
+		m.jump_wait = false
+		_draw(sim, f, m)
+		if m.lower:
+			m.down = 0      # down + jump on a ledge would drop through it, and the bow would stay up
+			_jump(m, 4)
+	elif f.arrows > 0 and f.shoot_cd == 0 and f.state == P.F_NORMAL and not f.aiming:
+		m.look_t -= 1
+		if m.look_t <= 0:
+			m.look_t = LOOK_EVERY
+			var pick := _pick_shot(sim, f)
+			if not pick.is_empty():
+				m.target = pick[0].id
+				m.aim = aim_steps(pick[1])
+				m.drawing = true
+				m.draw_t = 0
+				var d: Array = DRAW[f.level]
+				m.draw_need = sim.rng.randi_range(d[0], d[1])
+				m.jump = 0
+				m.jump_wait = false
 	return _buttons(m)
+
+# A tick of the drawn bow: aim at the target; once drawn long enough, let go along
+# a path that reaches it (another target will do). With no path for AIM_HOLD more
+# ticks on the ground, lower the bow with a jump (a jump lets go of the aim with
+# no shot); in the air, wait to land, up to AIM_HOLD_MAX ticks, then shoot.
+static func _draw(sim, f, m: Mind) -> void:
+	m.draw_t += 1
+	var tgt = sim.fighter(m.target)
+	if tgt != null and tgt.state != P.F_DEAD:
+		m.aim = aim_steps(atan2(SimScript.wrap_d(f.y + SimScript.ARROW_Y, tgt.y + SimScript.MID_Y, H),
+			SimScript.wrap_d(f.x + SimScript.HALF_W, tgt.x + SimScript.HALF_W, W)))
+	if m.draw_t < m.draw_need:
+		return
+	var past := m.draw_t - m.draw_need
+	if past % 3 != 0:
+		return
+	var ang := NAN
+	if tgt != null and tgt.state != P.F_DEAD:
+		ang = find_shot(sim, f, tgt, LEAD[f.level])
+	if is_nan(ang):
+		var pick := _pick_shot(sim, f)
+		if not pick.is_empty():
+			m.target = pick[0].id
+			ang = pick[1]
+	if is_nan(ang):
+		if past >= AIM_HOLD and f.on_ground:
+			m.lower = true
+			f.shoot_cd = 20
+		if past < AIM_HOLD_MAX:
+			return
+	if not is_nan(ang):
+		m.aim = aim_steps(ang + sim.rng.randfn(0.0, AIM_ERR[f.level]))
+	m.drawing = false   # shoot is up this tick: the shot
+	var pz: Array = PAUSE[f.level]
+	f.shoot_cd = sim.rng.randi_range(pz[0], pz[1])
+
+# The first of the 3 nearest enemies with a path: [the fighter, the angle], or [].
+static func _pick_shot(sim, f) -> Array:
+	var near: Array = []
+	for o in sim.fighters:
+		if o == f or o.state == P.F_DEAD:
+			continue
+		var dx := SimScript.wrap_d(f.x, o.x, W)
+		var dy := SimScript.wrap_d(f.y, o.y, H)
+		var d := dx * dx + dy * dy
+		if o.in_smoke and d > 22500.0:
+			continue
+		near.append([d, o])
+	near.sort_custom(func(a, b): return a[0] < b[0])
+	for k in mini(3, near.size()):
+		var ang := find_shot(sim, f, near[k][1], LEAD[f.level])
+		if not is_nan(ang):
+			return [near[k][1], ang]
+	return []
+
+# The angle of a shot from f's bow that reaches o (a copy of the arrow flown with
+# the sim's numbers, through the wrap; lead: how far ahead of o's run to aim), or
+# NAN when every try meets a wall first or falls short. The nearest wrap copy
+# first; straight at it, then a little above and below (for the fall past 450 px).
+static func find_shot(sim, f, o, lead: float) -> float:
+	var bx := float(f.x + SimScript.HALF_W)
+	var by := float(f.y + SimScript.ARROW_Y)
+	var copies: Array = []
+	for ox in [-1, 0, 1]:
+		for oy in [-1, 0, 1]:
+			var tx := float(o.x + ox * W)
+			var ty := float(o.y + oy * H)
+			var d := Vector2(tx + SimScript.HALF_W - bx, ty + SimScript.MID_Y - by).length()
+			if d < SHOT_RANGE:
+				copies.append([d, tx, ty])
+	copies.sort_custom(func(a, b): return a[0] < b[0])
+	for c in copies.slice(0, 2):
+		var t_fly: float = c[0] / SimScript.ARROW_SPEED
+		var vx: float = o.vx * lead
+		var vy: float = o.vy * lead if not o.on_ground else 0.0
+		var ax: float = c[1] + SimScript.HALF_W + vx * t_fly - bx
+		var ay: float = c[2] + SimScript.MID_Y + vy * t_fly - by
+		var straight := atan2(ay, ax)
+		var tries: Array = SHOT_OFFSETS if c[0] > 420.0 else [0.0]
+		for off in tries:
+			var ang: float = straight + off
+			var dir := Vector2.from_angle(ang)
+			var r := fly(sim, bx + dir.x * 30.0, by + dir.y * 30.0, dir.x * SimScript.ARROW_SPEED, dir.y * SimScript.ARROW_SPEED,
+				int(t_fly * 1.25) + 6, [c[1], c[2], vx, vy])
+			if r[0] == FLY_HIT:
+				return ang
+	return NAN
+
+# ------------------------------------------------------------------ a copy of an arrow
+const FLY_NONE := 0     # still flying after max_t ticks
+const FLY_WALL := 1     # stuck in a block or a ledge (from above)
+const FLY_HIT := 2      # met the box
+
+# A flying arrow's next max_t ticks, as sim._update_arrow moves it (straight for
+# ARROW_STRAIGHT ticks after the shot, then falling; whole steps of 4 px; a block
+# stops it, a ledge only from above). box: [x, y, vx, vy], a body's top-left and
+# how it moves a tick, met the way sim._arrow_hit_fighters meets one; [] for none.
+# t: the arrow's age now (0 for a shot not made yet). [FLY_*, ticks, x, y].
+static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: Array = [], t: int = 0) -> Array:
+	var g: PackedByteArray = sim.level.grid   # level.cell_at inlined: this runs thousands of times a second
+	var has_box := not box.is_empty()
+	var bx := 0.0
+	var by := 0.0
+	for k in range(1, max_t + 1):
+		t += 1
+		if t > SimScript.ARROW_STRAIGHT:
+			vy = minf(vy + SimScript.ARROW_GRAVITY, SimScript.ARROW_MAX_FALL)
+			vx = move_toward(vx, 0.0, SimScript.ARROW_DRAG)
+		var steps := maxi(1, ceili(maxf(absf(vx), absf(vy)) / 4.0))
+		var sx := vx / steps
+		var sy := vy / steps
+		if has_box:
+			bx = box[0] + box[2] * k
+			by = box[1] + box[3] * k
+		for i in steps:
+			var nx := x + sx
+			var ny := y + sy
+			var row := posmod(floori(ny / 30.0), 36)
+			var c: int = g[row * 64 + posmod(floori(nx / 30.0), 64)]
+			if c == 1 or (c == 2 and sy > 0.0 and floori(y / 30.0) < floori(ny / 30.0)):
+				return [FLY_WALL, k, x, y]
+			x = fposmod(nx, W)
+			y = fposmod(ny, H)
+			if has_box:
+				var dx := x - bx
+				dx -= roundf(dx / W) * W
+				var dy := y - by
+				dy -= roundf(dy / H) * H
+				if dx >= -4.0 and dx <= SimScript.BODY_W + 4.0 and dy >= -4.0 and dy <= SimScript.BODY_H + 4.0:
+					return [FLY_HIT, k, x, y]
+	return [FLY_NONE, max_t, x, y]
 
 # ------------------------------------------------------------------ what a bot sees
 static func nearest_enemy(sim, f):

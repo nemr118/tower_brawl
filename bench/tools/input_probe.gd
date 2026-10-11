@@ -9,6 +9,8 @@ const SimScript = preload("res://sim/sim.gd")
 const Predict = preload("res://client/predict.gd")
 const Present = preload("res://client/present.gd")
 const Net = preload("res://client/net.gd")
+const Brain = preload("res://sim/brain.gd")
+const LevelScript = preload("res://sim/level.gd")
 
 var fails := 0
 
@@ -27,6 +29,7 @@ func _init() -> void:
 	_state_round_trip()
 	_prediction_alone()
 	_arrows_in_the_present()
+	_brain_arrow_copy()
 	if fails == 0:
 		print("✅ input_probe: every check passed")
 		quit(0)
@@ -559,3 +562,61 @@ func _arrows_in_the_present() -> void:
 		n > 1000 and pct >= 95.0,
 		"%d arrows in the air compared: %.1f%% within 0.5 px, p99 %.1f px, the worst %.1f px (the rest met a fighter on the way); %d bytes a snapshot" % [
 			n, pct, errs[mini(n - 1, int(n * 0.99))] if n > 0 else 0.0, errs[n - 1] if n > 0 else 0.0, buf.data_array.size()])
+
+# G6: the bot brain flies a copy of an arrow before it shoots (sim/brain.gd fly).
+# 70 shots on each arena from random places to stand, at random angles: the copy
+# must stick on the same tick and at the same spot as the real arrow (the shooter
+# leaves the sim after the shot, so nothing else can stop the arrow).
+func _brain_arrow_copy() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 30
+	var shots := 0
+	var stuck := 0
+	var same_tick := 0
+	var worst := 0.0
+	var flying := 0
+	for n in LevelScript.count():
+		var sim = SimScript.new(0, 24, 30 + n)
+		sim.set_arena(n)
+		sim.respawn = false
+		sim.power_arrows = false
+		var k := 0
+		while k < 70:
+			var spot := Vector2i(rng.randi_range(1, 63) * 30, rng.randi_range(2, 35) * 30)
+			if not sim.level.stands(spot):
+				continue
+			k += 1
+			sim.start_round([{"id": 0, "bot": false}])
+			var f = sim.fighters[0]
+			sim._place(f, spot)
+			var aim := rng.randi_range(0, 3599)
+			sim.apply_input(f, P.B_SHOOT, aim)
+			sim.step()
+			sim.apply_input(f, 0, aim)   # let go: the shot, made before the step moves anything
+			var ang: float = f.aim
+			var dir := Vector2.from_angle(ang)
+			var copy: Array = Brain.fly(sim, f.x + SimScript.HALF_W + dir.x * 30.0, f.y + SimScript.ARROW_Y + dir.y * 30.0,
+				dir.x * SimScript.ARROW_SPEED, dir.y * SimScript.ARROW_SPEED, 400)
+			sim.fighters.clear()
+			var a = sim.arrows[0] if sim.arrows.size() > 0 else null
+			var t := 0
+			while a != null and a.state == P.S_FLY and t < 400:
+				sim.step()
+				t += 1
+			shots += 1
+			if a == null:
+				continue
+			if a.state == P.S_STUCK:
+				stuck += 1
+				if copy[0] == Brain.FLY_WALL and copy[1] == t:
+					same_tick += 1
+					worst = maxf(worst, Vector2(copy[2], copy[3]).distance_to(Vector2(a.x, a.y)))
+				else:
+					worst = INF
+			elif copy[0] == Brain.FLY_NONE:
+				flying += 1
+	_check("the bot brain's copy of an arrow sticks where the real arrow sticks (sim/brain.gd fly)",
+		shots == 210 and same_tick == stuck and stuck + flying == shots and worst <= 2.0,
+		"%d shots on %d arenas: %d stuck, the copy on the same tick for %d, the worst %.2f px apart; %d still flying after 400 ticks, both" % [
+			shots, LevelScript.count(), stuck, same_tick, worst, flying])
+

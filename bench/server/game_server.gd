@@ -7,7 +7,7 @@
 #   godot --headless --path bench res://server/game_server.tscn -- \
 #       [--port 8091] [--no-tls] [--cert <pem>] [--key <pem>] [--bots 7]
 #       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet] [--spots 2,3]
-#       [--arena mix|keep|bridges|bench|N]
+#       [--arena mix|keep|bridges|bench|N] [--bot-level old|easy|normal|hard]
 #       [--net-thread 0|1] [--net-sleep-ms 4]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
@@ -19,6 +19,8 @@
 # --arena: the lobby's ARENA to start with (G5): mix (the default: THE KEEP and
 #   THE BRIDGES take turns each round), keep, bridges, or bench (the test arena,
 #   not in the lobby's list), or a layout number. The lobby can change it.
+# --bot-level: the bots' brain (sim/brain.gd, G6): old (p3.1's brain, the
+#   default until G6 step 7), easy, normal, hard.
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -174,6 +176,8 @@ func _ready() -> void:
 			sim.fixed_spots.append(int(k))
 	if o.has("arena"):
 		arena_pick = _arena_arg(str(o["arena"]))
+	if o.has("bot-level"):
+		sim.bot_level = maxi(0, SimScript.BrainScript.NAMES.find(str(o["bot-level"]).to_upper()))
 	sim.set_arena(_next_arena())   # the lobby shows the arena that comes next
 	for i in SEATS:
 		var s := Seat.new()
@@ -198,13 +202,13 @@ func _ready() -> void:
 	sec_start_ms = started_ms
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
 		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "goal_override": goal_override,
-		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick),
+		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick), "bot_level": SimScript.BrainScript.NAMES[sim.bot_level],
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(),
 		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
-	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots fill the empty seats, power arrows %s, %s, arena %s, cpu %s x%d, report in %s" % [
-		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, "on" if sim.power_arrows else "off",
+	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power arrows %s, %s, arena %s, cpu %s x%d, report in %s" % [
+		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, SimScript.BrainScript.NAMES[sim.bot_level], "on" if sim.power_arrows else "off",
 		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls", _arena_label(arena_pick),
 		info["cpu"], info["cores"], log_path])
 	if net_thread_on:

@@ -136,6 +136,7 @@ class Fighter:
 	var in_smoke: bool = false
 	var buttons: int = 0        # the last buttons applied, for the press edges
 	var mind = null             # the bot brain's memory (sim/brain.gd Mind)
+	var level: int = 0          # the brain's level (sim/brain.gd: OLD, EASY, NORMAL, HARD)
 
 class Arrow:
 	var id: int = 0
@@ -176,6 +177,7 @@ var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the
 var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
 var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
+var bot_level := 0              # the level of the bot fighters a round makes (sim/brain.gd; OLD until G6 step 7)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
@@ -236,7 +238,8 @@ func _event(type: int, x: int, y: int, a: int, b: int) -> void:
 	events.append([type, x, y, a, b])
 
 # ------------------------------------------------------------------ the match
-# A round: one fighter per seat in seat_list ([{"id": seat, "bot": true/false}]),
+# A round: one fighter per seat in seat_list ([{"id": seat, "bot": true/false},
+# and "level" for a bot whose brain level is not bot_level]),
 # each on its own spawn spot, with a full quiver. Arrows and zones go; the tick
 # keeps counting (the clients' clock follows it).
 func start_round(seat_list: Array) -> void:
@@ -259,6 +262,7 @@ func start_round(seat_list: Array) -> void:
 		var f := Fighter.new()
 		f.id = int(seat_list[i]["id"])
 		f.bot = bool(seat_list[i]["bot"])
+		f.level = int(seat_list[i].get("level", bot_level))
 		fighters.append(f)
 		_place(f, spots[i % spots.size()])
 		f.wait_t = rng.randi_range(BOT_WAIT_MIN, BOT_WAIT_MAX)   # only the brain reads it; it counts from FIGHT
