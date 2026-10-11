@@ -1,7 +1,7 @@
 # The bot probe (G6, server bots): measures the bot brain offline, on each arena
 # of sim/level.gd. No server, no drawing.
 #   godot --headless --path bench --script res://tools/bot_probe.gd -- [--layout=N] [--rounds=N] [--png=DIR] [--seed=N]
-#       [--level=old,easy,normal,hard] [--catch] [--reach] [--kid]
+#       [--level=old,easy,normal,hard] [--catch] [--reach] [--kid] [--deaths=v2_server.jsonl --png=DIR]
 # Rounds of 8 bots, as the server plays them (one life, the purple walls at 25 s,
 # the 60 s backstop, plain arrows): how long they last, draws, how the bots die
 # and where (the death spots: how many of the 144 squares of 120 px see a death,
@@ -31,6 +31,9 @@
 # p3.1's brain (OLD: it walks at the nearest, shoots at it, often into walls,
 # dodges at random), against 7 bots of the level, --rounds on each arena: how
 # often it is the last one standing (1 in 8 against 7 like it), how long it lives.
+# --deaths=FILE: no rounds here: the death spots of a real server's rounds (the
+# round lines of its v2_server.jsonl, a soak's or a play night's), drawn as maps
+# with --png (deaths_N_server.png).
 # --png DIR: a death-spot map per arena (deaths_N.png): blocks grey, ledges amber,
 # each square of 120 px red by its share of the deaths.
 extends SceneTree
@@ -85,6 +88,7 @@ func _init() -> void:
 	var catch_test := false
 	var reach_test := false
 	var kid_test := false
+	var deaths_file := ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--layout="):
 			only = int(a.get_slice("=", 1))
@@ -100,6 +104,8 @@ func _init() -> void:
 			reach_test = true
 		elif a == "--kid":
 			kid_test = true
+		elif a.begins_with("--deaths="):
+			deaths_file = a.get_slice("=", 1)
 		elif a.begins_with("--level="):
 			levels.clear()
 			for name in a.get_slice("=", 1).split(","):
@@ -114,6 +120,10 @@ func _init() -> void:
 	if catch_test:
 		for lv in levels:
 			_catch(lv, seed_value)
+		quit(0)
+		return
+	if deaths_file != "":
+		_server_deaths(deaths_file, png_dir)
 		quit(0)
 		return
 	if kid_test:
@@ -133,6 +143,35 @@ func _init() -> void:
 			for lv in levels:
 				_rounds(n, lv, rounds, seed_value + n, png_dir)
 	quit(0)
+
+# The death spots of a server's rounds (its round lines), a map per arena.
+func _server_deaths(path: String, png_dir: String) -> void:
+	var spots := {}      # arena -> {square: deaths}
+	var fa := FileAccess.open(path, FileAccess.READ)
+	if fa == null:
+		printerr("cannot read %s" % path)
+		return
+	while not fa.eof_reached():
+		var d = JSON.parse_string(fa.get_line())
+		if not (d is Dictionary) or d.get("kind", "") != "round":
+			continue
+		var n := int(d.get("arena", 0))
+		if not spots.has(n):
+			spots[n] = {}
+		for e in d.get("deaths", []):
+			var sq := Vector2i(clampi(int(e[3]) / SQ, 0, W / SQ - 1), clampi(int(e[4]) / SQ, 0, H / SQ - 1))
+			spots[n][sq] = spots[n].get(sq, 0) + 1
+	for n in spots:
+		var busiest := 0
+		var total := 0
+		for sq in spots[n]:
+			busiest = maxi(busiest, spots[n][sq])
+			total += spots[n][sq]
+		print("== %s: %d deaths in %d of %d squares" % [LevelScript.name_of(n), total, spots[n].size(), (W / SQ) * (H / SQ)])
+		if png_dir != "":
+			var out := png_dir.path_join("deaths_%d_server.png" % n)
+			_png(LevelScript.new(n), spots[n], busiest, out)
+			print("   map: %s" % out)
 
 # The stand-in for a kid: seat 0 plays OLD against 7 bots of this level, on each
 # arena, as the server plays a round.

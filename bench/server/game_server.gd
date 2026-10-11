@@ -7,7 +7,7 @@
 #   godot --headless --path bench res://server/game_server.tscn -- \
 #       [--port 8091] [--no-tls] [--cert <pem>] [--key <pem>] [--bots 7]
 #       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet] [--spots 2,3]
-#       [--arena mix|keep|bridges|bench|N] [--bot-level old|easy|normal|hard]
+#       [--arena mix|keep|bridges|bench|N] [--bot-level old|easy|normal|hard] [--soak]
 #       [--net-thread 0|1] [--net-sleep-ms 4]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
@@ -22,6 +22,8 @@
 # --bot-level: the bots' brain level to start with (sim/brain.gd, G6): easy,
 #   normal (the default), hard, or old (p3.1's brain, a test knob). The lobby's
 #   BOTS level button changes it (EASY, NORMAL, HARD).
+# --soak: a bot soak (G6): bots in all 8 seats, no people needed, and a match
+#   starts by itself whenever the lobby comes back (tools/v2_soak_report.py).
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -39,8 +41,10 @@
 # or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
 # round_end {round, winner, name,
 # draw, points}, match_end {winner, name, points}.
-# Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s), and
-# tagged lines on stdout: [NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH].
+# Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s; G6: a
+# round line at each round's end with every death, its cause and spot, and a
+# match line at each match's end), and tagged lines on stdout: [NET] [JOIN]
+# [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH].
 # ==============================================================================
 extends Node
 
@@ -111,6 +115,9 @@ var conns := {}                 # client id -> Conn
 var phase := P.PH_LOBBY
 var phase_t := 0
 var round_no := 0
+var match_no := 0                # matches started since the server came up
+var round_deaths: Array = []     # this round's deaths: [victim, killer, cause, x, y, s after FIGHT]
+var soak := false
 var goal := 0
 var winner := P.NO_ONE
 var bots_wanted := MAX_BOTS
@@ -159,6 +166,9 @@ func _ready() -> void:
 	goal_override = int(o.get("goal", 0))
 	seconds_limit = int(o.get("seconds", 0))
 	quiet = o.has("quiet")
+	soak = o.has("soak")
+	if soak:
+		bots_wanted = SEATS
 	net_thread_on = str(o.get("net-thread", "1")) != "0"
 	net_sleep_us = int(float(o.get("net-sleep-ms", 4)) * 1000.0)
 	var root_dir := ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
@@ -204,7 +214,7 @@ func _ready() -> void:
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
 		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "goal_override": goal_override,
 		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick), "bot_level": SimScript.BrainScript.NAMES[sim.bot_level],
-		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(),
+		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(), "soak": soak,
 		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
@@ -579,6 +589,11 @@ func _send_own() -> void:
 
 # ------------------------------------------------------------------ the match
 func _match_tick() -> void:
+	if phase == P.PH_LOBBY and soak and _people() + _bots_now() >= 2:
+		phase = P.PH_COUNTDOWN
+		phase_t = COUNTDOWN_TICKS
+		print("🏰 [LOBBY] soak: the next match starts in %d s" % (COUNTDOWN_TICKS / 60))
+		seats_dirty = true
 	if phase == P.PH_COUNTDOWN:
 		phase_t -= 1
 		if _people() + _bots_now() < 2:
@@ -609,6 +624,10 @@ func _match_tick() -> void:
 				print("🏰 [ROUND] %d end after %.1f s: a draw (%d alive)" % [round_no, _round_secs(), alive])
 			else:
 				print("🏰 [ROUND] %d end after %.1f s: seat %d '%s' is the last one standing" % [round_no, _round_secs(), winner, seats[winner].name])
+			server_log.store_line(JSON.stringify({"kind": "round", "t": Time.get_unix_time_from_system(), "match": match_no,
+				"round": round_no, "arena": sim.level.id, "secs": snappedf(_round_secs(), 0.01), "winner": winner, "draw": draw,
+				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths}))
+			server_log.flush()
 	elif phase == P.PH_ROUND_END:
 		phase_t -= 1
 		if phase_t <= 0:
@@ -621,6 +640,9 @@ func _match_tick() -> void:
 				phase_t = MATCH_END_TICKS
 				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points()}))
 				print("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s" % [round_no, winner, seats[winner].name, _score_line()])
+				server_log.store_line(JSON.stringify({"kind": "match", "t": Time.get_unix_time_from_system(), "match": match_no,
+					"rounds": round_no, "winner": winner, "people": _people(), "bot_level": sim.bot_level}))
+				server_log.flush()
 				seats_dirty = true
 			elif _people() + _bots_now() < 2:
 				_stop_match()
@@ -637,6 +659,7 @@ func _round_secs() -> float:
 	return (sim.tick - _round_start_tick) / 60.0
 
 func _begin_match() -> void:
+	match_no += 1
 	for s in seats:
 		s.points = 0
 	round_no = 1
@@ -694,6 +717,7 @@ func _start_round() -> void:
 	if arena_pick == P.ARENA_MIX:
 		mix_i += 1
 	sim.start_round(seat_list)
+	round_deaths = []
 	for s in seats:
 		var f = sim.fighter(s.i)
 		if f != null:
@@ -761,6 +785,7 @@ func _log_deaths(evs: Array) -> void:
 		var cause: String = P.CAUSES.get(e[4], str(e[4]))
 		var vn: String = seats[victim].name if victim < SEATS else "?"
 		var when := _round_secs()
+		round_deaths.append([victim, killer, e[4], e[1], e[2], snappedf(when, 0.01)])
 		if killer == victim:
 			print("🏰 [KILL] seat %d '%s' killed themselves (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
 		elif killer < SEATS:
