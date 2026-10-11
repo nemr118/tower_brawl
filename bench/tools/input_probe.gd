@@ -6,6 +6,7 @@ extends SceneTree
 
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
+const Predict = preload("res://client/predict.gd")
 
 var fails := 0
 
@@ -21,6 +22,8 @@ func _init() -> void:
 	_walls_at_the_edge()
 	_walls_close()
 	_spawns_apart()
+	_state_round_trip()
+	_prediction_alone()
 	if fails == 0:
 		print("✅ input_probe: every check passed")
 		quit(0)
@@ -404,3 +407,129 @@ func _one_drop(lv, a: Vector2i, b: Vector2i, reach: int) -> bool:
 		if open:
 			return true
 	return false
+
+# Random buttons held 4 to 30 ticks: runs, jumps (held and tapped), drops,
+# dodges, and (with shots) aims and shots, from a seeded rng.
+func _random_buttons(rng: RandomNumberGenerator, shots: bool) -> Array:
+	var b := 0
+	if rng.randf() < 0.7:
+		b |= P.B_LEFT if rng.randf() < 0.5 else P.B_RIGHT
+	if rng.randf() < 0.35:
+		b |= P.B_JUMP
+	if rng.randf() < 0.15:
+		b |= P.B_DOWN
+	if rng.randf() < 0.1:
+		b |= P.B_UP
+	if rng.randf() < 0.12:
+		b |= P.B_DODGE
+	if shots and rng.randf() < 0.2:
+		b |= P.B_SHOOT
+	return [b, rng.randi_range(0, 3599), rng.randi_range(4, 30)]
+
+# P2: T_OWN carries a fighter's whole state (sim.write_fighter_state). From each
+# spawn spot, a person plays 300 random ticks (knocked back or killed just then
+# on some spots, so the hurt and dead states run too); then the state is written,
+# read into a fresh fighter in a second sim, and both run the same 600 random
+# ticks side by side. A field missing from the state would split them.
+func _state_round_trip() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2026
+	var lv = SimScript.LevelScript.new()
+	var split := ""
+	var compared := 0
+	var states := {}
+	for si in lv.spawns.size() * 2:
+		var spot: Vector2i = lv.spawns[si % lv.spawns.size()]
+		var a = _game(1)
+		var fa = a.fighters[0]
+		a._place(fa, spot)
+		var hold := [0, 0, 0]
+		for t in 300:
+			if hold[2] <= 0:
+				hold = _random_buttons(rng, true)
+			hold[2] -= 1
+			a.apply_input(fa, hold[0], hold[1])
+			a.step()
+		if si % 4 == 1:
+			a._kill(fa, 255, 1)
+		elif si % 4 == 2:
+			a._hurt(fa, 10.0, -7.0)
+		var buf := StreamPeerBuffer.new()
+		a.write_fighter_state(buf, fa)
+		var b = _game(1)
+		var fb = b.fighters[0]
+		var rb := StreamPeerBuffer.new()
+		rb.data_array = buf.data_array
+		b.read_fighter_state(rb, fb)
+		a.arrows.clear()   # the copy gets the fighter, not the arrows in the air
+		for t in 900:
+			if hold[2] <= 0:
+				hold = _random_buttons(rng, true)
+			hold[2] -= 1
+			a.apply_input(fa, hold[0], hold[1])
+			b.apply_input(fb, hold[0], hold[1])
+			a.step()
+			b.step()
+			states[fa.state] = true
+			var wa := StreamPeerBuffer.new()
+			var wb := StreamPeerBuffer.new()
+			a.write_fighter_state(wa, fa)
+			b.write_fighter_state(wb, fb)
+			compared += 1
+			if wa.data_array != wb.data_array:
+				split = "from %s, %d ticks after the copy: the original at (%d, %d) state %d, the copy at (%d, %d) state %d" % [
+					spot, t + 1, fa.x, fa.y, fa.state, fb.x, fb.y, fb.state]
+				break
+		if split != "":
+			break
+	_check("a fighter's whole state goes over and comes back the same (T_OWN)", split == "" and states.size() >= 5,
+		split if split != "" else "%d runs (each spot twice) x 900 ticks side by side, the same state on all %d; states seen %s; %d bytes" % [
+			lv.spawns.size() * 2, compared, str(states.keys()), _state_size()])
+
+func _state_size() -> int:
+	var sim = _game(1)
+	var buf := StreamPeerBuffer.new()
+	sim.write_fighter_state(buf, sim.fighters[0])
+	return buf.data_array.size()
+
+# P2: the prediction alone (client/predict.gd) is never wrong. A server sim with
+# one person runs input N on tick N; the client runs 4 ticks ahead with random
+# buttons (no shots: a shot can come down on the shooter, and deaths are the
+# server's); each second tick's T_OWN reaches the client 6 ticks later. Every
+# correction must be 0 px.
+func _prediction_alone() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77
+	var server = _game(1)
+	var f = server.fighters[0]
+	server._place(f, Vector2i(960, 660))
+	var pred = Predict.new()
+	pred.seat = 0
+	var lead := 4
+	var delay := 6
+	var sent := {}
+	var pending: Array = []
+	var hold := [0, 0, 0]
+	for st in range(1, 1801):
+		if hold[2] <= 0:
+			hold = _random_buttons(rng, false)
+		hold[2] -= 1
+		sent[st + lead] = [hold[0], hold[1]]
+		pred.on_tick(st + lead, hold[0], hold[1])
+		var inp: Array = sent.get(st, [0, 0])
+		server.apply_input(f, inp[0], inp[1])
+		server.step()
+		server.take_events()
+		if server.tick % 2 == 0:
+			var buf := StreamPeerBuffer.new()
+			server.write_fighter_state(buf, f)
+			pending.append([st + delay, {"tick": server.tick, "used": st, "margin": lead, "late": 0,
+				"flags": P.OWN_FIGHTER, "moves_from": 0, "pkt": buf.data_array, "at": 0}])
+		while pending.size() > 0 and pending[0][0] <= st:
+			pred.reconcile(pending.pop_front()[1])
+	var worst := 0.0
+	for e in pred.errors:
+		worst = maxf(worst, e)
+	_check("the prediction alone is never wrong (inputs 4 ticks ahead, T_OWN 6 ticks late)",
+		pred.errors.size() > 800 and worst == 0.0 and pred.jumps == 0,
+		"%d corrections checked, the worst %.1f px, %d jumps, %d ticks run again" % [pred.errors.size(), worst, pred.jumps, pred.replayed])

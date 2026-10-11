@@ -14,6 +14,9 @@
 # is played by the bot brain (_brain). P1 (2026-10-10, first-playable-plan.md).
 # The game turns on the purple walls (walls_start, TowerFall's miasma): from 25 s
 # after FIGHT they close in from the left and right edges and end a long round.
+# P2: the client runs a copy for its own fighter (client/predict.gd) with
+# `predicting` on: no deaths, no pickups, and an arrow that reaches a fighter
+# stops there instead of hitting (the server settles all of those).
 # ==============================================================================
 extends RefCounted
 
@@ -171,6 +174,7 @@ var play_t := 0                 # ticks since FIGHT (counts while not frozen; st
 var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the arena (0 or below: not there)
 var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
 var walls_melt_from := WALLS_GONE
+var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
 var kind_weights: Array = [30, 17, 17, 17, 19]   # normal, fire, bomb, miasma, smoke
@@ -441,7 +445,7 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 	_event(P.E_SPAWN, spot.x, spot.y, f.id, 0)
 
 func _kill(f: Fighter, killer: int, cause: int) -> void:
-	if f.state == P.F_DEAD:
+	if f.state == P.F_DEAD or predicting:
 		return
 	f.state = P.F_DEAD
 	f.state_t = 0
@@ -889,6 +893,8 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 		var dy := wrap_d(f.y, a.y, H)
 		if dx < -4.0 or dx > BODY_W + 4.0 or dy < -4.0 or dy > BODY_H + 4.0:
 			continue
+		if predicting:
+			return true   # the client's copy: the arrow waits here for the server's word (a catch or a hit)
 		if f.state == P.F_DODGE:
 			a.dead = true
 			f.arrows = mini(MAX_QUIVER, f.arrows + 1)
@@ -968,6 +974,8 @@ func _tinks() -> void:
 				_event(P.E_TINK, int(a.x), int(a.y), 0, 0)
 
 func _pickups() -> void:
+	if predicting:
+		return
 	for f in fighters:
 		if f.state == P.F_DEAD or f.arrows >= MAX_QUIVER:
 			continue

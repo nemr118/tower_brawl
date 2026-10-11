@@ -4,6 +4,7 @@
 #   godot --headless --path bench --script res://tools/play_probe.gd -- \
 #       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--start] [--idle]
 #       [--move] [--watch=SECONDS] [--token=abc] [--lag=MS] [--jitter=MS]
+#       [--predict [--exact=PCT]]
 # --start: press START once seated (the lobby needs 2 fighters: bots or others).
 # --move: at the first FIGHT, hold right for 60 ticks, then jump (held 30 ticks),
 #   then stand; the server's answer is checked against the same buttons run on a
@@ -13,12 +14,17 @@
 # --lag, --jitter: the test knob in client/net.gd (every packet waits lag/2 each
 # way, plus up to jitter). P2: inputs carry the tick they are for (net.ticks_now);
 # at the end a clock line says how many came late and how early they came.
+# --predict: my fighter is predicted as on the page (client/predict.gd), with
+#   random buttons in every round (held 4 to 30 ticks: runs, jumps, drops,
+#   dodges, shots), START again in each lobby; at the end a line says how big the
+#   server's corrections were. --exact=95: fail unless 95% of them are 0 px.
 # Exit 0 when every expected thing happened, 1 otherwise. Lines start with 🧪.
 extends SceneTree
 
 const P = preload("res://sim/proto.gd")
 const Net = preload("res://client/net.gd")
 const SimScript = preload("res://sim/sim.gd")
+const Predict = preload("res://client/predict.gd")
 const PHASES := ["LOBBY", "COUNTDOWN", "ROUND_START", "PLAY", "ROUND_END", "MATCH_END"]
 const SCRIPT_LEN := 150
 
@@ -52,6 +58,9 @@ func _init() -> void:
 			opts[p] = true
 	mode_move = opts.has("move")
 	mode_idle = opts.has("idle")
+	mode_predict = opts.has("predict")
+	pred = Predict.new()
+	rng.seed = int(opts.get("seed", 5))
 	watch_s = float(opts.get("watch", 0))
 	var url := str(opts.get("server", "ws://127.0.0.1:%d" % P.PORT))
 	net = Net.new()
@@ -67,6 +76,8 @@ func _process(_delta: float) -> bool:
 	net.poll()
 	for m in net.take_messages():
 		_on_message(m)
+	for o in net.take_owns():
+		pred.reconcile(o)
 	var s: Dictionary = net.newest()
 	if not s.is_empty():
 		if s["phase"] != phase:
@@ -84,6 +95,8 @@ func _process(_delta: float) -> bool:
 					print("🧪 [PlayProbe] move proof starts at x=%d y=%d: %s for %d ticks, then a held jump" % [x0, y0, "right" if run_dir > 0 else "left", run_ticks])
 			if phase == P.PH_LOBBY and seen["match_end"]:
 				seen["lobby_back"] = true
+			if phase == P.PH_LOBBY and mode_predict:
+				start_sent = false   # play on: START again
 		if script_t >= 0 and not move_done and s["by_id"].has(seat):
 			top_y = mini(top_y, int(s["by_id"][seat]["y"]))
 		if seat >= 0 and s["by_id"].has(seat) and s["by_id"][seat]["points"] > 0:
@@ -94,6 +107,10 @@ func _process(_delta: float) -> bool:
 		if up > limit:   # --idle --watch=N: sit there N seconds, that is the job
 			_finish(false)
 		return false
+	if mode_predict:
+		if up > limit:
+			_finish(false)
+		return false
 	var wanted_done: bool = (not mode_move or move_done) and (watch_s <= 0.0 or bool(seen["lobby_back"]))
 	if wanted_done or up > limit:
 		_finish(up > limit and not wanted_done)
@@ -102,18 +119,29 @@ func _process(_delta: float) -> bool:
 func _physics_process(_delta: float) -> bool:
 	if done or seat < 0 or net.state != WebSocketPeer.STATE_OPEN:
 		return false
-	for t in net.ticks_now():
+	var ticks: Array = net.ticks_now()
+	if net.jumped:
+		net.jumped = false
+		if not ticks.is_empty():
+			pred.jump_to(ticks[0] - 1)
+	for t in ticks:
 		var buttons := 0
+		var aim := 0
 		if script_t >= 0 and script_t < SCRIPT_LEN:
 			buttons = _script_buttons(script_t)
 			script_t += 1
 			script_end_tick = t
-		net.send_input(buttons, 0, t)
+		elif mode_predict and phase == P.PH_PLAY:
+			if hold[2] <= 0:
+				hold = _random_buttons()
+			hold[2] -= 1
+			buttons = hold[0]
+			aim = hold[1]
+		pred.on_tick(t, buttons, aim)
+		net.send_input(buttons, aim, t)
 		inputs_sent += 1
-	if net.jumped:
-		net.jumped = false
-		if clock_from_ms == 0:
-			clock_from_ms = Time.get_ticks_msec() + 1000   # the clock line counts from 1 s after the first sync
+	if clock_from_ms == 0 and net.synced:
+		clock_from_ms = Time.get_ticks_msec() + 1000   # the clock line counts from 1 s after the first sync
 	if clock_from_ms > 0 and not clock_counting and Time.get_ticks_msec() >= clock_from_ms:
 		clock_counting = true
 		net.late_total = 0
@@ -125,6 +153,28 @@ func _physics_process(_delta: float) -> bool:
 	return false
 
 var script_end_tick := 0
+var mode_predict := false
+var pred
+var rng := RandomNumberGenerator.new()
+var hold := [0, 0, 0]
+
+# Random buttons held 4 to 30 ticks (as input_probe.gd's): runs, jumps, drops,
+# dodges, shots.
+func _random_buttons() -> Array:
+	var b := 0
+	if rng.randf() < 0.7:
+		b |= P.B_LEFT if rng.randf() < 0.5 else P.B_RIGHT
+	if rng.randf() < 0.35:
+		b |= P.B_JUMP
+	if rng.randf() < 0.15:
+		b |= P.B_DOWN
+	if rng.randf() < 0.1:
+		b |= P.B_UP
+	if rng.randf() < 0.12:
+		b |= P.B_DODGE
+	if rng.randf() < 0.2:
+		b |= P.B_SHOOT
+	return [b, rng.randi_range(0, 3599), rng.randi_range(4, 30)]
 var inputs_sent := 0
 var inputs_from := 0
 var clock_from_ms := 0
@@ -203,6 +253,7 @@ func _on_message(m: Dictionary) -> void:
 	if kind == "welcome":
 		seat = int(m.get("seat", -1))
 		print("🧪 [PlayProbe] welcome: seat %d, server %s, phase %s" % [seat, m.get("version", "?"), PHASES[int(m.get("phase", 0))]])
+		pred.seat = seat
 		if seat < 0 and not mode_idle_watch_only():
 			net.send({"kind": "join", "name": str(opts.get("name", "Probe"))})
 		elif seat >= 0:
@@ -246,6 +297,8 @@ func mode_idle_watch_only() -> bool:
 func _finish(timed_out: bool) -> void:
 	done = true
 	_clock_line()
+	if mode_predict:
+		_predict_line()
 	if watch_s > 0.0 and not mode_idle:
 		var want := {"round_end": seen["round_end"] > 0, "point": seen["point"] or seen["round_end"] > 0, "match_end": seen["match_end"], "lobby_back": seen["lobby_back"]}
 		for k in want:
@@ -281,3 +334,26 @@ func _clock_line() -> void:
 		int(net.lag_ms), int(net.jitter_ms), net.last_rtt, n, net.late_total, 100.0 * net.late_total / maxf(1.0, n),
 		m[0] if m.size() > 0 else 0, m[m.size() / 2] if m.size() > 0 else 0, m[m.size() - 1] if m.size() > 0 else 0,
 		" ".join(parts), net.clock_changes, net.clock_jumps, net.delay_ticks])
+
+# P2: the server's corrections to my predicted fighter (client/predict.gd): each
+# T_OWN in a round compared with where the prediction had me on its tick.
+func _predict_line() -> void:
+	var e: PackedFloat32Array = pred.errors.duplicate()
+	e.sort()
+	var n := e.size()
+	var zero := 0
+	var two := 0
+	for v in e:
+		if v < 0.5:
+			zero += 1
+		if v <= 2.0:
+			two += 1
+	var zero_pct := 100.0 * zero / maxf(1.0, n)
+	var bar := float(opts.get("exact", 0))
+	var ok: bool = n >= 100 and zero_pct >= bar
+	if not ok:
+		fails += 1
+	print("🧪 [PlayProbe] %s prediction: %d corrections, 0 px on %.1f%%, 2 px or less on %.1f%%, p99 %.1f px, the worst %.1f px; %d jumps (over %d px); %.1f ticks run again per T_OWN%s" % [
+		"PASS" if ok else "FAIL", n, zero_pct, 100.0 * two / maxf(1.0, n), e[mini(n - 1, int(n * 0.99))] if n > 0 else 0.0,
+		e[n - 1] if n > 0 else 0.0, pred.jumps, int(Predict.SNAP_PX), pred.replayed / maxf(1.0, n),
+		(" (the bar: %.0f%% at 0 px)" % bar) if bar > 0.0 else ""])

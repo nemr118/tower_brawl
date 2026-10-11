@@ -22,6 +22,9 @@ const ADJUST_EVERY := 4        # a slow change adds or skips one tick every 4 (0
 const JUMP_TICKS := 20         # the clock is further off than this: jump (the first sync, a stall)
 const W := 1920.0
 const H := 1080.0
+# the events whose a is a fighter (proto.gd); E_EXPLODE's a is the shooter, not the one hurt
+const FIGHTER_EVENTS := [P.E_JUMP, P.E_LAND, P.E_DODGE, P.E_SHOOT, P.E_DEATH, P.E_CATCH, P.E_PICKUP,
+	P.E_SPAWN, P.E_WALLJUMP, P.E_HURT, P.E_LEDGE, P.E_DRYFIRE]
 
 var ws := WebSocketPeer.new()
 var url := ""
@@ -380,10 +383,27 @@ func render_tick() -> float:
 func newest() -> Dictionary:
 	return snaps[snaps.size() - 1] if snaps.size() > 0 else {}
 
-func take_events(rt: float) -> Array:
+# The events due at render tick rt. P2: with own_id (you are predicted), your own
+# fighter's events come at once, not at rt, and the kinds the prediction already
+# showed (`predicted`, client/predict.gd PREDICTED) are dropped; a stomp's jump
+# (E_JUMP with b = 1) is the server's and comes.
+func take_events(rt: float, own_id: int = -1, predicted: Array = []) -> Array:
 	var out: Array = []
-	while events.size() > 0 and events[0][0] <= rt + 2.0:
-		out.append(events.pop_front()[1])
+	if own_id < 0:
+		while events.size() > 0 and events[0][0] <= rt + 2.0:
+			out.append(events.pop_front()[1])
+		return out
+	var keep: Array = []
+	for item in events:
+		var e: Array = item[1]
+		if e[3] == own_id and FIGHTER_EVENTS.has(e[0]):
+			if not predicted.has(e[0]) or (e[0] == P.E_JUMP and e[4] == 1):
+				out.append(e)
+		elif item[0] <= rt + 2.0:
+			out.append(e)
+		else:
+			keep.append(item)
+	events = keep
 	return out
 
 static func _wlerp(a: float, b: float, t: float, size: float) -> float:
@@ -398,7 +418,8 @@ static func _wlerp(a: float, b: float, t: float, size: float) -> float:
 # walls: each purple wall's width in px, walls_deadly}.
 # Fighters are matched by seat between the two snapshots. own_id >= 0: that
 # fighter comes from the newest snapshot instead (your own, with less lag).
-func sample(rt: float, own_id: int = -1) -> Dictionary:
+# own (P2): your predicted fighter (client/predict.gd fighter_dict) in its place.
+func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 	if snaps.is_empty():
 		return {}
 	var a: Dictionary = snaps[0]
@@ -416,6 +437,9 @@ func sample(rt: float, own_id: int = -1) -> Dictionary:
 	var fighters: Array = []
 	for fb_raw in b["fighters"]:
 		var fb: Dictionary = fb_raw
+		if not own.is_empty() and fb["id"] == own["id"]:
+			fighters.append(own)
+			continue
 		if own_id >= 0 and fb["id"] == own_id and newest_snap["by_id"].has(own_id):
 			fighters.append(newest_snap["by_id"][own_id].duplicate())
 			continue

@@ -5,8 +5,9 @@
 # on a phone (client/touch_sticks.gd), and reads the keyboard and the mouse on
 # the PC: A D (or the arrows) run, W or space jumps, S is down (with jump: drop
 # through a ledge), shift dodges the way you hold, hold the left mouse button
-# to aim and let go to fire. Your own fighter is drawn from the newest
-# snapshot, the others 50 ms behind (client/net.gd); prediction comes in P2.
+# to aim and let go to fire. P2: your own fighter is predicted (client/predict.gd:
+# drawn on the tick you press, set right by the server's T_OWN), the others are
+# drawn 50 ms or more behind (client/net.gd, the draw delay follows your gaps).
 # Options (desktop: --key=value after --; web: ?key=value in the URL):
 #   server=wss://host:8091  name=Ava  look=t2 (world.gd VARIANTS)  join  start
 #   bots=N  info (the version, fps and ping at the bottom)  bench (the old
@@ -21,6 +22,7 @@ const World = preload("res://client/world.gd")
 const Hud = preload("res://client/hud.gd")
 const Lobby = preload("res://client/lobby.gd")
 const Sticks = preload("res://client/touch_sticks.gd")
+const Predict = preload("res://client/predict.gd")
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
@@ -29,6 +31,7 @@ const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb
 
 var opts := {}
 var net
+var pred
 var world
 var sub: SubViewport
 var display := TextureRect.new()
@@ -105,6 +108,7 @@ func _ready() -> void:
 			server_url = "wss://%s:%d" % [str(JavaScriptBridge.eval("window.location.hostname", true)), P.PORT]
 		else:
 			server_url = "wss://127.0.0.1:%d" % P.PORT
+	pred = Predict.new()
 	net = Net.new()
 	net.lag_ms = float(opts.get("lag", 0))
 	net.jitter_ms = float(opts.get("jitter", 0))
@@ -150,21 +154,32 @@ func _process(delta: float) -> void:
 	net.poll()
 	for m in net.take_messages():
 		_on_message(m)
+	for o in net.take_owns():
+		pred.reconcile(o)
+	pred.fade(delta)
 	_keep_connected(delta)
 	var s: Dictionary = net.newest()
 	if not s.is_empty() and int(s["phase"]) != phase:
 		_on_phase(int(s["phase"]), s)
 	var rt: float = net.render_tick()
-	for e in net.take_events(rt):
+	var predicting: bool = pred.me != null and not s.is_empty()
+	for e in pred.take_events():
 		world.fx.on_event(e)
-	world.render(net.sample(rt, my_seat), delta)
+	for e in net.take_events(rt, my_seat if predicting else -1, Predict.PREDICTED):
+		world.fx.on_event(e)
+	var own: Dictionary = pred.fighter_dict(s["by_id"].get(my_seat, {})) if predicting else {}
+	world.render(net.sample(rt, -1, own), delta)
 	var aim_on := false
-	if shoot_held and not s.is_empty() and s["by_id"].has(my_seat):
-		var me: Dictionary = s["by_id"][my_seat]
+	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
+	if shoot_held and not me.is_empty():
 		aim_on = int(me["state"]) == P.F_NORMAL
 		world.show_aim(Vector2(me["x"] + 18.0, me["y"] + 28.0), aim_deg10 * TAU / 3600.0, aim_on)
 	if not aim_on:
 		world.show_aim(Vector2.ZERO, 0.0, false)
+	if predicting:   # the HUD shows your arrows as the prediction has them (a shot counts at once)
+		s = s.duplicate()
+		s["by_id"] = s["by_id"].duplicate()
+		s["by_id"][my_seat] = own
 	fps_frames += 1
 	fps_t += delta
 	if fps_t >= 0.5:
@@ -227,21 +242,33 @@ func _physics_process(_dt: float) -> void:
 		buttons |= P.B_SHOOT
 		aim_deg10 = _mouse_aim()
 	shoot_held = (buttons & P.B_SHOOT) != 0
-	# P2: each tick the clock runs (one, or two or none while it catches up or falls back)
-	for t in net.ticks_now():
+	# P2: each tick the clock runs (one, or two or none while it catches up or falls
+	# back): your fighter steps on it at once, and the input goes to the server for it
+	var ticks: Array = net.ticks_now()
+	if net.jumped:
+		net.jumped = false
+		if not ticks.is_empty():
+			pred.jump_to(ticks[0] - 1)
+	for t in ticks:
+		pred.on_tick(t, buttons, aim_deg10)
 		net.send_input(buttons, aim_deg10, t)
 
-# The aim from the mouse: the angle from my bow to the pointer, in world pixels.
+# The aim from the mouse: the angle from my bow (where I see myself) to the
+# pointer, in world pixels.
 func _mouse_aim() -> int:
-	var s: Dictionary = net.newest()
-	if s.is_empty() or not s["by_id"].has(my_seat):
-		return aim_deg10
-	var me: Dictionary = s["by_id"][my_seat]
+	var at := Vector2.ZERO
+	if pred.me != null:
+		at = pred.drawn_pos()
+	else:
+		var s: Dictionary = net.newest()
+		if s.is_empty() or not s["by_id"].has(my_seat):
+			return aim_deg10
+		at = Vector2(s["by_id"][my_seat]["x"], s["by_id"][my_seat]["y"])
 	var win := Vector2(get_viewport().get_visible_rect().size)
 	var k := minf(win.x / 1920.0, win.y / 1080.0)
 	var off := (win - Vector2(1920, 1080) * k) * 0.5
 	var mouse := (get_viewport().get_mouse_position() - off) / k
-	var d := mouse - Vector2(me["x"] + 18.0, me["y"] + 28.0)
+	var d := mouse - (at + Vector2(18.0, 28.0))
 	if d.length() < 4.0:
 		return aim_deg10
 	return posmod(roundi(rad_to_deg(d.angle()) * 10.0), 3600)
@@ -256,6 +283,9 @@ func _on_message(m: Dictionary) -> void:
 	var kind := str(m.get("kind", ""))
 	if kind == "welcome":
 		my_seat = int(m.get("seat", -1))
+		if pred.seat != my_seat:
+			pred.seat = my_seat
+			pred.me = null
 		if my_seat < 0 and auto_join:
 			auto_join = false
 			_on_join(my_name)
