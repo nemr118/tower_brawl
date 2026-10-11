@@ -152,7 +152,10 @@ func _server_deaths(path: String, png_dir: String) -> void:
 		printerr("cannot read %s" % path)
 		return
 	while not fa.eof_reached():
-		var d = JSON.parse_string(fa.get_line())
+		var line := fa.get_line()
+		if line.is_empty():
+			continue    # the file ends with a newline
+		var d = JSON.parse_string(line)
 		if not (d is Dictionary) or d.get("kind", "") != "round":
 			continue
 		var n := int(d.get("arena", 0))

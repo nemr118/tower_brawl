@@ -18,7 +18,8 @@
 # movement; a bot walks to a move's start place and presses its buttons. Every 2
 # to 4 s a bot either hunts (heads for its target's floor; more often at a higher
 # level) or roams (heads for another floor somewhere), shooting whenever a path
-# opens; one that has not moved for 3 s roams. With fewer than 2 arrows it fetches
+# opens; one that has not moved for 2.5 s, or has stood by its target for 1 s with
+# no shot, roams. With fewer than 2 arrows it fetches
 # the arrow it can reach soonest (one by a floor or a ledge); with none and none to
 # fetch, it goes for a stomp.
 # TowerFall has no archer bots; its quest skeleton archers draw for 10 frames,
@@ -104,9 +105,9 @@ class Mind:
 	var walls_goal := false     # goal_s is a safe floor picked while the purple walls come
 	var crowd_t := 0            # ticks another fighter has stood on the move's start place
 	var still_t := 0            # ticks a playing move has stood still on the ground
+	var still_x := 0            # and where
 	var near_t := 0             # ticks it has stood near its target on the target's floor with no shot
 	var fetch := -1             # the arrow it goes to fetch (its id), or -1
-	var still_x := 0
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
 static func think(sim, f) -> void:
@@ -308,11 +309,10 @@ static func _play(sim, f, m: Mind) -> int:
 # ------------------------------------------------------------------ the routes
 # The walking buttons for this tick, by the route map: a move that plays goes on
 # until it lands; on the ground the bot plans every PLAN_EVERY ticks (its goal
-# surface: under its target, or the middle when the purple walls come), walks to
-# the start place of the fastest move toward it, stands still there, and plays the
-# move. A move that lands on another surface, or a start place it cannot reach in
-# WALK_GIVE_UP ticks, is not used for BAD_TICKS. In the air with no move (after a
-# dodge, a knock) it steers toward its goal.
+# surface: _goal), walks to the start place of the fastest move toward it, stands
+# still there, and plays the move. A move that lands on another surface, or a
+# start place it cannot reach in WALK_GIVE_UP ticks, is not used for BAD_TICKS.
+# In the air with no move (after a dodge, a knock) it steers toward its goal.
 static func _route_move(sim, f, m: Mind, rm, tgt) -> int:
 	if m.player != null:
 		if m.player.airborne and f.on_ground and f.state == P.F_NORMAL:
@@ -455,8 +455,9 @@ static func _toward(f, x: float, near: float) -> int:
 		return 0
 	return P.B_RIGHT if dx > 0.0 else P.B_LEFT
 
-# The goal: the test knob's surface; the middle when the purple walls come (the
-# surface it reaches soonest with a place inside the safe band); else the surface
+# The goal: the test knob's surface; while the purple walls come, a safe floor
+# (one with a place inside the band they leave), one after another; with fewer
+# than 2 arrows, an arrow to fetch; roaming, the roam floor; else the surface
 # under its target, at the target's x.
 static func _goal(sim, f, m: Mind, rm, tgt, here: int) -> void:
 	if m.force_goal >= 0:
@@ -522,8 +523,10 @@ static func _fetch_goal(sim, f, m: Mind, rm, here: int) -> bool:
 				continue
 			var feet := r * 30.0
 			var mid := feet - SimScript.BODY_H + SimScript.MID_Y
-			if absf(SimScript.wrap_d(mid, a.y, H)) < 66.0 and rm.cost[here][s] < best_c:
-				best_c = rm.cost[here][s] + absf(SimScript.wrap_d(f.x + SimScript.HALF_W, a.x, W)) / 6.75 * (1 if s == here else 0)
+			# the route to its floor, and on its own floor the walk to it
+			var c: float = rm.cost[here][s] + (absf(SimScript.wrap_d(f.x + SimScript.HALF_W, a.x, W)) / 6.75 if s == here else 0.0)
+			if absf(SimScript.wrap_d(mid, a.y, H)) < 66.0 and c < best_c:
+				best_c = c
 				m.goal_s = s
 				m.goal_x = a.x
 				m.fetch = a.id
