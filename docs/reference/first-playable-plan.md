@@ -35,7 +35,7 @@ The project stays in `bench/` for now (the tools and the docs point there). It m
 
 ## 4. After the first night
 - **P2 "The feel":** prediction and reconciliation for your own fighter (the sim is already separate from the drawing), the client clock that stays ahead, the controls tuned from the sheet, and a quality setting: high = T3, normal = T2, low = T1 (the iPhone starts on low), with the automatic step-down before Android halves to 30. The user's go came on 2026-10-10, before the sheet's verdict; the plan is below.
-- Then the plan's phases as written: the super arena (G5), server bots (G6), the release v0.2.0 (G7), the look (G8), sound (G9), treasure and how characters differ (G10).
+- Then the plan's phases as written: the super arena (G5), server bots (G6), the release v0.2.0 (G7), the look (G8), sound (G9), treasure and how characters differ (G10). G5 started on the user's go on 2026-10-10, before the sheet had answers (its steps: [[v0.2-transformation-plan]], G5).
 
 ### P2: the steps (2026-10-10)
 **Built 2026-10-10** as [[v0.2.0-p2.1 - The Feel]], on the laptop since 21:27: steps 1 to 5 done and proven on the PC and the laptop (the page has the numbers). The controls are tuned once the sheet has its verdict.
