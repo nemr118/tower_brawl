@@ -18,7 +18,9 @@
 # movement; a bot walks to a move's start place and presses its buttons. Every 2
 # to 4 s a bot either hunts (heads for its target's floor; more often at a higher
 # level) or roams (heads for another floor somewhere), shooting whenever a path
-# opens; one that has not moved for 3 s roams.
+# opens; one that has not moved for 3 s roams. With fewer than 2 arrows it fetches
+# the arrow it can reach soonest (one by a floor or a ledge); with none and none to
+# fetch, it goes for a stomp.
 # TowerFall has no archer bots; its quest skeleton archers draw for 10 frames,
 # aim in 22.5 degree steps and are one step off half the time, and fail a dodge
 # 1 time in 10 to 1 in 5, more after each dodge (numbers only).
@@ -101,6 +103,7 @@ class Mind:
 	var crowd_t := 0            # ticks another fighter has stood on the move's start place
 	var still_t := 0            # ticks a playing move has stood still on the ground
 	var near_t := 0             # ticks it has stood near its target on the target's floor with no shot
+	var fetch := -1             # the arrow it goes to fetch (its id), or -1
 	var still_x := 0
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
@@ -368,9 +371,18 @@ static func _route_move(sim, f, m: Mind, rm, tgt) -> int:
 		m.plan_t = 0        # reached a safe floor: the next one
 	elif here == m.goal_s and not m.hunting and m.force_goal < 0 and sim.walls_share <= 0.0:
 		m.mode_t = 0        # roamed there: pick the next plan
+	if here == m.goal_s and m.fetch >= 0:
+		var a = _arrow_by_id(sim, m.fetch)
+		if a == null or a.dead or a.state != P.S_STUCK:
+			m.plan_t = 0        # someone took it: plan again
+		else:
+			m.goal_x = a.x
 	if here == m.goal_s or m.edge.is_empty():
-		var near := m.hunting and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
+		var near: bool = m.hunting and m.fetch < 0 and f.arrows > 0 and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
 		var b := _toward(f, m.goal_x, NEAR_TARGET if near else 0.0)
+		if f.arrows == 0 and m.fetch < 0 and tgt != null and here == _surface_under(rm, tgt) and b != 0 \
+				and absf(SimScript.wrap_d(f.x, tgt.x, W)) < 90.0 and (m.prev & P.B_JUMP) == 0:
+			b |= P.B_JUMP       # no arrows: jump at it, to come down on its head
 		if near and b == 0 and not m.drawing:
 			m.near_t += 1
 			if m.near_t > 60:   # standing by its target with no shot for a second (a wall between): go round
@@ -470,6 +482,11 @@ static func _goal(sim, f, m: Mind, rm, tgt, here: int) -> void:
 			m.walls_goal = true
 			return
 	m.walls_goal = false
+	m.fetch = -1
+	if f.arrows < 2:
+		var got := _fetch_goal(sim, f, m, rm, here)
+		if got:
+			return
 	if not m.hunting and m.roam_s >= 0:
 		m.goal_s = m.roam_s
 		var rc: Array = rm.surfs[m.roam_s][1]
@@ -480,6 +497,36 @@ static func _goal(sim, f, m: Mind, rm, tgt, here: int) -> void:
 		if s >= 0:
 			m.goal_s = s
 			m.goal_x = tgt.x + SimScript.HALF_W
+
+# Fetch: of the stuck arrows (none of a bomb's fuse), the one whose floor it reaches
+# soonest: a floor or ledge under it close enough that a body standing there picks
+# it up (sim._pickups: within 50 px across and 68 px up or down of the middle).
+# Sets the goal and returns true, or false with none in reach.
+static func _fetch_goal(sim, f, m: Mind, rm, here: int) -> bool:
+	var best_c := INF
+	for a in sim.arrows:
+		if a.dead or a.state != P.S_STUCK or a.fuse > 0:
+			continue
+		var cx := roundi(a.x / 30.0)
+		var r0 := floori(a.y / 30.0)
+		for dr in 4:           # the first floor under the arrow, close enough to reach it from
+			var r := posmod(r0 + dr, 36)
+			var s := -1
+			for k in [0, -1, 1]:
+				s = rm.at.get(Vector2i(posmod(cx + k, 64), r), -1)
+				if s >= 0:
+					break
+			if s < 0:
+				continue
+			var feet := r * 30.0
+			var mid := feet - SimScript.BODY_H + SimScript.MID_Y
+			if absf(SimScript.wrap_d(mid, a.y, H)) < 66.0 and rm.cost[here][s] < best_c:
+				best_c = rm.cost[here][s] + absf(SimScript.wrap_d(f.x + SimScript.HALF_W, a.x, W)) / 6.75 * (1 if s == here else 0)
+				m.goal_s = s
+				m.goal_x = a.x
+				m.fetch = a.id
+			break
+	return m.fetch >= 0
 
 # The place of surface s inside the band the walls leave nearest the middle (its
 # feet x), or -1.
@@ -536,6 +583,12 @@ static func _pick_edge(sim, m: Mind, rm, place: Vector2i, here: int) -> void:
 				best_c = c
 				m.edge = e
 				m.edge_to = key.y
+
+static func _arrow_by_id(sim, id: int):
+	for a in sim.arrows:
+		if a.id == id:
+			return a
+	return null
 
 # The surface a fighter stands on, or the first one under its feet.
 static func _surface_under(rm, o) -> int:

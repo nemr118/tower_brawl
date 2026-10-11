@@ -272,6 +272,7 @@ func _rounds(n: int, level: int, count: int, seed_value: int, png_dir: String) -
 	var catches := 0
 	var pickups := 0
 	var none_n := 0
+	var low_n := 0
 	var alive_n := 0
 	var ticks := 0
 	var tick_us := 0
@@ -332,6 +333,8 @@ func _rounds(n: int, level: int, count: int, seed_value: int, png_dir: String) -
 						alive_n += 1
 						if f.arrows == 0:
 							none_n += 1
+						if f.arrows < 2:
+							low_n += 1
 			if t % 30 == 0:
 				for f in sim.fighters:
 					if f.state == P.F_DEAD:
@@ -387,7 +390,8 @@ func _rounds(n: int, level: int, count: int, seed_value: int, png_dir: String) -
 	print("   the arrows: %d%% stuck in a block or a ledge before reaching anyone, %d%% reached a fighter, %d%% caught, %d%% met another arrow" % [
 		roundi(100.0 * fates["wall"] / maxi(1, known)), roundi(100.0 * fates["fighter"] / maxi(1, known)),
 		roundi(100.0 * fates["caught"] / maxi(1, known)), roundi(100.0 * fates["tink"] / maxi(1, known))])
-	print("   arrows: a bot has none %d%% of its time alive; %.1f pickups a round" % [roundi(100.0 * none_n / maxi(1, alive_n)), float(pickups) / count])
+	print("   arrows: a bot has none %d%% of its time alive, fewer than 2 %d%%; %.1f pickups a round" % [roundi(100.0 * none_n / maxi(1, alive_n)),
+		roundi(100.0 * low_n / maxi(1, alive_n)), float(pickups) / count])
 	print("   cost: a tick %.3f ms, the brains %.3f ms of it (%.0f%%), over %d ticks" % [
 		tick_us / 1000.0 / maxi(1, ticks), sim.brain_us / 1000.0 / maxi(1, ticks), 100.0 * sim.brain_us / maxi(1, tick_us), ticks])
 	if png_dir != "":
