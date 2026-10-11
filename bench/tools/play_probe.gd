@@ -328,7 +328,7 @@ func _finish(timed_out: bool) -> void:
 		_predict_line()
 	if mode_catcher != "":
 		_catch_line()
-	if watch_s > 0.0 and not mode_idle:
+	if watch_s > 0.0 and not mode_idle and not mode_predict and not mode_shooter and mode_catcher == "":
 		var want := {"round_end": seen["round_end"] > 0, "point": seen["point"] or seen["round_end"] > 0, "match_end": seen["match_end"], "lobby_back": seen["lobby_back"]}
 		for k in want:
 			if not want[k]:

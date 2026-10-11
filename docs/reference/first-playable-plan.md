@@ -1,6 +1,6 @@
 ---
 tags: [reference, plan]
-status: built 2026-10-10 as v0.2.0-p1.1 ([[v0.2.0-p1.1 - First Playable]]); on the laptop since 2026-10-10 (tick 0.36 ms mean with 8 sockets); the play night waits
+status: P1 built 2026-10-10 as v0.2.0-p1.1 ([[v0.2.0-p1.1 - First Playable]]); P2 built as v0.2.0-p2.1 ([[v0.2.0-p2.1 - The Feel]]), on the laptop since 2026-10-10 21:27; the play night waits
 ---
 # The first playable (P1): the new game the kids can play
 
@@ -38,7 +38,7 @@ The project stays in `bench/` for now (the tools and the docs point there). It m
 - Then the plan's phases as written: the super arena (G5), server bots (G6), the release v0.2.0 (G7), the look (G8), sound (G9), treasure and how characters differ (G10).
 
 ### P2: the steps (2026-10-10)
-**Built 2026-10-10** as [[v0.2.0-p2.1 - The Feel]]: steps 1 to 4 done and proven on the PC (the page has the numbers); step 5's laptop proofs wait for the deploy.
+**Built 2026-10-10** as [[v0.2.0-p2.1 - The Feel]], on the laptop since 21:27: steps 1 to 5 done and proven on the PC and the laptop (the page has the numbers). The controls are tuned once the sheet has its verdict.
 
 **Why.** In P1 your own fighter comes from the newest snapshot: a press shows about one round trip plus 30 to 60 ms later. The others and the arrows are drawn 50 ms behind that. So a dodge must start about 6 ticks (0.1 s) before the arrow reaches you on screen. P2 fixes this the way [[sim-server-design]] section 3 says: your input lands on the tick you pressed it, your fighter moves at once, and arrows are drawn in the present. Each step is committed on beta when its proof passes. The proofs use a test knob, `lag=MS` (with `jitter=MS`): the client holds every packet it sends and gets for half of it. They run at 0, 60 and 120 ms.
 

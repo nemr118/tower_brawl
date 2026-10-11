@@ -1,22 +1,24 @@
 ---
 tags: [playtest]
-build: v0.2.0-p1.1
+build: v0.2.0-p2.1 (the sheet began with p1.1)
 result: open (started 2026-10-10)
 ---
 # Playtest v0.2.0-p1.1 (the first play night of the new game)
 
-**Result: open.** One line per thing only a person can judge: tick it, write yes or no. The proofs Claude ran on the PC are in [[v0.2.0-p1.1 - First Playable]] and [[v0.2.0-p1.2 - Before the Night]]. The night runs v0.2.0-p1.3 (p1.2: the bots wait 1 to 1.5 s after FIGHT, the certificate hint; p1.3: the purple walls close in from 25 s, the spawn spots apart; [[v0.2.0-p1.3 - Walls and Spawns]]), on the laptop beside the old game. On the night: `https://192.168.4.29:8443/v2/` on each phone (accept the certificate warning once). If a phone sits on "Still connecting", do what the line says: open `https://192.168.4.29:8091` once in the same browser, accept the warning there too (an error page after it is fine), then go back. The old game stays at `/play`.
+**Result: open.** One line per thing only a person can judge: tick it, write yes or no. The proofs Claude ran are in the patch pages. The night runs **v0.2.0-p2.1** ([[v0.2.0-p2.1 - The Feel]]: your fighter moves the moment you press, the arrows are drawn where the server has them, so a dodge timed on what you see catches; the LOOK button in the lobby: LOW, NORMAL, HIGH). It keeps p1.2 (the bots wait at FIGHT, the certificate hint) and p1.3 (the purple walls from 25 s, the spawn spots apart). It is on the laptop beside the old game. On the night: `https://192.168.4.29:8443/v2/` on each phone (accept the certificate warning once). If a phone sits on "Still connecting", do what the line says: open `https://192.168.4.29:8091` once in the same browser, accept the warning there too (an error page after it is fine), then go back. The old game stays at `/play`.
 
 ## On the night (phones and the PC keyboard, bots in the empty seats)
 - [ ] The controls make sense to the kids without a lesson (yes / no): 
 - [ ] A shot goes where I aimed (yes / no): 
 - [ ] A dodge I timed caught the arrow (yes / no): 
-- [ ] The lag: playable, or not (playable / not): 
+- [ ] My fighter moves the moment I press, on a phone too, and the others look smooth (yes / no): 
 - [ ] Rounds: too long, too short, or right: 
 - [ ] 8 on one screen: I find myself within a second (yes / no): 
 - [ ] At FIGHT the bots wait a moment: the kids move before the first arrow (yes / no): 
 - [ ] A phone stuck on "Still connecting" showed the hint, and it worked (yes / no / did not happen): 
 - [ ] The purple walls: the kids saw them coming and got out of the way (yes / no): 
+- [ ] A stomp I saw land on a head counted (yes / no / did not happen): 
+- [ ] Each phone stayed smooth; if its look stepped down, the note said so at the bottom (yes / no / did not happen): 
 
 ## Verdict
-- [ ] **Keep building** (P2, the feel: prediction, the controls tuned from this sheet, a quality setting), or **fix first**: the line that failed and a clock time (HH:MM): 
+- [ ] **Keep building** (the controls tuned from this sheet, then the super arena, G5), or **fix first**: the line that failed and a clock time (HH:MM): 
