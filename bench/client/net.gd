@@ -1,12 +1,25 @@
 # The client's network side: the websocket to server/game_server.gd (or the
 # benchmark's bench_server.gd), the hello with the version and the seat token,
 # the JSON messages (a queue the client drains), snapshot decoding, a render
-# clock 50 ms behind the server, interpolation between two snapshots, the event
+# clock behind the server, interpolation between two snapshots, the event
 # queue, pings, and the network numbers for the benchmark's cards.
+# P2 (the feel): the predicted clock. Each input carries the server tick it is
+# for, and the client runs ahead of the server so the input is there just before
+# that tick. T_OWN (proto.gd) says how early the inputs came; ticks_now() adds or
+# skips a tick to keep that margin at MARGIN_LO to MARGIN_HI. The draw delay for
+# the others follows this client's own snapshot gaps (50 to 133 ms). The test
+# knob lag (with jitter) holds every packet sent and got for lag/2 each way.
 extends RefCounted
 
 const P = preload("res://sim/proto.gd")
-const DELAY_TICKS := 3.0
+const DELAY_TICKS := 3.0       # the draw delay's floor: 50 ms (a steady phone)
+const DELAY_MAX := 8.0         # its ceiling: 133 ms (the benchmark's Pixel needed about 100)
+const GAP_KEEP := 150          # the snapshot gaps the draw delay looks at: the last 5 s
+const MARGIN_LO := 1           # the predicted clock keeps your inputs 1 to 3 ticks early at the server
+const MARGIN_HI := 3
+const MARGIN_AIM := 2          # a change aims here
+const ADJUST_EVERY := 4        # a slow change adds or skips one tick every 4 (0.75x to 1.25x speed)
+const JUMP_TICKS := 20         # the clock is further off than this: jump (the first sync, a stall)
 const W := 1920.0
 const H := 1080.0
 
@@ -18,14 +31,41 @@ var state := WebSocketPeer.STATE_CLOSED
 var snaps: Array = []          # decoded snapshots, oldest first
 var events: Array = []         # [tick, event]
 var messages: Array = []       # JSON dictionaries from the server, oldest first
+var owns: Array = []           # decoded T_OWN, oldest first (the client drains them)
 var tick_offset := 0.0
 var have_clock := false
-var client_tick := 0
+var client_tick := 0           # the benchmark's input counter (send_input with no tick)
 var input_hist: Array = []
 var last_rtt := 0
 var worst_gap := 0.0
 var last_snap_ms := 0.0
 var next_ping_ms := 0.0
+var delay_ticks := DELAY_TICKS
+var delay_goal := DELAY_TICKS
+var gap_hist := PackedFloat32Array()
+var next_delay_ms := 0.0
+var last_poll_ms := 0.0
+# the predicted clock (P2)
+var pred_tick := 0             # the newest tick run: the tick of the newest input sent
+var synced := false
+var jumped := false            # the clock jumped (the caller's prediction starts over); the caller clears it
+var margins: Array = []        # [ms, margin] from T_OWN, the last 3 s
+var change_wait_ms := 0.0      # no new change before this, and only margins from then on count:
+                               # the last change must show in the margins first
+var clock_debt := 0            # ticks still to add (> 0) or to skip (< 0), one every ADJUST_EVERY
+var pay_now := false           # the debt is for late inputs: add it at once
+var adjust_t := 0
+var clock_changes := 0
+var clock_jumps := 0
+var late_total := 0            # from T_OWN: inputs that came after their tick
+var margin_log := PackedInt32Array()   # every margin T_OWN reported (the probes read it)
+# the test knob: lag and jitter in ms
+var lag_ms := 0.0
+var jitter_ms := 0.0
+var _in_q: Array = []          # [due ms, packet, was a string]
+var _out_q: Array = []         # [due ms, PackedByteArray or String]
+var _in_due := 0.0
+var _out_due := 0.0
 # the current measuring window
 var rtts := PackedFloat32Array()
 var gaps := PackedFloat32Array()
@@ -40,6 +80,8 @@ func open(u: String, name: String, seat_token: String = "") -> void:
 	ws.inbound_buffer_size = 1 << 20
 	var tls := TLSOptions.client_unsafe() if u.begins_with("wss") and OS.get_name() != "Web" else null
 	ws.connect_to_url(u, tls)
+	_in_q.clear()
+	_out_q.clear()
 
 func now_ms() -> float:
 	return Time.get_ticks_usec() / 1000.0
@@ -48,30 +90,38 @@ func poll() -> void:
 	ws.poll()
 	var st := ws.get_ready_state()
 	if st == WebSocketPeer.STATE_OPEN and state != WebSocketPeer.STATE_OPEN:
-		ws.send_text(JSON.stringify({"kind": "hello", "name": who, "version": P.VERSION, "token": token}))
+		_send_text(JSON.stringify({"kind": "hello", "name": who, "version": P.VERSION, "token": token}))
 		win_start_ms = now_ms()
 		snaps.clear()
+		owns.clear()
 		have_clock = false
+		synced = false
+		pred_tick = 0          # a new connection: the server takes any tick again
+		margins.clear()
+		clock_debt = 0
+		pay_now = false
 	state = st
 	if st != WebSocketPeer.STATE_OPEN:
 		return
+	var t := now_ms()
+	var lagged := lag_ms > 0.0 or jitter_ms > 0.0
 	while ws.get_available_packet_count() > 0:
 		var pkt := ws.get_packet()
-		bytes_in += pkt.size()
-		if pkt.size() == 0:
-			continue
-		if ws.was_string_packet():
-			var d = JSON.parse_string(pkt.get_string_from_utf8())
-			if typeof(d) == TYPE_DICTIONARY:
-				messages.append(d)
-			continue
-		if pkt[0] == P.T_SNAP:
-			_on_snapshot(pkt)
-		elif pkt[0] == P.T_PONG and pkt.size() >= 9:
-			var sent := pkt.decode_u32(1)
-			last_rtt = int((int(now_ms()) & 0xFFFFFFFF) - sent) & 0xFFFFFFFF
-			rtts.append(last_rtt)
-	var t := now_ms()
+		var was_text := ws.was_string_packet()
+		if lagged:
+			_in_due = maxf(_in_due, t + lag_ms * 0.5 + randf() * jitter_ms)
+			_in_q.append([_in_due, pkt, was_text])
+		else:
+			_on_packet(pkt, was_text)
+	while _in_q.size() > 0 and _in_q[0][0] <= t:
+		var q: Array = _in_q.pop_front()
+		_on_packet(q[1], q[2])
+	while _out_q.size() > 0 and _out_q[0][0] <= t:
+		var o = _out_q.pop_front()[1]
+		if o is String:
+			ws.send_text(o)
+		else:
+			ws.put_packet(o)
 	if t >= next_ping_ms:
 		next_ping_ms = t + 500.0
 		var out := PackedByteArray()
@@ -81,13 +131,47 @@ func poll() -> void:
 		out.encode_u16(5, mini(last_rtt, 65535))
 		out.encode_u16(7, mini(int(worst_gap), 65535))
 		worst_gap = 0.0
-		ws.put_packet(out)
+		_send_bin(out)
+	_update_delay(t)
+
+func _on_packet(pkt: PackedByteArray, was_text: bool) -> void:
+	bytes_in += pkt.size()
+	if pkt.size() == 0:
+		return
+	if was_text:
+		var d = JSON.parse_string(pkt.get_string_from_utf8())
+		if typeof(d) == TYPE_DICTIONARY:
+			messages.append(d)
+		return
+	if pkt[0] == P.T_SNAP:
+		_on_snapshot(pkt)
+	elif pkt[0] == P.T_OWN and pkt.size() >= 16:
+		_on_own(pkt)
+	elif pkt[0] == P.T_PONG and pkt.size() >= 9:
+		var sent := pkt.decode_u32(1)
+		last_rtt = int((int(now_ms()) & 0xFFFFFFFF) - sent) & 0xFFFFFFFF
+		rtts.append(last_rtt)
+
+# Every packet out goes through here (the test knob holds it lag/2 + jitter).
+func _send_bin(pkt: PackedByteArray) -> void:
+	if lag_ms <= 0.0 and jitter_ms <= 0.0:
+		ws.put_packet(pkt)
+		return
+	_out_due = maxf(_out_due, now_ms() + lag_ms * 0.5 + randf() * jitter_ms)
+	_out_q.append([_out_due, pkt])
+
+func _send_text(txt: String) -> void:
+	if lag_ms <= 0.0 and jitter_ms <= 0.0:
+		ws.send_text(txt)
+		return
+	_out_due = maxf(_out_due, now_ms() + lag_ms * 0.5 + randf() * jitter_ms)
+	_out_q.append([_out_due, txt])
 
 # A JSON message to the server ({"kind": ...}).
 func send(d: Dictionary) -> bool:
 	if state != WebSocketPeer.STATE_OPEN:
 		return false
-	ws.send_text(JSON.stringify(d))
+	_send_text(JSON.stringify(d))
 	return true
 
 func take_messages() -> Array:
@@ -95,16 +179,24 @@ func take_messages() -> Array:
 	messages = []
 	return m
 
-# 60 times a second from _physics_process: the buttons (proto B_*) and the aim
-# in 0.1 degree steps, with the 3 ticks before, so a late packet loses nothing.
-func send_input(buttons: int, aim: int) -> void:
+func take_owns() -> Array:
+	var o := owns
+	owns = []
+	return o
+
+# The buttons (proto B_*) and the aim in 0.1 degree steps for one tick, with the
+# 3 ticks before, so a late packet loses nothing. The game passes the tick the
+# input is for (ticks_now); the benchmark passes none and counts its own.
+func send_input(buttons: int, aim: int, tick: int = -1) -> void:
 	if state != WebSocketPeer.STATE_OPEN:
 		return
-	client_tick += 1
+	if tick < 0:
+		client_tick += 1
+		tick = client_tick
 	var one := PackedByteArray()
 	one.resize(8)
 	one[0] = P.T_INPUT
-	one.encode_u32(1, client_tick)
+	one.encode_u32(1, tick)
 	one[5] = buttons & 255
 	one.encode_u16(6, aim & 0xFFFF)
 	input_hist.append(one)
@@ -113,17 +205,107 @@ func send_input(buttons: int, aim: int) -> void:
 	var pkt := PackedByteArray()
 	for h in input_hist:
 		pkt.append_array(h)
-	ws.put_packet(pkt)
+	_send_bin(pkt)
 
 # False when the server is not connected: the card is lost.
 func send_card(d: Dictionary) -> bool:
 	return send(d)
 
+# ------------------------------------------------------------------ the predicted clock (P2)
+# The server's tick now, as well as this client can tell: the snapshots' clock
+# (tick_offset follows when they arrive) plus half the round trip.
+func server_now() -> float:
+	return now_ms() / 1000.0 * 60.0 + tick_offset + last_rtt * 0.03
+
+# The ticks to run on this physics tick, each with the buttons of now (60 times a
+# second from _physics_process). One normally; while the clock pays a debt (the
+# margins said too late or too early), one more or one fewer every ADJUST_EVERY
+# ticks, or all at once for late inputs. The first sync, and a clock more than
+# JUMP_TICKS behind (a tab that slept), jump: `jumped` turns true and the list
+# holds the one new tick. Empty before the first snapshot.
+func ticks_now() -> Array:
+	if not have_clock or state != WebSocketPeer.STATE_OPEN:
+		return []
+	var now := now_ms()
+	var want := int(server_now() + last_rtt * 0.03) + MARGIN_AIM
+	if not synced or pred_tick < want - JUMP_TICKS:
+		pred_tick = want
+		synced = true
+		jumped = true
+		clock_jumps += 1
+		clock_debt = 0
+		pay_now = false
+		change_wait_ms = now + last_rtt + 150.0
+		return [pred_tick]
+	if clock_debt == 0 and now >= change_wait_ms:
+		_judge_margins(now)
+	var n := 1
+	adjust_t += 1
+	if pay_now:
+		n += clock_debt
+		clock_debt = 0
+		pay_now = false
+	elif clock_debt != 0 and adjust_t >= ADJUST_EVERY:
+		adjust_t = 0
+		if clock_debt > 0:
+			n = 2
+			clock_debt -= 1
+		else:
+			n = 0
+			clock_debt += 1
+	var out: Array = []
+	for i in n:
+		pred_tick += 1
+		out.append(pred_tick)
+	return out
+
+# The margins since the last change: one under 0 (a late input) adds the ticks
+# at once; one under MARGIN_LO adds them slowly; all over MARGIN_HI for 1.5 s
+# skips slowly. Each brings the margin to MARGIN_AIM.
+func _judge_margins(now: float) -> void:
+	var lo := 999
+	var n := 0
+	var first := now
+	for m in margins:
+		if m[0] >= change_wait_ms - 1.0:
+			lo = mini(lo, m[1])
+			n += 1
+			first = minf(first, m[0])
+	if n < 3:
+		return
+	if lo < MARGIN_LO:
+		clock_debt = MARGIN_AIM - lo
+		pay_now = lo < 0
+	elif lo > MARGIN_HI and now - first >= 1500.0:
+		clock_debt = MARGIN_AIM - lo
+	else:
+		return
+	clock_changes += 1
+	change_wait_ms = now + (0.0 if pay_now else absi(clock_debt) * ADJUST_EVERY * 16.7) + last_rtt + 150.0
+
+func _on_own(pkt: PackedByteArray) -> void:
+	var o := {"tick": pkt.decode_u32(1), "used": pkt.decode_u32(5), "margin": pkt.decode_s8(9),
+		"late": pkt[10], "flags": pkt[11], "moves_from": pkt.decode_u32(12), "pkt": pkt, "at": 16}
+	owns.append(o)
+	while owns.size() > 64:
+		owns.pop_front()
+	late_total += int(o["late"])
+	if int(o["margin"]) != P.NO_MARGIN:
+		var t := now_ms()
+		margins.append([t, int(o["margin"])])
+		while margins.size() > 0 and margins[0][0] < t - 3000.0:
+			margins.pop_front()
+		margin_log.append(int(o["margin"]))
+
+# ------------------------------------------------------------------ snapshots and the render clock
 func _on_snapshot(pkt: PackedByteArray) -> void:
 	var t := now_ms()
 	if last_snap_ms > 0.0:
 		var g := t - last_snap_ms
 		gaps.append(g)
+		gap_hist.append(g)
+		if gap_hist.size() > GAP_KEEP:
+			gap_hist.remove_at(0)
 		worst_gap = maxf(worst_gap, g)
 	last_snap_ms = t
 	var b := StreamPeerBuffer.new()
@@ -178,8 +360,21 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	else:
 		tick_offset = lerpf(tick_offset, target, 0.05)
 
+# The draw delay follows the snapshot gaps of the last 5 s: their 99th
+# percentile plus half a tick, from 3 to 8 ticks, moving 2 ticks a second at most
+# so the others never jump.
+func _update_delay(t: float) -> void:
+	var dt := clampf((t - last_poll_ms) / 1000.0, 0.0, 0.1) if last_poll_ms > 0.0 else 0.0
+	last_poll_ms = t
+	if t >= next_delay_ms and gap_hist.size() >= 30:
+		next_delay_ms = t + 1000.0
+		var g := gap_hist.duplicate()
+		g.sort()
+		delay_goal = clampf(g[int(g.size() * 0.99)] / (1000.0 / 60.0) + 0.5, DELAY_TICKS, DELAY_MAX)
+	delay_ticks = move_toward(delay_ticks, delay_goal, dt * 2.0)
+
 func render_tick() -> float:
-	return now_ms() / 1000.0 * 60.0 + tick_offset - DELAY_TICKS
+	return now_ms() / 1000.0 * 60.0 + tick_offset - delay_ticks
 
 # The newest snapshot (empty before the first).
 func newest() -> Dictionary:

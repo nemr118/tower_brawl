@@ -10,7 +10,8 @@
 # Options (desktop: --key=value after --; web: ?key=value in the URL):
 #   server=wss://host:8091  name=Ava  look=t2 (world.gd VARIANTS)  join  start
 #   bots=N  info (the version, fps and ping at the bottom)  bench (the old
-#   benchmark page instead, with its own options)
+#   benchmark page instead, with its own options)  lag=MS jitter=MS (a test
+#   knob: every packet sent and got waits MS/2, plus up to jitter, client/net.gd)
 # ==============================================================================
 extends Node
 
@@ -105,6 +106,8 @@ func _ready() -> void:
 		else:
 			server_url = "wss://127.0.0.1:%d" % P.PORT
 	net = Net.new()
+	net.lag_ms = float(opts.get("lag", 0))
+	net.jitter_ms = float(opts.get("jitter", 0))
 	net.open(server_url, my_name, token)
 	get_viewport().size_changed.connect(_fit)
 	_fit()
@@ -224,7 +227,9 @@ func _physics_process(_dt: float) -> void:
 		buttons |= P.B_SHOOT
 		aim_deg10 = _mouse_aim()
 	shoot_held = (buttons & P.B_SHOOT) != 0
-	net.send_input(buttons, aim_deg10)
+	# P2: each tick the clock runs (one, or two or none while it catches up or falls back)
+	for t in net.ticks_now():
+		net.send_input(buttons, aim_deg10, t)
 
 # The aim from the mouse: the angle from my bow to the pointer, in world pixels.
 func _mouse_aim() -> int:

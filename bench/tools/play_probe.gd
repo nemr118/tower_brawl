@@ -3,13 +3,16 @@
 # match and reports what happened. The first-playable plan, 3.7.
 #   godot --headless --path bench --script res://tools/play_probe.gd -- \
 #       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--start] [--idle]
-#       [--move] [--watch=SECONDS] [--token=abc]
+#       [--move] [--watch=SECONDS] [--token=abc] [--lag=MS] [--jitter=MS]
 # --start: press START once seated (the lobby needs 2 fighters: bots or others).
 # --move: at the first FIGHT, hold right for 60 ticks, then jump (held 30 ticks),
 #   then stand; the server's answer is checked against the same buttons run on a
 #   local copy of the simulation from the same spot. --watch=N: stay up to N s
 #   and expect a round end with a winner, a point counted, a match end and the
 #   lobby back. --idle: just sit there (a second fighter for a proof).
+# --lag, --jitter: the test knob in client/net.gd (every packet waits lag/2 each
+# way, plus up to jitter). P2: inputs carry the tick they are for (net.ticks_now);
+# at the end a clock line says how many came late and how early they came.
 # Exit 0 when every expected thing happened, 1 otherwise. Lines start with 🧪.
 extends SceneTree
 
@@ -52,6 +55,8 @@ func _init() -> void:
 	watch_s = float(opts.get("watch", 0))
 	var url := str(opts.get("server", "ws://127.0.0.1:%d" % P.PORT))
 	net = Net.new()
+	net.lag_ms = float(opts.get("lag", 0))
+	net.jitter_ms = float(opts.get("jitter", 0))
 	net.open(url, str(opts.get("name", "Probe")), str(opts.get("token", "")))
 	started_ms = Time.get_ticks_msec()
 	print("🧪 [PlayProbe] %s connecting to %s (version %s)" % [opts.get("name", "Probe"), url, P.VERSION])
@@ -97,19 +102,33 @@ func _process(_delta: float) -> bool:
 func _physics_process(_delta: float) -> bool:
 	if done or seat < 0 or net.state != WebSocketPeer.STATE_OPEN:
 		return false
-	var buttons := 0
-	if script_t >= 0 and script_t < SCRIPT_LEN:
-		buttons = _script_buttons(script_t)
-		script_t += 1
-	net.send_input(buttons, 0)
-	if script_t == SCRIPT_LEN and not move_done:
-		# one more snapshot pair so the last tick is in; then judge
-		script_t += 1
-	elif script_t > SCRIPT_LEN and script_t < SCRIPT_LEN + 8:
-		script_t += 1
-	elif script_t >= SCRIPT_LEN + 8 and not move_done:
+	for t in net.ticks_now():
+		var buttons := 0
+		if script_t >= 0 and script_t < SCRIPT_LEN:
+			buttons = _script_buttons(script_t)
+			script_t += 1
+			script_end_tick = t
+		net.send_input(buttons, 0, t)
+		inputs_sent += 1
+	if net.jumped:
+		net.jumped = false
+		if clock_from_ms == 0:
+			clock_from_ms = Time.get_ticks_msec() + 1000   # the clock line counts from 1 s after the first sync
+	if clock_from_ms > 0 and not clock_counting and Time.get_ticks_msec() >= clock_from_ms:
+		clock_counting = true
+		net.late_total = 0
+		net.margin_log.clear()
+		inputs_from = inputs_sent
+	# the move proof: judge once the server has run the script's last tick
+	if script_t >= SCRIPT_LEN and not move_done and not net.newest().is_empty() and int(net.newest()["tick"]) >= script_end_tick + 2:
 		_judge_move()
 	return false
+
+var script_end_tick := 0
+var inputs_sent := 0
+var inputs_from := 0
+var clock_from_ms := 0
+var clock_counting := false
 
 var run_dir := 1
 var run_ticks := 60
@@ -123,16 +142,21 @@ func _script_buttons(t: int) -> int:
 
 # The spawn spot is random and most spots are short ledges: try the run on the
 # local simulation first and keep the first one that ends on the ground with a
-# clear jump (right 60, left 60, right 20, left 20 ticks).
+# clear jump (right 60, left 60, right 20, left 20 ticks). A spot with none (a
+# low ceiling) runs right 60 and is judged on the match with the local sim alone.
+var clear_jump := true
+
 func _pick_run() -> void:
 	for cand in [[1, 60], [-1, 60], [1, 20], [-1, 20]]:
 		run_dir = cand[0]
 		run_ticks = cand[1]
 		var r := _local_run()
 		if r["ground"] and r["rise"] >= 140:
+			clear_jump = true
 			return
 	run_dir = 1
 	run_ticks = 60
+	clear_jump = false
 
 # The same buttons on a local copy of the simulation, from the same spot:
 # {dx, rise, ground (on the ground when the jump came)}.
@@ -165,13 +189,14 @@ func _judge_move() -> void:
 	var local := _local_run()
 	var ldx: int = local["dx"]
 	var lrise: int = local["rise"]
-	var ok_dx := absi(dx - ldx) <= 8    # one tick of running (6.75 px) is the clocks' jitter
-	var ok_rise := absi(rise - lrise) <= 3
-	move_ok = ok_dx and ok_rise and absi(dx) > 100 and rise > 140
+	var ok_dx := absi(dx - ldx) <= 1    # P2: the inputs land on their ticks, so the server matches the local sim
+	var ok_rise := absi(rise - lrise) <= 1
+	move_ok = ok_dx and ok_rise and absi(dx) > 100 and (rise > 140 or not clear_jump)
 	if not move_ok:
 		fails += 1
-	print("🧪 [PlayProbe] %s move proof: %s %d ticks then a held jump: the server moved me %d px (local sim %d, ±8) and I rose %d px (local sim %d, ±3)" % [
-		"PASS" if move_ok else "FAIL", "right" if run_dir > 0 else "left", run_ticks, dx, ldx, rise, lrise])
+	print("🧪 [PlayProbe] %s move proof: %s %d ticks then a held jump: the server moved me %d px (local sim %d, ±1) and I rose %d px (local sim %d, ±1)%s" % [
+		"PASS" if move_ok else "FAIL", "right" if run_dir > 0 else "left", run_ticks, dx, ldx, rise, lrise,
+		"" if clear_jump else " (this spot has no clear jump: judged on the match alone)"])
 
 func _on_message(m: Dictionary) -> void:
 	var kind := str(m.get("kind", ""))
@@ -220,6 +245,7 @@ func mode_idle_watch_only() -> bool:
 
 func _finish(timed_out: bool) -> void:
 	done = true
+	_clock_line()
 	if watch_s > 0.0 and not mode_idle:
 		var want := {"round_end": seen["round_end"] > 0, "point": seen["point"] or seen["round_end"] > 0, "match_end": seen["match_end"], "lobby_back": seen["lobby_back"]}
 		for k in want:
@@ -235,3 +261,23 @@ func _finish(timed_out: bool) -> void:
 	print("🧪 [PlayProbe] %s (%d fail)" % ["PASS" if fails == 0 else "FAIL", fails])
 	net.ws.close()
 	quit(0 if fails == 0 else 1)
+
+# P2: the inputs since 1 s after the first sync: how many came late (T_OWN says),
+# and how early they came (the smallest margin in each T_OWN window, in ticks).
+func _clock_line() -> void:
+	if not clock_counting:
+		print("🧪 [PlayProbe] clock: never synced")
+		return
+	var m: PackedInt32Array = net.margin_log.duplicate()
+	m.sort()
+	var n: int = inputs_sent - inputs_from
+	var hist := {}
+	for v in m:
+		hist[v] = hist.get(v, 0) + 1
+	var parts: Array = []
+	for k in hist.keys():
+		parts.append("%d:%d" % [k, hist[k]])
+	print("🧪 [PlayProbe] clock: lag %d ms jitter %d ms, rtt %d ms: %d inputs, %d late (%.2f%%); margin min %d median %d max %d (ticks: windows %s); %d clock changes, %d jumps; draw delay %.1f ticks" % [
+		int(net.lag_ms), int(net.jitter_ms), net.last_rtt, n, net.late_total, 100.0 * net.late_total / maxf(1.0, n),
+		m[0] if m.size() > 0 else 0, m[m.size() / 2] if m.size() > 0 else 0, m[m.size() - 1] if m.size() > 0 else 0,
+		" ".join(parts), net.clock_changes, net.clock_jumps, net.delay_ticks])

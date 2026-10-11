@@ -12,6 +12,11 @@
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
+# Inputs land on their tick (P2): each input carries the server tick it is for,
+# the server keeps a small queue per seat and applies input N just before tick N
+# (a late one at once, so no press is lost; the held buttons when none came), and
+# after each snapshot each seated person gets a T_OWN packet (proto.gd): how early
+# their inputs came, and their fighter's whole state for the client's prediction.
 # Two threads, as in the benchmark: the network thread owns the sockets (TLS and
 # websocket handshakes, reading, pongs, sending); this thread owns the seats and
 # the simulation. They trade messages under net_mutex: net_in (open, text, input,
@@ -42,6 +47,7 @@ const DRAW_TICKS := 60           # nobody left: a shorter DRAW banner
 const MATCH_END_TICKS := 420     # the winner's screen: 7 s, then the lobby
 const REPORT_S := 5
 const NAME_MAX := 12
+const MAX_EARLY := 60            # an input more than 1 s early is applied at once (the client's clock is off)
 
 class Client:
 	var id: int = 0
@@ -76,10 +82,16 @@ class Seat:
 	var hold_t: int = 0
 	var points: int = 0
 	var crowns: int = 0
-	var buttons: int = 0
+	var buttons: int = 0        # the last buttons applied (held while no input comes)
 	var aim: int = 0
 	var in_round: bool = false  # has a fighter this round
-	var input_tick: int = -1    # the sim tick an input was applied on
+	var input_tick: int = -1    # the sim tick a late input was applied on
+	var queue := {}             # input tick -> [buttons, aim]: applied just before that tick
+	var used: int = 0           # the newest input tick applied
+	var margin_min: int = P.NO_MARGIN   # the smallest margin (ticks early) since the last T_OWN
+	var late_n: int = 0         # inputs that came after their tick, since the last T_OWN
+	var late_all: int = 0       # and in all, with the inputs counted, for the report
+	var inputs_all: int = 0
 
 var sim
 var seats: Array = []
@@ -97,6 +109,7 @@ var server := TCPServer.new()
 var tls_opts: TLSOptions = null
 var clients: Array = []
 var buf := StreamPeerBuffer.new()
+var own_buf := StreamPeerBuffer.new()
 var pending_events: Array = []
 var tick_us := PackedInt64Array()
 var interval_us := PackedInt64Array()
@@ -216,7 +229,7 @@ func _physics_process(_dt: float) -> void:
 	_hold_seats()
 	_match_tick()
 	var t1 := Time.get_ticks_usec()
-	_refresh_inputs()
+	_apply_inputs()
 	sim.step()
 	var evs: Array = sim.take_events()
 	_log_deaths(evs)
@@ -228,6 +241,7 @@ func _physics_process(_dt: float) -> void:
 		sim.write_snapshot(buf, pending_events, _head())
 		pending_events.clear()
 		_out(0, buf.data_array)
+		_send_own()
 	var t3 := Time.get_ticks_usec()
 	tick_us.append(t3 - t0)
 	sim_us_sum += t2 - t1
@@ -388,6 +402,9 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		s.in_round = false
 		s.buttons = 0
 		s.aim = 0
+	s.queue.clear()
+	s.margin_min = P.NO_MARGIN
+	s.late_n = 0
 	c.seat = s.i
 	c.name = s.name
 	var f = sim.fighter(s.i)
@@ -412,6 +429,7 @@ func _free_seat_now(s: Seat) -> void:
 	s.token = ""
 	s.hold_t = 0
 	s.in_round = false
+	s.queue.clear()
 	seats_dirty = true
 
 func _on_close(c: Conn) -> void:
@@ -420,6 +438,7 @@ func _on_close(c: Conn) -> void:
 		if s.client_id == c.id:
 			s.client_id = 0
 			s.hold_t = HOLD_TICKS
+			s.queue.clear()
 			var f = sim.fighter(s.i)
 			if f != null and s.in_round:
 				f.bot = true
@@ -439,12 +458,15 @@ func _hold_seats() -> void:
 				print("🏰 [LEAVE] seat %d '%s' is free again (nobody came back)" % [s.i, s.name])
 				_free_seat_now(s)
 
-# An input packet: up to 4 ticks of buttons (proto). Each new tick is applied
-# in order, so a one-tick press is never lost; the last one stays as the held state.
+# An input packet: up to 4 ticks of buttons (proto), each for the server tick it
+# carries. A new one goes in the seat's queue for its tick. One whose tick is gone
+# (late) or more than MAX_EARLY ahead is applied at once, in order, so a one-tick
+# press is never lost. The margin (how many ticks early) goes back in T_OWN.
 func _on_input(c: Conn, pkt: PackedByteArray) -> void:
 	if c.seat < 0:
 		return
 	var s: Seat = seats[c.seat]
+	var next: int = sim.tick + 1     # the tick the coming step makes
 	var n := pkt.size() / 8
 	for i in n:
 		var off := i * 8
@@ -454,22 +476,69 @@ func _on_input(c: Conn, pkt: PackedByteArray) -> void:
 		if t <= c.last_tick:
 			continue
 		c.last_tick = t
-		s.buttons = pkt[off + 5]
-		s.aim = pkt.decode_u16(off + 6) % 3600
+		var b: int = pkt[off + 5]
+		var aim := pkt.decode_u16(off + 6) % 3600
+		var margin: int = t - next
+		s.margin_min = mini(s.margin_min, margin)
+		s.inputs_all += 1
+		if margin >= 0 and margin <= MAX_EARLY:
+			s.queue[t] = [b, aim]
+			continue
+		if margin < 0:
+			s.late_n += 1
+			s.late_all += 1
+		s.buttons = b
+		s.aim = aim
+		s.used = t
 		if s.in_round:
 			var f = sim.fighter(s.i)
 			if f != null and not f.bot:
-				sim.apply_input(f, s.buttons, s.aim)
+				sim.apply_input(f, b, aim)
 				s.input_tick = sim.tick
 
-# A seat with no new packet this tick keeps its held buttons (so a late packet
-# never drops the jump height or the aim).
-func _refresh_inputs() -> void:
+# Just before the step: each person's input for this tick from the queue, or the
+# held buttons when it has not come (it is applied when it comes, see _on_input),
+# so a late packet never drops the jump height or the aim.
+func _apply_inputs() -> void:
+	var t: int = sim.tick + 1
 	for s in seats:
-		if s.kind == 1 and s.client_id != 0 and s.in_round and s.input_tick != sim.tick:
-			var f = sim.fighter(s.i)
-			if f != null and not f.bot:
-				sim.apply_input(f, s.buttons, s.aim)
+		if s.kind != 1 or s.client_id == 0:
+			continue
+		var q = s.queue.get(t)
+		if q != null:
+			s.queue.erase(t)
+			s.buttons = q[0]
+			s.aim = q[1]
+			s.used = t
+		if s.queue.size() > MAX_EARLY + 8:
+			s.queue.clear()   # only a client whose clock jumped back leaves old ticks here
+		if not s.in_round:
+			continue
+		var f = sim.fighter(s.i)
+		if f != null and not f.bot and (q != null or s.input_tick != sim.tick):
+			sim.apply_input(f, s.buttons, s.aim)
+
+# After each snapshot, each seated person's T_OWN (proto.gd): the tick, the newest
+# input used, the margin and the late count since the last one, the first tick the
+# fighters move after ROUND START, and their fighter's whole state.
+func _send_own() -> void:
+	for s in seats:
+		if s.kind != 1 or s.client_id == 0:
+			continue
+		var f = sim.fighter(s.i) if s.in_round else null
+		own_buf.clear()
+		own_buf.put_u8(P.T_OWN)
+		own_buf.put_u32(sim.tick)
+		own_buf.put_u32(s.used)
+		own_buf.put_8(clampi(s.margin_min, -128, 127))
+		own_buf.put_u8(mini(s.late_n, 255))
+		own_buf.put_u8((P.OWN_FIGHTER if f != null else 0) | (P.OWN_BRAIN if f != null and f.bot else 0))
+		own_buf.put_u32(sim.tick + phase_t if phase == P.PH_ROUND_START else 0)
+		if f != null:
+			sim.write_fighter_state(own_buf, f)
+		_out(s.client_id, own_buf.data_array)
+		s.margin_min = P.NO_MARGIN
+		s.late_n = 0
 
 # ------------------------------------------------------------------ the match
 func _match_tick() -> void:
@@ -857,6 +926,12 @@ func _report() -> void:
 		net_mutex.unlock()
 	else:
 		per_client = _client_list()
+	var inputs: Array = []   # [seat, inputs, late] for each person since the last report
+	for st in seats:
+		if st.kind == 1 and st.inputs_all > 0:
+			inputs.append([st.i, st.inputs_all, st.late_all])
+		st.inputs_all = 0
+		st.late_all = 0
 	var rec := {
 		"kind": "report", "t": Time.get_unix_time_from_system(), "up_s": (now - started_ms) / 1000.0,
 		"clients": per_client.size(), "people": _people(), "bots": _bots_now(), "phase": phase, "round": round_no,
@@ -869,6 +944,7 @@ func _report() -> void:
 		"interval_max_ms": (iv[iv.size() - 1] / 1000.0) if iv.size() > 0 else 0.0,
 		"out_kbps": out_b / 1000.0 / secs, "in_kbps": in_b / 1000.0 / secs,
 		"net_busy_ms": net_busy / 1000.0 / secs, "cpu_pct": cpu, "rss_mb": _rss_mb(), "per_client": per_client,
+		"inputs": inputs,
 	}
 	server_log.store_line(JSON.stringify(rec))
 	server_log.flush()
@@ -876,10 +952,13 @@ func _report() -> void:
 		var rtts: Array = []
 		for pc in per_client:
 			rtts.append("%d:%d" % [pc["id"], pc["rtt"]])
-		print("📊 [Server %4.0fs] clients=%d people=%d bots=%d phase=%d round=%d fighters=%d arrows=%d | tick mean %.2f p99 %.2f max %.2f ms (sim %.2f) | interval p99 %.1f max %.1f ms | out %.1f KB/s in %.1f KB/s | net %.1f ms/s | cpu %.1f%% rss %.0f MB | rtt %s" % [
+		var lates: Array = []
+		for v in inputs:
+			lates.append("%d:%d/%d" % v)
+		print("📊 [Server %4.0fs] clients=%d people=%d bots=%d phase=%d round=%d fighters=%d arrows=%d | tick mean %.2f p99 %.2f max %.2f ms (sim %.2f) | interval p99 %.1f max %.1f ms | out %.1f KB/s in %.1f KB/s | net %.1f ms/s | cpu %.1f%% rss %.0f MB | rtt %s | late %s" % [
 			rec["up_s"], rec["clients"], rec["people"], rec["bots"], phase, round_no, rec["fighters"], rec["arrows"],
 			rec["tick_mean_ms"], rec["tick_p99_ms"], rec["tick_max_ms"], rec["sim_mean_ms"],
-			rec["interval_p99_ms"], rec["interval_max_ms"], rec["out_kbps"], rec["in_kbps"], rec["net_busy_ms"], cpu, rec["rss_mb"], " ".join(rtts)])
+			rec["interval_p99_ms"], rec["interval_max_ms"], rec["out_kbps"], rec["in_kbps"], rec["net_busy_ms"], cpu, rec["rss_mb"], " ".join(rtts), " ".join(lates)])
 	tick_us.clear()
 	interval_us.clear()
 	sim_us_sum = 0

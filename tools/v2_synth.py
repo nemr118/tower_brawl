@@ -7,6 +7,9 @@
 # fighter, jump now and then, hold shoot and let go aimed at it, dodge when an
 # arrow comes close. They fill the seats the phones don't, so a proof can run a
 # whole match on the PC with one headless person (bench/tools/play_probe.gd).
+# P2: each input carries the server tick it is for: the newest snapshot's tick,
+# plus the time since it came, plus the round trip and 3 ticks (a plain version
+# of client/net.gd's clock; they ignore T_OWN).
 #
 #   ./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --seconds 300 [--start] [--bots 0]
 #   --start: the first fake player presses START once the lobby has 2 fighters.
@@ -74,6 +77,8 @@ class Synth(threading.Thread):
         self.stop = False
         self.seat = -1
         self.snap = None
+        self.snap_tick = 0          # the newest snapshot's tick and when it came, for the input ticks
+        self.snap_t = 0.0
         self.start_sent = False
         self.rounds_won = 0
         self.matches = 0
@@ -127,6 +132,7 @@ class Synth(threading.Thread):
                 self.snaps += 1
                 try:
                     self.snap = decode_snapshot(data)
+                    self.snap_tick, self.snap_t = self.snap["tick"], now
                 except struct.error as e:
                     self.err = self.err or f"snapshot: {e}"
             elif op == websocket.ABNF.OPCODE_BINARY and data[0] == T_PONG and len(data) >= 9:
@@ -254,7 +260,16 @@ class Synth(threading.Thread):
                 time.sleep(min(0.004, next_t - now))
                 continue
             next_t += 1.0 / 60.0
-            tick += 1
+            if self.snap_t <= 0.0:
+                continue   # no snapshot yet: no clock
+            # the server tick this input is for: never back, never a gap of more than 20
+            want = int(self.snap_tick + (now - self.snap_t) * 60.0 + self.last_rtt * 0.06) + 3
+            if tick == 0 or want - tick > 20:
+                tick = want
+            elif tick > want + 3:
+                continue   # ahead enough: skip one
+            else:
+                tick += 1
             buttons, aim = self.think(tick)
             hist.append(struct.pack("<BIBH", T_INPUT, tick, buttons, aim))
             hist = hist[-4:]

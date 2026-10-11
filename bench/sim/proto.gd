@@ -8,9 +8,18 @@
 #             fighter x14 B, arrow x8 B, zone x9 B, event x7 B
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
-#   input     (u8 T_INPUT, u32 client tick, u8 buttons, u16 aim in 0.1 degree steps) x4 (the last 4 ticks)
+#   input     (u8 T_INPUT, u32 tick, u8 buttons, u16 aim in 0.1 degree steps) x4 (the last 4 ticks).
+#             The tick is the server tick the input is for (P2): the client runs ahead
+#             of the server, and the server applies input N just before tick N.
 #   ping      u8 T_PING, u32 client ms, u16 last rtt ms, u16 worst snapshot gap ms
 #   pong      u8 T_PONG, u32 client ms (echoed), u32 server tick
+#   own       u8 T_OWN, u32 tick, u32 the newest input tick used, s8 margin (how many
+#             ticks early the inputs that came since the last T_OWN were, the smallest;
+#             NO_MARGIN: none came), u8 late (inputs that came after their tick, since
+#             the last), u8 OWN_* flags, u32 moves_from (the first tick the fighters move
+#             after ROUND START; 0 when that is not ahead), then the fighter's whole
+#             state (sim.gd write_fighter_state) when OWN_FIGHTER. To each seated person
+#             after each snapshot (P2: their clock, prediction and reconciliation).
 # Text frames are JSON, {"kind": ...}: hello, join, leave, start, bots, name from a
 # client; welcome, version_error, full, seats, round_end, match_end from the server
 # (the fields are listed in server/game_server.gd). The benchmark adds bench_card.
@@ -25,6 +34,10 @@ const T_SNAP := 1
 const T_INPUT := 2
 const T_PING := 3
 const T_PONG := 4
+const T_OWN := 5
+const NO_MARGIN := 127
+const OWN_FIGHTER := 1    # T_OWN flags: you have a fighter this round (its state follows)
+const OWN_BRAIN := 2      # the brain plays it (your socket was gone)
 
 # input buttons (one byte)
 const B_LEFT := 1

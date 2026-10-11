@@ -1123,11 +1123,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(f.y)
 		buf.put_8(clampi(roundi(f.vx), -127, 127))
 		buf.put_8(clampi(roundi(f.vy), -127, 127))
-		var pulling: bool = f.state == P.F_LEDGE and f.ledge_t <= 8
-		var flags := (1 if f.facing > 0 else 0) | (2 if f.on_ground else 0) | (4 if f.wall != 0 else 0) \
-			| (8 if f.burn_t > 0 else 0) | (16 if f.miasma_t > 0 else 0) \
-			| (32 if (f.state == P.F_DODGE and f.rolling) or pulling else 0) | (64 if f.wj_t > 0 else 0) | (128 if f.in_smoke else 0)
-		buf.put_u8(flags)
+		buf.put_u8(fighter_flags(f))
 		buf.put_u8(int(fposmod(f.aim, TAU) / TAU * 256.0) & 255)
 		buf.put_u8(f.arrows)
 		buf.put_u8(mini(f.state_t, 255))
@@ -1154,3 +1150,86 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(e[2])
 		buf.put_u8(e[3] & 255)
 		buf.put_u8(e[4] & 255)
+
+# The snapshot's fighter flags (proto.gd): 1 facing right, 2 on the ground, 4 at a
+# wall, 8 burning, 16 poisoned, 32 rolling or pulling up, 64 wall jump, 128 in smoke.
+func fighter_flags(f: Fighter) -> int:
+	var pulling: bool = f.state == P.F_LEDGE and f.ledge_t <= 8
+	return (1 if f.facing > 0 else 0) | (2 if f.on_ground else 0) | (4 if f.wall != 0 else 0) \
+		| (8 if f.burn_t > 0 else 0) | (16 if f.miasma_t > 0 else 0) \
+		| (32 if (f.state == P.F_DODGE and f.rolling) or pulling else 0) | (64 if f.wj_t > 0 else 0) | (128 if f.in_smoke else 0)
+
+# ------------------------------------------------------------------ the whole fighter (P2)
+# Everything the next ticks of a person's fighter depend on, for T_OWN (proto.gd):
+# the server writes it after each snapshot, and the client's prediction reads it
+# and replays its own inputs from it (client/predict.gd). Left out: the seat,
+# bot and connected, points, killer, and the brain's think_t, wait_t, shoot_cd.
+# A new Fighter field that moves a fighter goes in both functions; input_probe
+# runs a read-back copy beside the original to catch one that is missing.
+func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
+	buf.put_16(f.x)
+	buf.put_16(f.y)
+	buf.put_double(f.rx)
+	buf.put_double(f.ry)
+	buf.put_double(f.vx)
+	buf.put_double(f.vy)
+	buf.put_double(f.aim)
+	buf.put_u8(f.state)
+	buf.put_u32(f.state_t)
+	buf.put_8(f.facing)
+	buf.put_8(f.wall)
+	buf.put_8(f.move_dir)
+	buf.put_u8(f.buttons)
+	buf.put_u8(f.arrows)
+	buf.put_16(f.dodge_t)
+	buf.put_32(f.dead_t)
+	buf.put_u8(f.coyote)
+	buf.put_u8(f.dodge_cd)
+	buf.put_u8(f.dodge_jump_t)
+	buf.put_u8(f.catch_t)
+	buf.put_u8(f.jump_buf)
+	buf.put_u8(f.hold_jump)
+	buf.put_u8(f.drop_t)
+	buf.put_u8(f.dropping)
+	buf.put_u8(f.wj_t)
+	buf.put_u8(f.ledge_t)
+	buf.put_u16(mini(f.burn_t, 65535))
+	buf.put_u16(mini(f.miasma_t, 65535))
+	buf.put_u8((1 if f.on_ground else 0) | (2 if f.aiming else 0) | (4 if f.want_jump else 0) \
+		| (8 if f.rolling else 0) | (16 if f.in_smoke else 0))
+
+func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
+	f.x = buf.get_16()
+	f.y = buf.get_16()
+	f.rx = buf.get_double()
+	f.ry = buf.get_double()
+	f.vx = buf.get_double()
+	f.vy = buf.get_double()
+	f.aim = buf.get_double()
+	f.state = buf.get_u8()
+	f.state_t = buf.get_u32()
+	f.facing = buf.get_8()
+	f.wall = buf.get_8()
+	f.move_dir = buf.get_8()
+	f.buttons = buf.get_u8()
+	f.arrows = buf.get_u8()
+	f.dodge_t = buf.get_16()
+	f.dead_t = buf.get_32()
+	f.coyote = buf.get_u8()
+	f.dodge_cd = buf.get_u8()
+	f.dodge_jump_t = buf.get_u8()
+	f.catch_t = buf.get_u8()
+	f.jump_buf = buf.get_u8()
+	f.hold_jump = buf.get_u8()
+	f.drop_t = buf.get_u8()
+	f.dropping = buf.get_u8()
+	f.wj_t = buf.get_u8()
+	f.ledge_t = buf.get_u8()
+	f.burn_t = buf.get_u16()
+	f.miasma_t = buf.get_u16()
+	var b := buf.get_u8()
+	f.on_ground = (b & 1) != 0
+	f.aiming = (b & 2) != 0
+	f.want_jump = (b & 4) != 0
+	f.rolling = (b & 8) != 0
+	f.in_smoke = (b & 16) != 0
