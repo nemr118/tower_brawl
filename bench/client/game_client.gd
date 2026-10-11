@@ -6,8 +6,9 @@
 # the PC: A D (or the arrows) run, W or space jumps, S is down (with jump: drop
 # through a ledge), shift dodges the way you hold, hold the left mouse button
 # to aim and let go to fire. P2: your own fighter is predicted (client/predict.gd:
-# drawn on the tick you press, set right by the server's T_OWN), the others are
-# drawn 50 ms or more behind (client/net.gd, the draw delay follows your gaps).
+# drawn on the tick you press, set right by the server's T_OWN), the arrows in the
+# air are drawn on that same tick (client/present.gd), and the others 50 ms or
+# more behind (client/net.gd, the draw delay follows your snapshot gaps).
 # Options (desktop: --key=value after --; web: ?key=value in the URL):
 #   server=wss://host:8091  name=Ava  look=t2 (world.gd VARIANTS)  join  start
 #   bots=N  info (the version, fps and ping at the bottom)  bench (the old
@@ -23,6 +24,7 @@ const Hud = preload("res://client/hud.gd")
 const Lobby = preload("res://client/lobby.gd")
 const Sticks = preload("res://client/touch_sticks.gd")
 const Predict = preload("res://client/predict.gd")
+const Present = preload("res://client/present.gd")
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
@@ -32,6 +34,7 @@ const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb
 var opts := {}
 var net
 var pred
+var present
 var world
 var sub: SubViewport
 var display := TextureRect.new()
@@ -109,6 +112,7 @@ func _ready() -> void:
 		else:
 			server_url = "wss://127.0.0.1:%d" % P.PORT
 	pred = Predict.new()
+	present = Present.new()
 	net = Net.new()
 	net.lag_ms = float(opts.get("lag", 0))
 	net.jitter_ms = float(opts.get("jitter", 0))
@@ -168,7 +172,10 @@ func _process(delta: float) -> void:
 	for e in net.take_events(rt, my_seat if predicting else -1, Predict.PREDICTED):
 		world.fx.on_event(e)
 	var own: Dictionary = pred.fighter_dict(s["by_id"].get(my_seat, {})) if predicting else {}
-	world.render(net.sample(rt, -1, own), delta)
+	var view: Dictionary = net.sample(rt, -1, own)
+	if predicting and not view.is_empty():
+		view["arrows"] = present.arrows_at(s, pred.tick, pred.me, my_seat, view["fighters"], pred.sim.arrows, delta)
+	world.render(view, delta)
 	var aim_on := false
 	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
 	if shoot_held and not me.is_empty():

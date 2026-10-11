@@ -57,9 +57,15 @@ def decode_snapshot(data):
         off += 14
     arrows = []
     for _ in range(na):
-        aid, ks, x, y, ang = struct.unpack_from("<HBhhB", data, off)
-        arrows.append({"state": ks >> 4, "x": x, "y": y, "ang": ang * math.tau / 256.0})
-        off += 8
+        aid, ks = struct.unpack_from("<HB", data, off)
+        if ks >> 4 == S_STUCK:   # stuck: s16 x, s16 y, u8 angle
+            x, y, ang = struct.unpack_from("<hhB", data, off + 3)
+            arrows.append({"state": ks >> 4, "x": x, "y": y, "ang": ang * math.tau / 256.0})
+            off += 8
+        else:                    # in the air (P2): f32 x, y, vx, vy, u8 age, u8 owner
+            x, y, vx, vy, age, owner = struct.unpack_from("<ffffBB", data, off + 3)
+            arrows.append({"state": ks >> 4, "x": x, "y": y, "ang": math.atan2(vy, vx), "owner": owner})
+            off += 21
     return {"tick": tick, "phase": phase, "round": rnd, "goal": goal, "winner": winner,
             "walls": walls & 0x7FFF, "fighters": fighters, "arrows": arrows}
 

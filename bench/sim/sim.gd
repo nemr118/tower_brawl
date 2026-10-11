@@ -175,6 +175,7 @@ var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the
 var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
 var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
+var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
 var kind_weights: Array = [30, 17, 17, 17, 19]   # normal, fire, bomb, miasma, smoke
@@ -239,6 +240,10 @@ func start_round(seat_list: Array) -> void:
 		var tmp = spots[i]
 		spots[i] = spots[j]
 		spots[j] = tmp
+	if not fixed_spots.is_empty():
+		spots.clear()
+		for k in fixed_spots:
+			spots.append(level.spawns[int(k) % level.spawns.size()])
 	for i in seat_list.size():
 		var f := Fighter.new()
 		f.id = int(seat_list[i]["id"])
@@ -1099,6 +1104,19 @@ func walls_width() -> int:
 func walls_deadly() -> bool:
 	return walls_start > 0 and walls_melt_t < 0 and play_t >= walls_start + WALLS_DEADLY and walls_share > 0.0
 
+# ------------------------------------------------------------------ the arrows in the present (P2)
+# The client's copy (client/present.gd): n ticks of its arrows alone, by the same
+# arrow code. Its fighters stand still and only stop arrows (predicting is on).
+func fly_arrows(n: int) -> void:
+	for i in n:
+		tick += 1
+		for a in arrows:
+			_update_arrow(a)
+		_tinks()
+		for j in range(arrows.size() - 1, -1, -1):
+			if arrows[j].dead:
+				arrows.remove_at(j)
+
 # ------------------------------------------------------------------ snapshot
 func live_arrow_count() -> int:
 	var n := 0
@@ -1142,9 +1160,17 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 			continue
 		buf.put_u16(a.id)
 		buf.put_u8(a.kind | (a.state << 4))
-		buf.put_16(int(a.x))
-		buf.put_16(int(a.y))
-		buf.put_u8(int(fposmod(a.ang, TAU) / TAU * 256.0) & 255)
+		if a.state == P.S_STUCK:
+			buf.put_16(int(a.x))
+			buf.put_16(int(a.y))
+			buf.put_u8(int(fposmod(a.ang, TAU) / TAU * 256.0) & 255)
+		else:   # in the air: all a client needs to fly it on (P2, client/present.gd)
+			buf.put_float(a.x)
+			buf.put_float(a.y)
+			buf.put_float(a.vx)
+			buf.put_float(a.vy)
+			buf.put_u8(mini(a.t, 255))
+			buf.put_u8(a.owner & 255)
 	for z in zones:
 		buf.put_u8(z.kind)
 		buf.put_16(int(z.x))

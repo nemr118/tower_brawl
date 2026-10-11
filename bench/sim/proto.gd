@@ -5,9 +5,12 @@
 #   snapshot  u8 T_SNAP, u32 tick, u8 phase, u8 round, u16 phase ticks left, u8 goal,
 #             u8 winner (NO_ONE = none), u16 walls (each purple wall's width in px,
 #             + 0x8000 when they kill), u8 fighters, u16 arrows, u8 zones, u16 events,
-#             fighter x14 B, arrow x8 B, zone x9 B, event x7 B
+#             fighter x14 B, arrow x8 B (stuck) or x21 B (in the air), zone x9 B, event x7 B
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
+#   arrow     u16 id, u8 kind | state << 4, then stuck: s16 x, s16 y, u8 angle (256 steps);
+#             in the air (P2: the client flies it on to its own tick): f32 x, f32 y,
+#             f32 vx, f32 vy (px per tick), u8 age (ticks, at most 255), u8 owner (seat)
 #   input     (u8 T_INPUT, u32 tick, u8 buttons, u16 aim in 0.1 degree steps) x4 (the last 4 ticks).
 #             The tick is the server tick the input is for (P2): the client runs ahead
 #             of the server, and the server applies input N just before tick N.

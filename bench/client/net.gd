@@ -25,6 +25,7 @@ const H := 1080.0
 # the events whose a is a fighter (proto.gd); E_EXPLODE's a is the shooter, not the one hurt
 const FIGHTER_EVENTS := [P.E_JUMP, P.E_LAND, P.E_DODGE, P.E_SHOOT, P.E_DEATH, P.E_CATCH, P.E_PICKUP,
 	P.E_SPAWN, P.E_WALLJUMP, P.E_HURT, P.E_LEDGE, P.E_DRYFIRE]
+const ARROW_EVENTS := [P.E_STICK, P.E_TINK]
 
 var ws := WebSocketPeer.new()
 var url := ""
@@ -339,8 +340,16 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	for i in na:
 		var id := b.get_u16()
 		var ks := b.get_u8()
-		arrows[id] = {"kind": ks & 15, "state": ks >> 4, "x": float(b.get_16()), "y": float(b.get_16()),
-			"ang": b.get_u8() * TAU / 256.0}
+		if (ks >> 4) == P.S_STUCK:
+			arrows[id] = {"kind": ks & 15, "state": ks >> 4, "x": float(b.get_16()), "y": float(b.get_16()),
+				"ang": b.get_u8() * TAU / 256.0}
+		else:
+			var x := b.get_float()
+			var y := b.get_float()
+			var vx := b.get_float()
+			var vy := b.get_float()
+			arrows[id] = {"kind": ks & 15, "state": ks >> 4, "x": x, "y": y, "vx": vx, "vy": vy,
+				"ang": atan2(vy, vx), "age": b.get_u8(), "owner": b.get_u8()}
 	var zones: Array = []
 	for i in nz:
 		var z := {"kind": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()), "size": float(b.get_u16()),
@@ -386,7 +395,8 @@ func newest() -> Dictionary:
 # The events due at render tick rt. P2: with own_id (you are predicted), your own
 # fighter's events come at once, not at rt, and the kinds the prediction already
 # showed (`predicted`, client/predict.gd PREDICTED) are dropped; a stomp's jump
-# (E_JUMP with b = 1) is the server's and comes.
+# (E_JUMP with b = 1) is the server's and comes. The arrows' own events (a stick,
+# a tink) come at once too: the arrows are drawn in the present (client/present.gd).
 func take_events(rt: float, own_id: int = -1, predicted: Array = []) -> Array:
 	var out: Array = []
 	if own_id < 0:
@@ -399,7 +409,7 @@ func take_events(rt: float, own_id: int = -1, predicted: Array = []) -> Array:
 		if e[3] == own_id and FIGHTER_EVENTS.has(e[0]):
 			if not predicted.has(e[0]) or (e[0] == P.E_JUMP and e[4] == 1):
 				out.append(e)
-		elif item[0] <= rt + 2.0:
+		elif item[0] <= rt + 2.0 or ARROW_EVENTS.has(e[0]):
 			out.append(e)
 		else:
 			keep.append(item)

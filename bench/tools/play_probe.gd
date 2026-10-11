@@ -4,7 +4,7 @@
 #   godot --headless --path bench --script res://tools/play_probe.gd -- \
 #       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--start] [--idle]
 #       [--move] [--watch=SECONDS] [--token=abc] [--lag=MS] [--jitter=MS]
-#       [--predict [--exact=PCT]]
+#       [--predict [--exact=PCT]] [--shooter] [--catcher[=old]]
 # --start: press START once seated (the lobby needs 2 fighters: bots or others).
 # --move: at the first FIGHT, hold right for 60 ticks, then jump (held 30 ticks),
 #   then stand; the server's answer is checked against the same buttons run on a
@@ -18,6 +18,14 @@
 #   random buttons in every round (held 4 to 30 ticks: runs, jumps, drops,
 #   dodges, shots), START again in each lobby; at the end a line says how big the
 #   server's corrections were. --exact=95: fail unless 95% of them are 0 px.
+# --shooter / --catcher: the catch test (P2 step 3), two people, no bots (a server
+#   with --spots 2,3 puts them on the two ledge ends that face each other). The
+#   shooter stands and shoots at the other one every 90 ticks. The catcher stands
+#   and dodges up on the tick an arrow reaches its body as the page draws it: the
+#   arrows in the present (client/present.gd), or with --catcher=old as P1 drew it
+#   (the arrows at the draw clock, you from the newest snapshot).
+#   When the shooter's quiver is empty, the catcher shoots back to end the round.
+#   At the end: how many arrows reached it, caught or killed it.
 # Exit 0 when every expected thing happened, 1 otherwise. Lines start with 🧪.
 extends SceneTree
 
@@ -59,6 +67,10 @@ func _init() -> void:
 	mode_move = opts.has("move")
 	mode_idle = opts.has("idle")
 	mode_predict = opts.has("predict")
+	mode_shooter = opts.has("shooter")
+	mode_catcher = str(opts.get("catcher", "")) if opts.has("catcher") else ""
+	if mode_catcher == "true":
+		mode_catcher = "present"
 	pred = Predict.new()
 	rng.seed = int(opts.get("seed", 5))
 	watch_s = float(opts.get("watch", 0))
@@ -78,6 +90,8 @@ func _process(_delta: float) -> bool:
 		_on_message(m)
 	for o in net.take_owns():
 		pred.reconcile(o)
+	if mode_catcher != "":
+		_catch_events()
 	var s: Dictionary = net.newest()
 	if not s.is_empty():
 		if s["phase"] != phase:
@@ -95,8 +109,10 @@ func _process(_delta: float) -> bool:
 					print("🧪 [PlayProbe] move proof starts at x=%d y=%d: %s for %d ticks, then a held jump" % [x0, y0, "right" if run_dir > 0 else "left", run_ticks])
 			if phase == P.PH_LOBBY and seen["match_end"]:
 				seen["lobby_back"] = true
-			if phase == P.PH_LOBBY and mode_predict:
+			if phase == P.PH_LOBBY and (mode_predict or mode_shooter):
 				start_sent = false   # play on: START again
+			if phase == P.PH_PLAY:
+				play_ticks = 0
 		if script_t >= 0 and not move_done and s["by_id"].has(seat):
 			top_y = mini(top_y, int(s["by_id"][seat]["y"]))
 		if seat >= 0 and s["by_id"].has(seat) and s["by_id"][seat]["points"] > 0:
@@ -107,7 +123,7 @@ func _process(_delta: float) -> bool:
 		if up > limit:   # --idle --watch=N: sit there N seconds, that is the job
 			_finish(false)
 		return false
-	if mode_predict:
+	if mode_predict or mode_shooter or mode_catcher != "":
 		if up > limit:
 			_finish(false)
 		return false
@@ -137,6 +153,10 @@ func _physics_process(_delta: float) -> bool:
 			hold[2] -= 1
 			buttons = hold[0]
 			aim = hold[1]
+		elif (mode_shooter or mode_catcher != "") and phase == P.PH_PLAY:
+			var ba := _duel_buttons(t)
+			buttons = ba[0]
+			aim = ba[1]
 		pred.on_tick(t, buttons, aim)
 		net.send_input(buttons, aim, t)
 		inputs_sent += 1
@@ -154,6 +174,13 @@ func _physics_process(_delta: float) -> bool:
 
 var script_end_tick := 0
 var mode_predict := false
+var mode_shooter := false
+var mode_catcher := ""
+var present = preload("res://client/present.gd").new()
+var play_ticks := 0         # ticks run since FIGHT
+var reached := {}           # arrow id -> true: it reached the catcher as the chosen view drew it
+var caught := 0
+var killed := 0
 var pred
 var rng := RandomNumberGenerator.new()
 var hold := [0, 0, 0]
@@ -299,6 +326,8 @@ func _finish(timed_out: bool) -> void:
 	_clock_line()
 	if mode_predict:
 		_predict_line()
+	if mode_catcher != "":
+		_catch_line()
 	if watch_s > 0.0 and not mode_idle:
 		var want := {"round_end": seen["round_end"] > 0, "point": seen["point"] or seen["round_end"] > 0, "match_end": seen["match_end"], "lobby_back": seen["lobby_back"]}
 		for k in want:
@@ -357,3 +386,79 @@ func _predict_line() -> void:
 		"PASS" if ok else "FAIL", n, zero_pct, 100.0 * two / maxf(1.0, n), e[mini(n - 1, int(n * 0.99))] if n > 0 else 0.0,
 		e[n - 1] if n > 0 else 0.0, pred.jumps, int(Predict.SNAP_PX), pred.replayed / maxf(1.0, n),
 		(" (the bar: %.0f%% at 0 px)" % bar) if bar > 0.0 else ""])
+
+# The catch test's buttons for tick t (--shooter, --catcher).
+func _duel_buttons(t: int) -> Array:
+	play_ticks += 1
+	var s: Dictionary = net.newest()
+	if s.is_empty() or pred.me == null or pred.me.state == P.F_DEAD:
+		return [0, 0]
+	var other: Dictionary = {}
+	for f in s["fighters"]:
+		if int(f["id"]) != seat and int(f["state"]) != P.F_DEAD:
+			other = f
+	if other.is_empty():
+		return [0, 0]
+	var bow := Vector2(pred.me.x + 18.0, pred.me.y + 28.0)
+	var to := Vector2(SimScript.wrap_d(bow.x, other["x"] + 18.0, 1920.0), SimScript.wrap_d(bow.y, other["y"] + 31.0, 1080.0))
+	var aim := posmod(roundi(rad_to_deg(to.angle()) * 10.0), 3600)
+	if mode_shooter:
+		var cyc := play_ticks % 90
+		if play_ticks > 30 and cyc < 10 and pred.me.arrows > 0:
+			return [P.B_SHOOT, aim]
+		return [0, aim]
+	# the catcher stands; it dodges up (and lands back) on the tick an arrow reaches it
+	if _arrow_reaches_me(t) and pred.me.state == P.F_NORMAL and pred.me.dodge_cd == 0:
+		return [P.B_DODGE | P.B_UP, aim]
+	if int(other["arrows"]) == 0 and pred.me.arrows > 0 and play_ticks % 60 < 10:
+		return [P.B_SHOOT, aim]   # the shooter is empty: end the round
+	return [0, aim]
+
+# An enemy arrow in the air touches my body on tick t, as the chosen view draws it.
+func _arrow_reaches_me(t: int) -> bool:
+	var s: Dictionary = net.newest()
+	var arrows: Dictionary
+	var mx: float
+	var my: float
+	if mode_catcher == "old":
+		arrows = net.sample(net.render_tick())["arrows"]
+		if not s["by_id"].has(seat):
+			return false
+		mx = s["by_id"][seat]["x"]
+		my = s["by_id"][seat]["y"]
+	else:
+		arrows = present.arrows_at(s, t, pred.me, seat, [], [], 0.0)
+		mx = pred.me.x
+		my = pred.me.y
+	var hit := false
+	for id in arrows:
+		var a: Dictionary = arrows[id]
+		if int(a["state"]) != P.S_FLY or int(a.get("owner", -1)) == seat:
+			continue
+		if mode_catcher == "old" and int(s["arrows"].get(id, {}).get("owner", -1)) == seat:
+			continue
+		var dx := SimScript.wrap_d(mx, a["x"], 1920.0)
+		var dy := SimScript.wrap_d(my, a["y"], 1080.0)
+		if dx >= -4.0 and dx <= 40.0 and dy >= -4.0 and dy <= 67.0:
+			if not reached.has(id):
+				reached[id] = true
+			hit = true
+	return hit
+
+func _catch_events() -> void:
+	for e in net.take_events(1e12):
+		if e[3] != seat:
+			continue
+		if e[0] == P.E_CATCH:
+			caught += 1
+		elif e[0] == P.E_DEATH and e[4] == 1:
+			killed += 1
+
+func _catch_line() -> void:
+	var n := reached.size()
+	var ok: bool = mode_catcher == "old" or (n >= 5 and caught >= n and killed == 0)
+	if not ok:
+		fails += 1
+	print("🧪 [PlayProbe] %s catches (%s view, lag %d ms): %d arrows reached me as drawn; I dodged on that tick: %d caught, %d killed me" % [
+		"REPORT" if mode_catcher == "old" else ("PASS" if ok else "FAIL"), "P1's old" if mode_catcher == "old" else "the present",
+		int(net.lag_ms), n, caught, killed])

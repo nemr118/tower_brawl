@@ -6,12 +6,14 @@
 # writes a line every REPORT_S seconds about its own cost.
 #   godot --headless --path bench res://server/game_server.tscn -- \
 #       [--port 8091] [--no-tls] [--cert <pem>] [--key <pem>] [--bots 7]
-#       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet]
+#       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet] [--spots 2,3]
 #       [--net-thread 0|1] [--net-sleep-ms 4]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
+# --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
+#   second on 3 (sim/level.gd spawns), not shuffled (play_probe's catch test).
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -158,6 +160,9 @@ func _ready() -> void:
 	sim.respawn = false
 	sim.power_arrows = o.has("power-arrows")
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
+	if o.has("spots"):
+		for k in str(o["spots"]).split(",", false):
+			sim.fixed_spots.append(int(k))
 	for i in SEATS:
 		var s := Seat.new()
 		s.i = i

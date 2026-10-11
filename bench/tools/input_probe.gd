@@ -7,6 +7,8 @@ extends SceneTree
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const Predict = preload("res://client/predict.gd")
+const Present = preload("res://client/present.gd")
+const Net = preload("res://client/net.gd")
 
 var fails := 0
 
@@ -24,6 +26,7 @@ func _init() -> void:
 	_spawns_apart()
 	_state_round_trip()
 	_prediction_alone()
+	_arrows_in_the_present()
 	if fails == 0:
 		print("✅ input_probe: every check passed")
 		quit(0)
@@ -533,3 +536,52 @@ func _prediction_alone() -> void:
 	_check("the prediction alone is never wrong (inputs 4 ticks ahead, T_OWN 6 ticks late)",
 		pred.errors.size() > 800 and worst == 0.0 and pred.jumps == 0,
 		"%d corrections checked, the worst %.1f px, %d jumps, %d ticks run again" % [pred.errors.size(), worst, pred.jumps, pred.replayed])
+
+# P2: the arrows in the present (client/present.gd). The benchmark's 8 bots shoot
+# plain arrows for 50 s; each snapshot is read as the page reads it (net.gd) and
+# flown on 6 ticks, then set beside where the server really has each arrow 6
+# ticks later. Only an arrow that met a fighter in those ticks may differ.
+func _arrows_in_the_present() -> void:
+	var server = SimScript.new(8, 24, 11)
+	server.power_arrows = false
+	var reader = Net.new()
+	var present = Present.new()
+	var k := 6
+	var hist := {}
+	var snaps := {}
+	var errs := PackedFloat32Array()
+	var buf := StreamPeerBuffer.new()
+	for t in 3000:
+		server.step()
+		server.take_events()
+		var pos := {}
+		for a in server.arrows:
+			if not a.dead:
+				pos[a.id] = Vector2(a.x, a.y)
+		hist[server.tick] = pos
+		if server.tick % 2 != 0:
+			continue
+		server.write_snapshot(buf, [])
+		reader._on_snapshot(buf.data_array)
+		snaps[server.tick] = reader.newest()
+		var old: int = server.tick - k
+		if not snaps.has(old):
+			continue
+		var flown: Dictionary = present.arrows_at(snaps[old], server.tick, null, -1, [], [], 0.0)
+		for id in flown:
+			if pos.has(id) and int(snaps[old]["arrows"].get(id, {}).get("state", P.S_STUCK)) != P.S_STUCK:
+				var e := Vector2(SimScript.wrap_d(pos[id].x, flown[id]["x"], 1920.0), SimScript.wrap_d(pos[id].y, flown[id]["y"], 1080.0)).length()
+				errs.append(e)
+		snaps.erase(old)
+		hist.erase(old - 2)
+	errs.sort()
+	var n := errs.size()
+	var exact := 0
+	for e in errs:
+		if e <= 0.5:
+			exact += 1
+	var pct := 100.0 * exact / maxf(1.0, n)
+	_check("an arrow flown on 6 ticks from a snapshot is where the server has it (the arrows in the present)",
+		n > 1000 and pct >= 95.0,
+		"%d arrows in the air compared: %.1f%% within 0.5 px, p99 %.1f px, the worst %.1f px (the rest met a fighter on the way); %d bytes a snapshot" % [
+			n, pct, errs[mini(n - 1, int(n * 0.99))] if n > 0 else 0.0, errs[n - 1] if n > 0 else 0.0, buf.data_array.size()])
