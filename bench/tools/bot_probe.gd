@@ -178,7 +178,7 @@ func _rounds(n: int, count: int, seed_value: int, png_dir: String) -> void:
 func _wall_between(sim, f) -> bool:
 	if f == null:
 		return false
-	var o = sim._nearest_enemy(f)
+	var o = SimScript.BrainScript.nearest_enemy(sim, f)
 	if o == null:
 		return false
 	var ox := float(f.x + SimScript.HALF_W)

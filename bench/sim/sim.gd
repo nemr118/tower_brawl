@@ -11,7 +11,8 @@
 # blow up, miasma leaves a poison cloud). TowerFall's numbers are px per frame
 # at 60 fps; x4.5 gives ours (a 63 px body in 1920 x 1080).
 # A person's seat gets its buttons through apply_input(); a seat with no person
-# is played by the bot brain (_brain). P1 (2026-10-10, first-playable-plan.md).
+# is played by the bot brain (sim/brain.gd, G6), which presses buttons through
+# apply_input too. P1 (2026-10-10, first-playable-plan.md).
 # The game turns on the purple walls (walls_start, TowerFall's miasma): from 25 s
 # after FIGHT they close in from the left and right edges and end a long round.
 # P2: the client runs a copy for its own fighter (client/predict.gd) with
@@ -22,6 +23,7 @@ extends RefCounted
 
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
+const BrainScript = preload("res://sim/brain.gd")
 
 const S := 4.5
 const RUN_MAX := 1.5 * S            # Player.cs MAX_RUN
@@ -90,8 +92,6 @@ const MID_Y := 31
 const ARROW_Y := 28                 # the arrow leaves the body this far below its top
 const W := 1920
 const H := 1080
-const DODGE_DIRS := [Vector2(1, 0), Vector2(-1, 0), Vector2(0, -1), Vector2(0.7071, -0.7071),
-	Vector2(-0.7071, -0.7071), Vector2(0.7071, 0.7071), Vector2(-0.7071, 0.7071)]
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -135,6 +135,7 @@ class Fighter:
 	var rolling: bool = false
 	var in_smoke: bool = false
 	var buttons: int = 0        # the last buttons applied, for the press edges
+	var mind = null             # the bot brain's memory (sim/brain.gd Mind)
 
 class Arrow:
 	var id: int = 0
@@ -213,6 +214,10 @@ func step() -> void:
 	tick += 1
 	if not frozen:
 		play_t += 1
+	if not frozen:
+		for f in fighters:
+			if f.bot and f.state != P.F_DEAD:
+				_brain(f)
 	for f in fighters:
 		_update_fighter(f)
 	_stomps()
@@ -496,8 +501,6 @@ func _update_fighter(f: Fighter) -> void:
 		f.coyote -= 1
 	if f.dodge_cd > 0:
 		f.dodge_cd -= 1
-	if f.bot and not frozen and (f.state == P.F_NORMAL or f.state == P.F_DODGE):
-		_brain(f)
 	if f.state == P.F_HURT:
 		f.dodge_t -= 1
 		if f.on_ground:
@@ -564,7 +567,7 @@ func _update_fighter(f: Fighter) -> void:
 					f.state = P.F_LEDGE
 					f.state_t = 0
 					f.aiming = false
-					f.ledge_t = rng.randi_range(12, 40) if f.bot else 8
+					f.ledge_t = 8   # bots too (G6: a move from the route map replays exactly)
 					f.facing = f.wall
 					f.y = top + 6
 					f.ry = 0.0
@@ -623,65 +626,10 @@ func _update_fighter(f: Fighter) -> void:
 	f.y = posmod(f.y, H)
 	_fighter_zones(f)
 
+# A bot seat's buttons for this tick (sim/brain.gd presses them through
+# apply_input). A hook of its own so the probes can time it.
 func _brain(f: Fighter) -> void:
-	if f.wait_t > 0:   # the round's first moment: stand still, people move first
-		f.wait_t -= 1
-		f.move_dir = 0
-		f.want_jump = false
-		return
-	if f.shoot_cd > 0:
-		f.shoot_cd -= 1
-	var tgt: Fighter = _nearest_enemy(f)
-	f.think_t -= 1
-	if f.think_t <= 0:
-		f.think_t = rng.randi_range(10, 36)
-		if tgt != null and rng.randf() < 0.75:
-			var dx := wrap_d(f.x, tgt.x, W)
-			var dy := wrap_d(f.y, tgt.y, H)
-			if f.arrows == 0:
-				var st: Arrow = _nearest_loose_arrow(f)
-				if st != null:
-					dx = wrap_d(f.x + HALF_W, st.x, W)
-					dy = wrap_d(f.y + BODY_H, st.y, H)
-			f.move_dir = (1 if dx > 0.0 else -1) if absf(dx) > 50.0 else rng.randi_range(-1, 1)
-			if dy < -80.0 and rng.randf() < 0.7:
-				f.want_jump = true
-				f.hold_jump = rng.randi_range(6, 16)
-			if dy > 100.0 and rng.randf() < 0.5:
-				f.drop_t = 12
-				f.want_jump = true
-		else:
-			f.move_dir = rng.randi_range(-1, 1)
-			if rng.randf() < 0.35:
-				f.want_jump = true
-				f.hold_jump = 14
-	if walls_share > 0.0:   # the purple walls are coming: head for the middle
-		var reach := walls_width() + WALLS_KEEP_AWAY
-		if f.x + HALF_W < reach:
-			f.move_dir = 1
-		elif f.x + HALF_W > W - reach:
-			f.move_dir = -1
-	if f.move_dir != 0 and f.on_ground and box_hits_solid(f.x + f.move_dir * 4, f.y, BODY_W, BODY_H):
-		f.want_jump = true
-		f.hold_jump = 16
-	if f.wall != 0 and rng.randf() < 0.1:
-		f.want_jump = true
-		f.hold_jump = 12
-	# falling next to a wall: lean into it now and then (wall slides, ledge grabs)
-	if not f.on_ground and f.vy > 2.0 and f.state == P.F_NORMAL and rng.randf() < 0.3:
-		for dir in [-1, 1]:
-			if box_hits_solid(f.x + dir * 30, f.y, BODY_W, BODY_H):
-				f.move_dir = dir
-				break
-	if f.state != P.F_DODGE and f.dodge_cd == 0:
-		if (rng.randf() < 0.4 and _arrow_incoming(f)) or rng.randf() < 0.004:
-			_start_dodge(f, DODGE_DIRS[rng.randi() % DODGE_DIRS.size()])
-			return
-	if tgt != null and f.arrows > 0 and f.shoot_cd == 0 and f.state != P.F_DODGE and rng.randf() < 0.05:
-		var ax := wrap_d(f.x, tgt.x, W)
-		var ay := wrap_d(f.y, tgt.y, H) - 20.0
-		_shoot(f, atan2(ay, ax) + rng.randf_range(-0.12, 0.12), _pick_kind() if power_arrows else P.A_NORMAL)
-		f.shoot_cd = rng.randi_range(20, 50)
+	BrainScript.think(self, f)
 
 func _pick_kind() -> int:
 	var total := 0
@@ -693,48 +641,6 @@ func _pick_kind() -> int:
 		if r < 0:
 			return i
 	return 0
-
-func _nearest_enemy(f: Fighter) -> Fighter:
-	var best: Fighter = null
-	var bd := INF
-	for o in fighters:
-		if o == f or o.state == P.F_DEAD:
-			continue
-		var dx := wrap_d(f.x, o.x, W)
-		var dy := wrap_d(f.y, o.y, H)
-		var d := dx * dx + dy * dy
-		if o.in_smoke and d > 22500.0:
-			continue
-		if d < bd:
-			bd = d
-			best = o
-	return best
-
-func _nearest_loose_arrow(f: Fighter) -> Arrow:
-	var best: Arrow = null
-	var bd := INF
-	for a in arrows:
-		if a.dead or a.state != P.S_STUCK or a.fuse > 0:
-			continue
-		var dx := wrap_d(f.x + HALF_W, a.x, W)
-		var dy := wrap_d(f.y + BODY_H, a.y, H)
-		var d := dx * dx + dy * dy
-		if d < bd:
-			bd = d
-			best = a
-	return best
-
-func _arrow_incoming(f: Fighter) -> bool:
-	var cx := float(f.x + HALF_W)
-	var cy := float(f.y + MID_Y)
-	for a in arrows:
-		if a.dead or a.state != P.S_FLY or a.owner == f.id:
-			continue
-		var dx := wrap_d(a.x, cx, W)
-		var dy := wrap_d(a.y, cy, H)
-		if dx * dx + dy * dy < 40000.0 and dx * a.vx + dy * a.vy > 0.0:
-			return true
-	return false
 
 # A dodge the way d points (8 ways; nothing = the way the fighter faces). On the
 # ground a downward dodge becomes a faster slide along the floor.
@@ -1204,7 +1110,7 @@ func fighter_flags(f: Fighter) -> int:
 # Everything the next ticks of a person's fighter depend on, for T_OWN (proto.gd):
 # the server writes it after each snapshot, and the client's prediction reads it
 # and replays its own inputs from it (client/predict.gd). Left out: the seat,
-# bot and connected, points, killer, and the brain's think_t, wait_t, shoot_cd.
+# bot and connected, points, killer, and the brain's think_t, wait_t, shoot_cd, mind.
 # A new Fighter field that moves a fighter goes in both functions; input_probe
 # runs a read-back copy beside the original to catch one that is missing.
 func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
