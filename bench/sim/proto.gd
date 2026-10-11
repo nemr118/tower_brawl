@@ -4,7 +4,8 @@
 # All binary, little endian.
 #   snapshot  u8 T_SNAP, u32 tick, u8 phase, u8 round, u16 phase ticks left, u8 goal,
 #             u8 winner (NO_ONE = none), u16 walls (each purple wall's width in px,
-#             + 0x8000 when they kill), u8 fighters, u16 arrows, u8 zones, u16 events,
+#             + 0x8000 when they kill), u8 arena (G5: the layout in sim/level.gd),
+#             u8 fighters, u16 arrows, u8 zones, u16 events,
 #             fighter x14 B, arrow x8 B (stuck) or x21 B (in the air), zone x9 B, event x7 B
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
@@ -23,7 +24,7 @@
 #             after ROUND START; 0 when that is not ahead), then the fighter's whole
 #             state (sim.gd write_fighter_state) when OWN_FIGHTER. To each seated person
 #             after each snapshot (P2: their clock, prediction and reconciliation).
-# Text frames are JSON, {"kind": ...}: hello, join, leave, start, bots, name from a
+# Text frames are JSON, {"kind": ...}: hello, join, leave, start, bots, arena, name from a
 # client; welcome, version_error, full, seats, round_end, match_end from the server
 # (the fields are listed in server/game_server.gd). The benchmark adds bench_card.
 extends RefCounted
@@ -59,6 +60,7 @@ const PH_PLAY := 3
 const PH_ROUND_END := 4   # one fighter left (1.5 s), or none (a draw)
 const PH_MATCH_END := 5   # the winner, 7 s, then the lobby
 const NO_ONE := 255
+const ARENA_MIX := -1     # the lobby's ARENA (G5): MIX, the arenas take turns each round; else one layout
 
 # fighter states
 const F_NORMAL := 0

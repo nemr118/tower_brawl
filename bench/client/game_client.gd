@@ -17,7 +17,8 @@
 # Options (desktop: --key=value after --; web: ?key=value in the URL):
 #   server=wss://host:8091  name=Ava  look=t2 (a test look, world.gd VARIANTS: no
 #   setting, no step-down)  join  start
-#   bots=N  info (the version, fps and ping at the bottom)  bench (the old
+#   bots=N  arena=N (the lobby's ARENA once seated: -1 MIX, 1 THE KEEP, 2 THE
+#   BRIDGES, 0 the bench)  info (the version, fps and ping at the bottom)  bench (the old
 #   benchmark page instead, with its own options)  lag=MS jitter=MS (a test
 #   knob: every packet sent and got waits MS/2, plus up to jitter, client/net.gd)
 #   slow=MS (a test knob: every frame takes at least MS, for the step-down)
@@ -27,6 +28,7 @@ extends Node
 const P = preload("res://sim/proto.gd")
 const Net = preload("res://client/net.gd")
 const World = preload("res://client/world.gd")
+const LevelScript = preload("res://sim/level.gd")
 const Hud = preload("res://client/hud.gd")
 const Lobby = preload("res://client/lobby.gd")
 const Sticks = preload("res://client/touch_sticks.gd")
@@ -67,6 +69,7 @@ var auto_join := false
 var auto_start := false
 var start_sent := false
 var bots_sent := false
+var arena_sent := false
 var aim_deg10 := 0
 var shoot_held := false
 var fps_frames := 0
@@ -119,6 +122,7 @@ func _ready() -> void:
 	lobby.start_pressed.connect(_on_start)
 	lobby.bots_changed.connect(_on_bots)
 	lobby.look_pressed.connect(_on_look)
+	lobby.arena_pressed.connect(_on_arena)
 	lobby.set_look(str(opts["look"]) if look_test else look)
 	sticks = Sticks.new()
 	add_child(sticks)
@@ -394,9 +398,13 @@ func _on_message(m: Dictionary) -> void:
 		if my_seat < 0 and auto_join:
 			auto_join = false
 			_on_join(my_name)
-		elif my_seat >= 0 and opts.has("bots") and not bots_sent:
-			bots_sent = true
-			net.send({"kind": "bots", "n": int(opts["bots"])})
+		elif my_seat >= 0:
+			if opts.has("bots") and not bots_sent:
+				bots_sent = true
+				net.send({"kind": "bots", "n": int(opts["bots"])})
+			if opts.has("arena") and not arena_sent:
+				arena_sent = true
+				net.send({"kind": "arena", "n": int(opts["arena"])})
 	elif kind == "version_error":
 		version_bad = true
 		status = "WRONG VERSION: this page is %s, the server runs %s. Reload the page." % [m.get("yours", "?"), m.get("server", "?")]
@@ -431,6 +439,12 @@ func _on_leave() -> void:
 
 func _on_start() -> void:
 	net.send({"kind": "start"})
+
+# The lobby's ARENA button: MIX, then each arena of LevelScript.PLAY, then MIX (G5).
+func _on_arena() -> void:
+	var order: Array = [P.ARENA_MIX] + LevelScript.PLAY
+	var i := order.find(int(seats_msg.get("arena", P.ARENA_MIX)))
+	net.send({"kind": "arena", "n": order[(i + 1) % order.size()]})
 
 func _on_bots(n: int) -> void:
 	net.send({"kind": "bots", "n": n})

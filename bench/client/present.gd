@@ -47,6 +47,7 @@ func _init() -> void:
 func arrows_at(snap: Dictionary, tick: int, me, my_seat: int, shown: Array, own_arrows: Array, delta: float) -> Dictionary:
 	if snap.is_empty():
 		return {}
+	sim.set_arena(int(snap.get("arena", sim.level.id)))   # G5: the arrows fly in the round's arena
 	var s: int = snap["tick"]
 	if s != base_tick:
 		_rebuild(snap, me, my_seat)

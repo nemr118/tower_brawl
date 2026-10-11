@@ -19,6 +19,7 @@ const EMPTY := 0
 const SOLID := 1
 const LEDGE := 2
 const BENCH := 0
+const PLAY := [1, 2]          # the arenas the lobby offers (MIX takes them in turn); the bench is the test arena
 
 # [x, y, w, h, kind, mirror] in cells
 const PIECES := [

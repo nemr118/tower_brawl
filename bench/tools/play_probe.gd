@@ -2,10 +2,12 @@
 # takes a seat, and either stands still, runs the move proof, or watches the
 # match and reports what happened. The first-playable plan, 3.7.
 #   godot --headless --path bench --script res://tools/play_probe.gd -- \
-#       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--start] [--idle]
+#       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--arena=N] [--start] [--idle]
 #       [--move] [--watch=SECONDS] [--token=abc] [--lag=MS] [--jitter=MS]
 #       [--predict [--exact=PCT]] [--shooter] [--catcher[=old]]
 # --start: press START once seated (the lobby needs 2 fighters: bots or others).
+# --arena=N: the lobby's ARENA once seated (-1 MIX, 1 THE KEEP, 2 THE BRIDGES, 0
+#   the bench); the move proof's local copy runs on the round's arena (G5).
 # --move: at the first FIGHT, hold right for 60 ticks, then jump (held 30 ticks),
 #   then stand; the server's answer is checked against the same buttons run on a
 #   local copy of the simulation from the same spot. --watch=N: stay up to N s
@@ -19,7 +21,8 @@
 #   dodges, shots), START again in each lobby; at the end a line says how big the
 #   server's corrections were. --exact=95: fail unless 95% of them are 0 px.
 # --shooter / --catcher: the catch test (P2 step 3), two people, no bots (a server
-#   with --spots 2,3 puts them on the two ledge ends that face each other). The
+#   with --arena bench --spots 2,3 puts them on the bench arena's two ledge ends
+#   that face each other: the new arenas have no spawn spots in a clear line). The
 #   shooter stands and shoots at the other one every 90 ticks. The catcher stands
 #   and dodges up on the tick an arrow reaches its body as the page draws it: the
 #   arrows in the present (client/present.gd), or with --catcher=old as P1 drew it
@@ -47,6 +50,7 @@ var mode_move := false
 var mode_idle := false
 var start_sent := false
 var bots_sent := false
+var arena_sent := false
 var script_t := -1
 var x0 := 0
 var y0 := 0
@@ -228,7 +232,7 @@ func _pick_run() -> void:
 		run_dir = cand[0]
 		run_ticks = cand[1]
 		var r := _local_run()
-		if r["ground"] and r["rise"] >= 140:
+		if r["ground"] and r["rise"] >= 140 and absi(int(r["dx"])) > 100:   # G5: a run a wall stops short is no proof
 			clear_jump = true
 			return
 	run_dir = 1
@@ -239,6 +243,7 @@ func _pick_run() -> void:
 # {dx, rise, ground (on the ground when the jump came)}.
 func _local_run() -> Dictionary:
 	var sim = SimScript.new(0, 24, 7)
+	sim.set_arena(int(net.newest().get("arena", 0)))   # G5: the round's arena
 	sim.respawn = false
 	sim.start_round([{"id": 0, "bot": false}])
 	var f = sim.fighters[0]
@@ -268,7 +273,7 @@ func _judge_move() -> void:
 	var lrise: int = local["rise"]
 	var ok_dx := absi(dx - ldx) <= 1    # P2: the inputs land on their ticks, so the server matches the local sim
 	var ok_rise := absi(rise - lrise) <= 1
-	move_ok = ok_dx and ok_rise and absi(dx) > 100 and (rise > 140 or not clear_jump)
+	move_ok = ok_dx and ok_rise and ((absi(dx) > 100 and rise > 140) or not clear_jump)
 	if not move_ok:
 		fails += 1
 	print("🧪 [PlayProbe] %s move proof: %s %d ticks then a held jump: the server moved me %d px (local sim %d, ±1) and I rose %d px (local sim %d, ±1)%s" % [
@@ -287,6 +292,9 @@ func _on_message(m: Dictionary) -> void:
 			if opts.has("bots") and not bots_sent:
 				bots_sent = true
 				net.send({"kind": "bots", "n": int(opts["bots"])})
+			if opts.has("arena") and not arena_sent:
+				arena_sent = true
+				net.send({"kind": "arena", "n": int(opts["arena"])})
 	elif kind == "version_error":
 		print("🧪 [PlayProbe] FAIL: version_error (server %s, mine %s)" % [m.get("server"), m.get("yours")])
 		fails += 1

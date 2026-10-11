@@ -36,6 +36,7 @@ var snaps: Array = []          # decoded snapshots, oldest first
 var events: Array = []         # [tick, event]
 var messages: Array = []       # JSON dictionaries from the server, oldest first
 var owns: Array = []           # decoded T_OWN, oldest first (the client drains them)
+var last_arena := 0            # the newest snapshot's arena (G5)
 var tick_offset := 0.0
 var have_clock := false
 var client_tick := 0           # the benchmark's input counter (send_input with no tick)
@@ -289,7 +290,8 @@ func _judge_margins(now: float) -> void:
 
 func _on_own(pkt: PackedByteArray) -> void:
 	var o := {"tick": pkt.decode_u32(1), "used": pkt.decode_u32(5), "margin": pkt.decode_s8(9),
-		"late": pkt[10], "flags": pkt[11], "moves_from": pkt.decode_u32(12), "pkt": pkt, "at": 16}
+		"late": pkt[10], "flags": pkt[11], "moves_from": pkt.decode_u32(12), "pkt": pkt, "at": 16,
+		"arena": last_arena}   # the server sends the snapshot first, so this is the arena of its tick
 	owns.append(o)
 	while owns.size() > 64:
 		owns.pop_front()
@@ -324,6 +326,8 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	var walls := b.get_u16()
 	s["walls"] = float(walls & 0x7FFF)
 	s["walls_deadly"] = (walls & P.WALLS_DEADLY_BIT) != 0
+	s["arena"] = b.get_u8()
+	last_arena = s["arena"]
 	var nf := b.get_u8()
 	var na := b.get_u16()
 	var nz := b.get_u8()
@@ -472,7 +476,7 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 				"y": _wlerp(aa["y"], ab["y"], t, H), "ang": ab["ang"]}
 		else:
 			arrows[id] = ab
-	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"],
+	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"], "arena": b.get("arena", 0),
 		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false)}
 
 # The network numbers since the last call, for a bench card.

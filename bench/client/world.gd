@@ -339,6 +339,23 @@ func _build_tiles(layer: TileMapLayer, tex: Texture2D) -> void:
 			src.create_tile(Vector2i(x, y))
 	ts.add_source(src, 0)
 	layer.tile_set = ts
+	_fill_tiles(layer)
+
+# Another arena (sim/level.gd, G5): its tiles and its torches move to it. The
+# page follows the arena of the snapshot it draws (render).
+func set_arena(n: int) -> void:
+	level = LevelScript.new(n)
+	for layer in [tiles_plain, tiles_lit]:
+		layer.clear()
+		_fill_tiles(layer)
+	for i in mini(torches.size(), level.torches.size()):
+		var p: Vector2 = level.torches[i]
+		torches[i][0].position = p
+		torches[i][1].position = p + Vector2(0, -30)
+		torches[i][2].position = p + Vector2(0, -34)
+		torches[i][3].position = p + Vector2(0, -32)
+
+func _fill_tiles(layer: TileMapLayer) -> void:
 	for cy in level.ROWS:
 		for cx in level.COLS:
 			var c: int = level.cell(cx, cy)
@@ -466,6 +483,8 @@ func render(s: Dictionary, delta: float) -> void:
 	time += delta
 	if s.is_empty():
 		return
+	if int(s.get("arena", level.id)) != level.id:
+		set_arena(int(s["arena"]))
 	if copies > 1:
 		s = _copied(s, copies)
 	var fl: Array = s["fighters"]

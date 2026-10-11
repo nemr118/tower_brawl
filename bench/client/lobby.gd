@@ -1,6 +1,6 @@
-# The lobby: your name, JOIN or LEAVE, the 8 seats, the bots, the look (LOW,
-# NORMAL or HIGH: P2's quality setting, kept on the device), START and the
-# countdown, and a status line. Built from Controls on a 1920 x 1080 design,
+# The lobby: your name, JOIN or LEAVE, the 8 seats, the arena (G5: MIX or one
+# of them, for everyone), the look (LOW, NORMAL or HIGH: P2's quality setting,
+# kept on the device), the bots, START and the countdown, and a status line. Built from Controls on a 1920 x 1080 design,
 # scaled to the window's height and centred. Shown when you have no seat and
 # between matches; the arena shows through behind it.
 extends CanvasLayer
@@ -10,9 +10,11 @@ signal leave_pressed
 signal start_pressed
 signal bots_changed(n: int)
 signal look_pressed
+signal arena_pressed
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
+const LevelScript = preload("res://sim/level.gd")
 const HELP_PC := "PC: A D run · W or space jumps · S down, S + jump drops through a ledge · shift dodges the way you hold · hold the mouse button to aim, let go to fire"
 const HELP_PHONE := "Phone: left stick runs, push it up to jump, down + past the rim to drop · right stick aims, let go to fire · DODGE button, or flick the left stick past its rim"
 
@@ -26,6 +28,7 @@ var bots_minus := Button.new()
 var bots_plus := Button.new()
 var start_btn := Button.new()
 var look_btn := Button.new()
+var arena_btn := Button.new()
 var status_label := Label.new()
 var help := Label.new()
 var seated := false
@@ -58,22 +61,24 @@ func _init() -> void:
 	_button(join_btn, "JOIN", Vector2(1020, 224), Vector2(420, 72), 36)
 	join_btn.pressed.connect(_on_join_btn)
 	for i in 8:
-		var y := 324.0 + i * 60.0
+		var y := 322.0 + i * 52.0
 		var swatch := ColorRect.new()
 		swatch.color = World.TEAM[i]
-		swatch.position = Vector2(470, y + 10)
+		swatch.position = Vector2(470, y + 6)
 		swatch.size = Vector2(40, 40)
 		swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(swatch)
 		var lab := Label.new()
-		_label(lab, "", Vector2(530, y), Vector2(910, 60), 32, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT)
+		_label(lab, "", Vector2(530, y), Vector2(910, 52), 32, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT)
 		rows.append([swatch, lab])
+	_button(arena_btn, "ARENA: MIX", Vector2(470, 742), Vector2(540, 64), 28)
+	arena_btn.pressed.connect(func(): arena_pressed.emit())
 	_label(bots_label, "BOTS: 7", Vector2(470, 818), Vector2(220, 70), 34, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT)
 	_button(bots_minus, "-", Vector2(690, 818), Vector2(70, 70), 40)
 	_button(bots_plus, "+", Vector2(770, 818), Vector2(70, 70), 40)
 	bots_minus.pressed.connect(func(): bots_changed.emit(bots_wanted - 1))
 	bots_plus.pressed.connect(func(): bots_changed.emit(bots_wanted + 1))
-	_button(look_btn, "LOOK", Vector2(852, 818), Vector2(158, 70), 22)
+	_button(look_btn, "LOOK", Vector2(1020, 742), Vector2(420, 64), 28)
 	look_btn.pressed.connect(func(): look_pressed.emit())
 	_button(start_btn, "START", Vector2(1020, 812), Vector2(420, 84), 44)
 	start_btn.pressed.connect(func(): start_pressed.emit())
@@ -175,6 +180,9 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 	var in_lobby := phase == P.PH_LOBBY
 	bots_minus.disabled = not seated or not in_lobby or bots_wanted <= 0
 	bots_plus.disabled = not seated or not in_lobby or bots_wanted >= 7
+	var pick := int(m.get("arena", P.ARENA_MIX))
+	arena_btn.text = "ARENA: %s" % ("MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick))
+	arena_btn.disabled = not seated or not in_lobby
 	if phase == P.PH_COUNTDOWN:
 		start_btn.text = "STARTING IN %d" % ceili(left / 60.0)
 		start_btn.disabled = true

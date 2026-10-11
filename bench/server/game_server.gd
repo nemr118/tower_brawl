@@ -7,13 +7,18 @@
 #   godot --headless --path bench res://server/game_server.tscn -- \
 #       [--port 8091] [--no-tls] [--cert <pem>] [--key <pem>] [--bots 7]
 #       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet] [--spots 2,3]
+#       [--arena mix|keep|bridges|bench|N]
 #       [--net-thread 0|1] [--net-sleep-ms 4]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
-#   second on 3 (sim/level.gd spawns), not shuffled (play_probe's catch test).
+#   second on 3 (sim/level.gd spawns), not shuffled (play_probe's catch test, on
+#   the bench arena: --arena bench).
+# --arena: the lobby's ARENA to start with (G5): mix (the default: THE KEEP and
+#   THE BRIDGES take turns each round), keep, bridges, or bench (the test arena,
+#   not in the lobby's list), or a layout number. The lobby can change it.
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -24,10 +29,12 @@
 # the simulation. They trade messages under net_mutex: net_in (open, text, input,
 # close) comes up, net_out (a snapshot for all, a JSON text for one) goes down.
 # The JSON (text frames). From a client: hello {name, version, token},
-# join {name}, leave, start, bots {n}, name {name}. From the server:
-# welcome {seat, version, name, phase}, version_error {server, yours}, full,
-# note {text}, seats {phase, round, goal, bots, bots_wanted, people, seats: [
-# {i, name, kind, on, points, crowns, in}]}, round_end {round, winner, name,
+# join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
+# name {name}. From the server: welcome {seat, version, name, phase},
+# version_error {server, yours}, full, note {text}, seats {phase, round, goal,
+# bots, bots_wanted, people, arena (the pick), arena_now (the round's, or the
+# next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
+# round_end {round, winner, name,
 # draw, points}, match_end {winner, name, points}.
 # Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s), and
 # tagged lines on stdout: [NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH].
@@ -104,6 +111,8 @@ var round_no := 0
 var goal := 0
 var winner := P.NO_ONE
 var bots_wanted := MAX_BOTS
+var arena_pick := P.ARENA_MIX    # the lobby's ARENA (G5): MIX or one layout of sim/level.gd
+var mix_i := 0                   # MIX: the next arena in LevelScript.PLAY
 var goal_override := 0
 var seats_dirty := true
 var next_client_id := 1
@@ -163,6 +172,9 @@ func _ready() -> void:
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):
 			sim.fixed_spots.append(int(k))
+	if o.has("arena"):
+		arena_pick = _arena_arg(str(o["arena"]))
+	sim.set_arena(_next_arena())   # the lobby shows the arena that comes next
 	for i in SEATS:
 		var s := Seat.new()
 		s.i = i
@@ -186,14 +198,14 @@ func _ready() -> void:
 	sec_start_ms = started_ms
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
 		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "goal_override": goal_override,
-		"walls_s": sim.walls_start / 60,
+		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick),
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(),
 		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
-	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots fill the empty seats, power arrows %s, %s, cpu %s x%d, report in %s" % [
+	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots fill the empty seats, power arrows %s, %s, arena %s, cpu %s x%d, report in %s" % [
 		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, "on" if sim.power_arrows else "off",
-		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls",
+		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls", _arena_label(arena_pick),
 		info["cpu"], info["cores"], log_path])
 	if net_thread_on:
 		net_thread = Thread.new()
@@ -353,6 +365,14 @@ func _on_text(c: Conn, txt: String) -> void:
 	elif kind == "bots":
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN):
 			bots_wanted = clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
+			seats_dirty = true
+	elif kind == "arena":
+		var n := int(d.get("n", arena_pick))
+		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and n != arena_pick \
+				and (n == P.ARENA_MIX or (n >= 0 and n < SimScript.LevelScript.count())):
+			arena_pick = n
+			sim.set_arena(_next_arena())
+			print("🏰 [LOBBY] arena %s, picked by seat %d '%s'" % [_arena_label(arena_pick), c.seat, seats[c.seat].name])
 			seats_dirty = true
 	elif kind == "name":
 		if c.seat >= 0:
@@ -613,6 +633,25 @@ func _begin_match() -> void:
 	print("🏰 [MATCH] start: %d people + %d bots, first to %d points" % [_people(), _bots_now(), goal])
 	_start_round()
 
+# The arena of the next round: the pick, or MIX's next one (G5).
+func _next_arena() -> int:
+	if arena_pick == P.ARENA_MIX:
+		var play: Array = SimScript.LevelScript.PLAY
+		return play[mix_i % play.size()]
+	return arena_pick
+
+static func _arena_label(n: int) -> String:
+	return "MIX" if n == P.ARENA_MIX else SimScript.LevelScript.name_of(n)
+
+# --arena: mix, a layout number, or a layout's name without THE (keep, bridges, bench).
+static func _arena_arg(v: String) -> int:
+	if v.is_valid_int():
+		return clampi(int(v), 0, SimScript.LevelScript.count() - 1)
+	for n in SimScript.LevelScript.count():
+		if SimScript.LevelScript.name_of(n).to_lower().trim_prefix("the ") == v.to_lower():
+			return n
+	return P.ARENA_MIX
+
 # TowerFall's points to win: 5, 4, 3 for 2, 3, 4 players; 3 for more.
 static func _goal_for(n: int) -> int:
 	if n <= 2:
@@ -639,6 +678,9 @@ func _start_round() -> void:
 		s.in_round = s.kind != 0
 		if s.in_round:
 			seat_list.append({"id": s.i, "bot": s.kind == 2 or s.client_id == 0})
+	sim.set_arena(_next_arena())
+	if arena_pick == P.ARENA_MIX:
+		mix_i += 1
 	sim.start_round(seat_list)
 	for s in seats:
 		var f = sim.fighter(s.i)
@@ -651,7 +693,7 @@ func _start_round() -> void:
 	phase = P.PH_ROUND_START
 	phase_t = ROUND_START_TICKS
 	_round_start_tick = sim.tick + ROUND_START_TICKS
-	print("🏰 [ROUND] %d start: %d fighters (%d people, %d bots) %s" % [round_no, seat_list.size(), _people(), _bots_now(), _score_line()])
+	print("🏰 [ROUND] %d start on %s: %d fighters (%d people, %d bots) %s" % [round_no, sim.level.name, seat_list.size(), _people(), _bots_now(), _score_line()])
 	seats_dirty = true
 
 # Fewer than 2 fighters for the next round (people left, no bots fill in):
@@ -674,6 +716,7 @@ func _to_lobby() -> void:
 	phase_t = 0
 	round_no = 0
 	winner = P.NO_ONE
+	sim.set_arena(_next_arena())
 	print("🏰 [LOBBY] back in the lobby: %d people seated" % _people())
 	seats_dirty = true
 
@@ -720,7 +763,8 @@ func _send_seats(target: int) -> void:
 		list.append({"i": s.i, "name": s.name, "kind": s.kind, "on": s.kind == 2 or s.client_id != 0,
 			"points": s.points, "crowns": s.crowns, "in": s.in_round})
 	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
-		"bots": _bots_now(), "bots_wanted": bots_wanted, "people": _people(), "seats": list}
+		"bots": _bots_now(), "bots_wanted": bots_wanted, "people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
+		"seats": list}
 	_out(target, JSON.stringify(msg))
 	if target == 0:
 		seats_dirty = false
@@ -940,7 +984,7 @@ func _report() -> void:
 	var rec := {
 		"kind": "report", "t": Time.get_unix_time_from_system(), "up_s": (now - started_ms) / 1000.0,
 		"clients": per_client.size(), "people": _people(), "bots": _bots_now(), "phase": phase, "round": round_no,
-		"fighters": sim.fighters.size(), "arrows": sim.live_arrow_count(), "zones": sim.zones.size(),
+		"arena": sim.level.id, "fighters": sim.fighters.size(), "arrows": sim.live_arrow_count(), "zones": sim.zones.size(),
 		"ticks": n, "tick_mean_ms": (total / 1000.0 / n) if n > 0 else 0.0,
 		"tick_p99_ms": (sorted[int(n * 0.99)] / 1000.0) if n > 0 else 0.0,
 		"tick_max_ms": (sorted[n - 1] / 1000.0) if n > 0 else 0.0,

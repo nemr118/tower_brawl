@@ -1144,6 +1144,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 	buf.put_u8(int(head.get("goal", 0)))
 	buf.put_u8(int(head.get("winner", P.NO_ONE)))
 	buf.put_u16(walls_width() | (0x8000 if walls_deadly() else 0))
+	buf.put_u8(level.id)
 	buf.put_u8(fighters.size())
 	buf.put_u16(live_arrow_count())
 	buf.put_u8(zones.size())

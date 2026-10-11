@@ -71,6 +71,7 @@ func reconcile(o: Dictionary) -> void:
 	if s < server_tick:
 		return
 	server_tick = s
+	sim.set_arena(int(o.get("arena", sim.level.id)))   # G5: the copy runs on the round's arena
 	moves_from = int(o["moves_from"])
 	var flags: int = o["flags"]
 	if (flags & P.OWN_FIGHTER) == 0 or (flags & P.OWN_BRAIN) != 0:

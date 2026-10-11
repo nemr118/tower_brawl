@@ -8,6 +8,7 @@ extends CanvasLayer
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
+const LevelScript = preload("res://sim/level.gd")
 const FIGHT_S := 0.9
 const CARD_W := 210.0
 const CARD_STEP := 228.0
@@ -163,7 +164,8 @@ func _paint(c: Control) -> void:
 	var left := int(snap.get("left", 0))
 	if phase == P.PH_ROUND_START:
 		_banner(c, font, "ROUND %d" % round_no, 110, Color.WHITE, 440)
-		_banner(c, font, "GET READY", 44, Color(0.85, 0.85, 0.9), 520)
+		_banner(c, font, LevelScript.name_of(int(snap.get("arena", 0))), 52, Color(1.0, 0.85, 0.5), 522)
+		_banner(c, font, "GET READY", 36, Color(0.85, 0.85, 0.9), 590)
 	elif phase == P.PH_PLAY:
 		if fight_t > 0.0:
 			_banner(c, font, "FIGHT!", 150, Color(1.0, 0.3, 0.1), 460)
