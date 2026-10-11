@@ -369,18 +369,21 @@ func _walls_close() -> void:
 # No spawn spot sits one drop above another: dropping through your own ledge and
 # steering up to 150 px sideways, you would land on the one below (p1.2 had 7 such
 # pairs, the source of the first second's stomps). Every spot stands on a floor or
-# a ledge with room for the body.
+# a ledge with room for the body. Every arena (G5; tools/arena_probe.gd has the rest).
 func _spawns_apart() -> void:
-	var lv = SimScript.LevelScript.new()
 	var bad: Array = []
-	for a in lv.spawns:
-		if not lv.stands(a):
-			bad.append("%s does not stand" % a)
-		for b in lv.spawns:
-			if a != b and lv.one_drop(a, b, 150):
-				bad.append("%s over %s" % [a, b])
-	_check("no spawn spot sits one drop above another", bad.is_empty(),
-		"%d spots; %s" % [lv.spawns.size(), "none over another" if bad.is_empty() else ", ".join(bad)])
+	var spots: Array = []
+	for n in SimScript.LevelScript.count():
+		var lv = SimScript.LevelScript.new(n)
+		spots.append("%s %d" % [lv.name, lv.spawns.size()])
+		for a in lv.spawns:
+			if not lv.stands(a):
+				bad.append("%s: %s does not stand" % [lv.name, a])
+			for b in lv.spawns:
+				if a != b and lv.one_drop(a, b, 150):
+					bad.append("%s: %s over %s" % [lv.name, a, b])
+	_check("no spawn spot sits one drop above another (every arena)", bad.is_empty(),
+		"spots: %s; %s" % [", ".join(spots), "none over another" if bad.is_empty() else ", ".join(bad)])
 
 # Random buttons held 4 to 30 ticks: runs, jumps (held and tapped), drops,
 # dodges, and (with shots) aims and shots, from a seeded rng.

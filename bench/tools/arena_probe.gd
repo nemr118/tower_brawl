@@ -125,7 +125,13 @@ func _probe(n: int, png_dir: String, rounds: int) -> void:
 	for i in surfs.size():
 		if comp[i] and not g["plain_in"][i]:
 			hard.append(_surf_name(surfs[i]))
-	print("   only a wall jump or a dodge reaches: %s" % ("none" if hard.is_empty() else ", ".join(hard)))
+	var hard_routes: Array = []
+	for key in g["edges"]:
+		if not g["edges"][key]:
+			hard_routes.append("%s -> %s" % [_surf_name(surfs[key.x]), _surf_name(surfs[key.y])])
+	print("   only a wall jump or a dodge reaches: %s; routes only a wall jump or a dodge makes: %d%s" % [
+		"none" if hard.is_empty() else ", ".join(hard), hard_routes.size(),
+		"" if hard_routes.is_empty() else " (" + "; ".join(hard_routes.slice(0, 4)) + ("; ..." if hard_routes.size() > 4 else "") + ")"])
 	# balance
 	var b := _balance(lv)
 	_rule(bench, "balanced left against right, not a perfect mirror", b["ok"], b["detail"])
@@ -497,6 +503,7 @@ func _rounds(n: int, count: int) -> void:
 	var deaths := 0
 	var cells := {}
 	var stuck := 0
+	var stuck_at := {}
 	for r in count:
 		sim.start_round(seats)
 		sim.frozen = false
@@ -528,6 +535,8 @@ func _rounds(n: int, count: int) -> void:
 							hi = hi.max(p)
 						if hi.x - lo.x < 90.0 and hi.y - lo.y < 90.0:
 							stuck_now[f.id] = true
+							var sq := Vector2i(int(lo.x + hi.x + 36) / 240, int(lo.y + hi.y + 63) / 240)
+							stuck_at[sq] = stuck_at.get(sq, 0) + 1
 			if sim.alive_count() <= 1:
 				break
 		stuck += stuck_now.size()
@@ -538,9 +547,14 @@ func _rounds(n: int, count: int) -> void:
 	var parts: Array = []
 	for k in [1, 3, 6]:
 		parts.append("%s %d%%" % [P.CAUSES[k], roundi(100.0 * causes.get(k, 0) / maxi(1, deaths))])
-	print("   bots' rounds (%d, 8 bots): length median %.1f s, p90 %.1f s, longest %.1f s; draws %d%%; deaths: %s; death spots %d of 144 squares; stuck 5 s: %d of %d bot rounds" % [
+	var where: Array = []
+	var sqs := stuck_at.keys()
+	sqs.sort_custom(func(a, b): return stuck_at[a] > stuck_at[b])
+	for sq in sqs.slice(0, 3):
+		where.append("%d at (%d, %d)" % [stuck_at[sq], sq.x * 120 + 60, sq.y * 120 + 60])
+	print("   bots' rounds (%d, 8 bots): length median %.1f s, p90 %.1f s, longest %.1f s; draws %d%%; deaths: %s; death spots %d of 144 squares; stuck 5 s: %d of %d bot rounds%s" % [
 		count, lengths[count / 2], lengths[int(count * 0.9)], lengths[-1], roundi(100.0 * draws / count), ", ".join(parts),
-		cells.size(), stuck, count * 8])
+		cells.size(), stuck, count * 8, "" if where.is_empty() else " (" + ", ".join(where) + ")"])
 
 # ------------------------------------------------------------------ the map picture
 func _png(lv, g: Dictionary, shots: Array, path: String) -> void:
