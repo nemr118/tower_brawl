@@ -4,7 +4,10 @@
 It shows the play links, whether the two servers run, whether the firewall lets
 the phones in, the game right now (the server's report every 5 s in
 bench_results/<date>/v2_server.jsonl) and the last join, lobby, match and round
-lines from the journal. Keys: R restarts the new game (it asks first), Q quits.
+lines from the journal. With the server's host port (p4.2, --admin-port 8092) it
+also lists the seats, and keys work: + and - set the bots (in a match from the
+next round), K and a seat number kicks that person back to watching.
+Keys: + - K, R restarts the new game (it asks first), Q quits.
 The servers can be user units (the ROG, 2026-10-24) or system units (the home laptop).
 
 Use:  python3 tools/v2_dash.py           the live panel
@@ -24,6 +27,8 @@ import sys
 import termios
 import time
 import tty
+import urllib.error
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORTS = (8443, 8444, 8091)   # the pages, the old game's relay, the new game
@@ -33,6 +38,7 @@ EVENTS = re.compile(r"\[(JOIN|LEAVE|LOBBY|MATCH|ROUND)\]")
 FIGHT = re.compile(r"\[ROUND\] \d+ FIGHT")   # one a round, right after the start line: noise here
 ANSI = re.compile(r"\033\[[0-9;]*m")
 COLOUR = True
+HOST = "http://127.0.0.1:8092"   # the server's host port (p4.2)
 
 
 def paint(code, text):
@@ -137,6 +143,23 @@ def blocked_lately():
     return hits, sorted(who)
 
 
+def host_call(path, body=None):
+    """The host port: GET /state (body None) or a POST command; None when it does not answer."""
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(HOST + path, data=data, method="GET" if body is None else "POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=1.0) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except ValueError:
+            return None
+    except (OSError, ValueError):
+        return None
+
+
 def last_report():
     files = sorted(glob.glob(os.path.join(ROOT, "bench_results", "*", "v2_server.jsonl")))
     if not files:
@@ -208,7 +231,9 @@ class Panel:
         self.net = ("", "", "")
         self.blocks = (0, [])
         self.ask = False
+        self.kick = False
         self.note = ("", 0.0)
+        self.state = None
 
     def lines(self):
         now = time.time()
@@ -254,6 +279,21 @@ class Panel:
             out.append(f"   {dim('·')} CPU {cpu}")
         out.append("")
 
+        st = self.state = host_call("/state")
+        if st:
+            out.append(bold(" SEATS") + dim(f"   bots {st['bots_wanted']}" + (f" (now {st['bots_now']})" if st["bots_now"] != st["bots_wanted"] else "")
+                                            + f" · {st['bot_level_name']} · arena {st['arena_pick_name']}"))
+            for seat in st["seats"]:
+                if seat["who"] == "empty":
+                    out.append(dim(f"   {seat['i']}  -"))
+                    continue
+                ping = f"{seat['ping_ms']} ms" if seat["ping_ms"] >= 0 else ""
+                away = f" away {seat['held_s']} s" if seat["held_s"] else ""
+                who = bold(seat["name"]) if seat["who"] == "person" else seat["name"]
+                out.append(f"   {seat['i']}  {who}  {dim(seat['who'])}  {seat['points']} pts  {ping}{yellow(away) if away else ''}")
+            if st["watching"]:
+                out.append(dim("   watching: " + ", ".join(w["name"] for w in st["watching"])))
+            out.append("")
         out.append(bold(" THE NEW GAME NOW"))
         rep = last_report()
         if not rep:
@@ -289,13 +329,33 @@ class Panel:
         msg, until = self.note
         if self.ask:
             out.append(yellow(" Restart the new game? Everyone in it drops and the lobby starts fresh. Y = yes, any other key = no"))
+        elif self.kick:
+            out.append(yellow(" Kick which seat? Press its number (0-7). Any other key: no kick."))
         elif msg and now < until:
             out.append(yellow(f" {msg}"))
+        elif self.state:
+            out.append(dim(" + / - bots   K kick a seat   R restart the new game   Q close this panel"))
         else:
             out.append(dim(" R restart the new game (fresh lobby)   Q close this panel"))
         return [fit(line, width) for line in out]
 
     def key(self, ch):
+        if self.kick:
+            self.kick = False
+            if ch.isdigit() and int(ch) < 8:
+                r = host_call("/kick", {"seat": int(ch)})
+                self.note = ((r or {}).get("text", "The host port did not answer."), time.time() + 5)
+            else:
+                self.note = ("No kick.", time.time() + 3)
+            return True
+        if ch in "+=-_" and self.state:
+            n = self.state["bots_wanted"] + (1 if ch in "+=" else -1)
+            r = host_call("/bots", {"n": max(0, min(self.state["max_bots"], n))})
+            self.note = ((r or {}).get("text", "The host port did not answer."), time.time() + 4)
+            return True
+        if ch in "kK" and self.state:
+            self.kick = True
+            return True
         if self.ask:
             self.ask = False
             if ch in "yY":

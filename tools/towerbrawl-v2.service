@@ -1,6 +1,7 @@
 # The new game's server on the laptop (P1): headless Godot, wss on 8091, beside
 # the old game's towerbrawl.service (which keeps serving the web files and the
 # old relay). tools/deploy_laptop.sh installs it in /etc/systemd/system/.
+# p4.2: --admin-port 8092 is the host port (127.0.0.1 only) for the host page in Ignition.
 [Unit]
 Description=Tower Brawl v2 game server (headless Godot, wss 8091)
 After=network.target
@@ -10,7 +11,7 @@ StartLimitIntervalSec=0
 Type=simple
 User=nemr
 WorkingDirectory=/home/nemr/tower_brawl
-ExecStart=/usr/bin/env godot --headless --path /home/nemr/tower_brawl/bench res://server/game_server.tscn -- --port 8091 --cert /home/nemr/tower_brawl/cert.pem --key /home/nemr/tower_brawl/key.pem --out /home/nemr/tower_brawl/bench_results --quiet
+ExecStart=/usr/bin/env godot --headless --path /home/nemr/tower_brawl/bench res://server/game_server.tscn -- --port 8091 --cert /home/nemr/tower_brawl/cert.pem --key /home/nemr/tower_brawl/key.pem --out /home/nemr/tower_brawl/bench_results --quiet --admin-port 8092
 Restart=always
 RestartSec=3
 # the game cores, as the old game's 20-cores.conf drop-in: physical cores 2 and 3 (CPUs 2,3,6,7);

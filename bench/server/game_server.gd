@@ -8,7 +8,7 @@
 #       [--port 8091] [--no-tls] [--cert <pem>] [--key <pem>] [--bots 7]
 #       [--power-arrows] [--goal N] [--walls-s N] [--out <dir>] [--seconds N] [--quiet] [--spots 2,3]
 #       [--arena mix|keep|bridges|bench|N] [--bot-level old|easy|normal|hard] [--soak]
-#       [--net-thread 0|1] [--net-sleep-ms 4]
+#       [--net-thread 0|1] [--net-sleep-ms 4] [--admin-port 8092] [--admin-bind 127.0.0.1]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --goal N: points to win, instead of the rule by player count (a test knob).
@@ -24,6 +24,14 @@
 #   BOTS level button changes it (EASY, NORMAL, HARD).
 # --soak: a bot soak (G6): bots in all 8 seats, no people needed, and a match
 #   starts by itself whenever the lobby comes back (tools/v2_soak_report.py).
+# --admin-port N: the host port (p4.2, for the host page in Ignition,
+#   ~/Work/tower_brawl_ignition/build_host.py): plain http on 127.0.0.1 only
+#   (--admin-bind to change that), JSON in and out. GET /state: the seats (with
+#   each person's address and ping), the settings, the players' numbers tonight,
+#   the last 80 events. POST /bots {n} (0..7), /bot_level {n} (1..3), /arena {n}
+#   (P.ARENA_MIX or an arena of LevelScript.PLAY): any time, in a match from the
+#   next round; /kick {seat} (a person goes back to watching), /start, /stop (the
+#   match ends, back to the lobby). A reply: {ok, text, state}. 0 (the default): off.
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -43,8 +51,10 @@
 # draw, points}, match_end {winner, name, points}.
 # Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s; G6: a
 # round line at each round's end with every death, its cause and spot, and a
-# match line at each match's end), and tagged lines on stdout: [NET] [JOIN]
-# [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH].
+# match line at each match's end), <out>/<date>/v2_stats.json (the players'
+# numbers tonight, p4.2: saved after each round, read back when the server
+# starts again that day), and tagged lines on stdout: [NET] [JOIN] [LEAVE]
+# [LOBBY] [ROUND] [KILL] [MATCH] [HOST].
 # ==============================================================================
 extends Node
 
@@ -64,6 +74,11 @@ const MATCH_END_TICKS := 420     # the winner's screen: 7 s, then the lobby
 const REPORT_S := 5
 const NAME_MAX := 12
 const MAX_EARLY := 60            # an input more than 1 s early is applied at once (the client's clock is off)
+const EVENTS_MAX := 80           # the host page's recent events
+const HOST_MAX := 16384          # the largest request the host port reads
+const PHASE_NAMES := ["LOBBY", "COUNTDOWN", "ROUND START", "PLAYING", "ROUND END", "MATCH END"]
+const STAT_KEYS := ["matches", "match_wins", "rounds", "round_wins", "kills", "arrow_kills", "stomp_kills",
+	"other_kills", "deaths", "self_kills", "catches", "shots"]
 
 class Client:
 	var id: int = 0
@@ -108,6 +123,11 @@ class Seat:
 	var late_n: int = 0         # inputs that came after their tick, since the last T_OWN
 	var late_all: int = 0       # and in all, with the inputs counted, for the report
 	var inputs_all: int = 0
+
+class HostConn:                 # one request on the host port
+	var tcp: StreamPeerTCP
+	var buf := PackedByteArray()
+	var ms: int = 0
 
 var sim
 var seats: Array = []
@@ -158,6 +178,14 @@ var net_per_client: Array = []
 var net_out_pub := 0
 var net_in_pub := 0
 var net_busy_pub := 0
+var host_port := 0               # the host port (p4.2): --admin-port; 0 off
+var host := TCPServer.new()
+var host_conns: Array = []       # HostConn
+var events_ring: Array = []      # the last EVENTS_MAX tagged lines: {t, hhmm, tag, text}
+var stats := {}                  # "name" or "bot:name" -> the player's numbers tonight
+var stats_since := 0.0
+var stats_path := ""
+var last_rec := {}               # the last report line (the host page shows its tick numbers)
 
 func _ready() -> void:
 	var o := _args()
@@ -170,6 +198,7 @@ func _ready() -> void:
 	if soak:
 		bots_wanted = SEATS
 	net_thread_on = str(o.get("net-thread", "1")) != "0"
+	host_port = int(o.get("admin-port", 0))
 	net_sleep_us = int(float(o.get("net-sleep-ms", 4)) * 1000.0)
 	var root_dir := ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
 	var out_dir := str(o.get("out", root_dir.path_join("bench_results"))).path_join(Time.get_date_string_from_system())
@@ -177,6 +206,7 @@ func _ready() -> void:
 	var log_path := out_dir.path_join("v2_server.jsonl")
 	server_log = FileAccess.open(log_path, FileAccess.READ_WRITE if FileAccess.file_exists(log_path) else FileAccess.WRITE)
 	server_log.seek_end()
+	_load_stats(out_dir.path_join("v2_stats.json"))
 	Engine.max_fps = 120     # no busy loop in headless; physics stays at 60
 	sim = SimScript.new(0, 24, int(Time.get_unix_time_from_system()))
 	sim.respawn = false
@@ -209,13 +239,20 @@ func _ready() -> void:
 		printerr("🏰 [NET] cannot listen on %d (error %d)" % [port, err])
 		get_tree().quit(1)
 		return
+	if host_port > 0:
+		var bind := str(o.get("admin-bind", "127.0.0.1"))
+		if host.listen(host_port, bind) != OK:
+			printerr("🏰 [NET] cannot open the host port %s:%d" % [bind, host_port])
+			host_port = 0
+		else:
+			print("🏰 [NET] the host port: http://%s:%d (GET /state; POST /bots /bot_level /arena /kick /start /stop)" % [bind, host_port])
 	started_ms = Time.get_ticks_msec()
 	sec_start_ms = started_ms
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
 		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "goal_override": goal_override,
 		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick), "bot_level": SimScript.BrainScript.NAMES[sim.bot_level],
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(), "soak": soak,
-		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on}
+		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on, "admin_port": host_port}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
 	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power arrows %s, %s, arena %s, cpu %s x%d, report in %s" % [
@@ -248,6 +285,8 @@ func _args() -> Dictionary:
 func _process(_dt: float) -> void:
 	if server.is_listening() and not net_thread_on:
 		_poll_clients()
+	if host_port > 0:
+		_host_poll()
 
 func _physics_process(_dt: float) -> void:
 	var t0 := Time.get_ticks_usec()
@@ -265,6 +304,7 @@ func _physics_process(_dt: float) -> void:
 	sim.step()
 	var evs: Array = sim.take_events()
 	_log_deaths(evs)
+	_count_events(evs)
 	pending_events.append_array(evs)
 	var t2 := Time.get_ticks_usec()
 	if seats_dirty:
@@ -329,7 +369,7 @@ func _on_text(c: Conn, txt: String) -> void:
 	if kind == "hello":
 		var yours := str(d.get("version", "?"))
 		if yours != P.VERSION:
-			print("🏰 [JOIN] client %d from %s has version %s, the server runs %s: turned away" % [c.id, c.ip, yours, P.VERSION])
+			_say("🏰 [JOIN] client %d from %s has version %s, the server runs %s: turned away" % [c.id, c.ip, yours, P.VERSION])
 			_out(c.id, JSON.stringify({"kind": "version_error", "server": P.VERSION, "yours": yours}))
 			return
 		c.ok = true
@@ -354,14 +394,14 @@ func _on_text(c: Conn, txt: String) -> void:
 		var s := _free_seat()
 		if s == null:
 			_out(c.id, JSON.stringify({"kind": "full"}))
-			print("🏰 [JOIN] rejected %s from %s: all %d seats are taken" % [c.name, c.ip, SEATS])
+			_say("🏰 [JOIN] rejected %s from %s: all %d seats are taken" % [c.name, c.ip, SEATS])
 			return
 		_seat_person(s, c, false)
 		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
 	elif kind == "leave":
 		if c.seat >= 0:
 			var s: Seat = seats[c.seat]
-			print("🏰 [LEAVE] seat %d '%s' left on purpose" % [s.i, s.name])
+			_say("🏰 [LEAVE] seat %d '%s' left on purpose" % [s.i, s.name])
 			_free_seat_now(s)
 			c.seat = -1
 			_out(c.id, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": c.name, "phase": phase}))
@@ -375,7 +415,7 @@ func _on_text(c: Conn, txt: String) -> void:
 		else:
 			phase = P.PH_COUNTDOWN
 			phase_t = COUNTDOWN_TICKS
-			print("🏰 [LOBBY] START by seat %d '%s': %d people + %d bots" % [c.seat, seats[c.seat].name, _people(), _bots_now()])
+			_say("🏰 [LOBBY] START by seat %d '%s': %d people + %d bots" % [c.seat, seats[c.seat].name, _people(), _bots_now()])
 			seats_dirty = true
 	elif kind == "bots":
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN):
@@ -386,7 +426,7 @@ func _on_text(c: Conn, txt: String) -> void:
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and lv != sim.bot_level \
 				and lv >= SimScript.BrainScript.EASY and lv <= SimScript.BrainScript.HARD:
 			sim.bot_level = lv
-			print("🏰 [LOBBY] bots %s, picked by seat %d '%s'" % [SimScript.BrainScript.NAMES[lv], c.seat, seats[c.seat].name])
+			_say("🏰 [LOBBY] bots %s, picked by seat %d '%s'" % [SimScript.BrainScript.NAMES[lv], c.seat, seats[c.seat].name])
 			seats_dirty = true
 	elif kind == "arena":
 		var n := int(d.get("n", arena_pick))
@@ -394,7 +434,7 @@ func _on_text(c: Conn, txt: String) -> void:
 				and (n == P.ARENA_MIX or (n >= 0 and n < SimScript.LevelScript.count())):
 			arena_pick = n
 			sim.set_arena(_next_arena())
-			print("🏰 [LOBBY] arena %s, picked by seat %d '%s'" % [_arena_label(arena_pick), c.seat, seats[c.seat].name])
+			_say("🏰 [LOBBY] arena %s, picked by seat %d '%s'" % [_arena_label(arena_pick), c.seat, seats[c.seat].name])
 			seats_dirty = true
 	elif kind == "name":
 		if c.seat >= 0:
@@ -446,6 +486,7 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		s.name = c.name if c.name != "Player" else "Player %d" % (s.i + 1)
 		s.token = c.token
 		s.points = 0
+		s.crowns = 0
 		s.in_round = false
 		s.buttons = 0
 		s.aim = 0
@@ -459,9 +500,9 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		f.bot = false
 		f.connected = true
 	if back:
-		print("🏰 [JOIN] seat %d '%s' is back from %s (client %d)" % [s.i, s.name, c.ip, c.id])
+		_say("🏰 [JOIN] seat %d '%s' is back from %s (client %d)" % [s.i, s.name, c.ip, c.id])
 	else:
-		print("🏰 [JOIN] seat %d '%s' from %s (client %d)%s" % [s.i, s.name, c.ip, c.id,
+		_say("🏰 [JOIN] seat %d '%s' from %s (client %d)%s" % [s.i, s.name, c.ip, c.id,
 			" takes a bot's seat, plays from the next round" if was_bot else (" plays from the next round" if phase > P.PH_COUNTDOWN else "")])
 	seats_dirty = true
 
@@ -476,6 +517,8 @@ func _free_seat_now(s: Seat) -> void:
 	s.token = ""
 	s.hold_t = 0
 	s.in_round = false
+	s.points = 0
+	s.crowns = 0
 	s.queue.clear()
 	seats_dirty = true
 
@@ -490,10 +533,10 @@ func _on_close(c: Conn) -> void:
 			if f != null and s.in_round:
 				f.bot = true
 				f.connected = false
-			print("🏰 [LEAVE] seat %d '%s' (client %d, %s) dropped: held %d s" % [s.i, s.name, c.id, c.ip, HOLD_TICKS / 60])
+			_say("🏰 [LEAVE] seat %d '%s' (client %d, %s) dropped: held %d s" % [s.i, s.name, c.id, c.ip, HOLD_TICKS / 60])
 			seats_dirty = true
 	elif c.ok:
-		print("🏰 [LEAVE] watcher '%s' (client %d, %s) left" % [c.name, c.id, c.ip])
+		_say("🏰 [LEAVE] watcher '%s' (client %d, %s) left" % [c.name, c.id, c.ip])
 	conns.erase(c.id)
 
 # Held seats count down; at 0 the seat is free again.
@@ -502,7 +545,7 @@ func _hold_seats() -> void:
 		if s.kind == 1 and s.client_id == 0 and s.hold_t > 0:
 			s.hold_t -= 1
 			if s.hold_t == 0:
-				print("🏰 [LEAVE] seat %d '%s' is free again (nobody came back)" % [s.i, s.name])
+				_say("🏰 [LEAVE] seat %d '%s' is free again (nobody came back)" % [s.i, s.name])
 				_free_seat_now(s)
 
 # An input packet: up to 4 ticks of buttons (proto), each for the server tick it
@@ -592,12 +635,12 @@ func _match_tick() -> void:
 	if phase == P.PH_LOBBY and soak and _people() + _bots_now() >= 2:
 		phase = P.PH_COUNTDOWN
 		phase_t = COUNTDOWN_TICKS
-		print("🏰 [LOBBY] soak: the next match starts in %d s" % (COUNTDOWN_TICKS / 60))
+		_say("🏰 [LOBBY] soak: the next match starts in %d s" % (COUNTDOWN_TICKS / 60))
 		seats_dirty = true
 	if phase == P.PH_COUNTDOWN:
 		phase_t -= 1
 		if _people() + _bots_now() < 2:
-			print("🏰 [LOBBY] countdown stopped: not enough fighters")
+			_say("🏰 [LOBBY] countdown stopped: not enough fighters")
 			phase = P.PH_LOBBY
 			seats_dirty = true
 		elif phase_t <= 0:
@@ -608,7 +651,7 @@ func _match_tick() -> void:
 			sim.frozen = false
 			phase = P.PH_PLAY
 			phase_t = 0
-			print("🏰 [ROUND] %d FIGHT" % round_no)
+			_say("🏰 [ROUND] %d FIGHT" % round_no)
 	elif phase == P.PH_PLAY:
 		phase_t += 1
 		var alive: int = sim.alive_count()
@@ -621,13 +664,21 @@ func _match_tick() -> void:
 				"name": "" if draw else seats[winner].name, "points": _points()}
 			_out(0, JSON.stringify(msg))
 			if draw:
-				print("🏰 [ROUND] %d end after %.1f s: a draw (%d alive)" % [round_no, _round_secs(), alive])
+				_say("🏰 [ROUND] %d end after %.1f s: a draw (%d alive)" % [round_no, _round_secs(), alive])
 			else:
-				print("🏰 [ROUND] %d end after %.1f s: seat %d '%s' is the last one standing" % [round_no, _round_secs(), winner, seats[winner].name])
+				_say("🏰 [ROUND] %d end after %.1f s: seat %d '%s' is the last one standing" % [round_no, _round_secs(), winner, seats[winner].name])
 			server_log.store_line(JSON.stringify({"kind": "round", "t": Time.get_unix_time_from_system(), "match": match_no,
 				"round": round_no, "arena": sim.level.id, "secs": snappedf(_round_secs(), 0.01), "winner": winner, "draw": draw,
-				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths}))
+				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths,
+				"names": _seat_names()}))
 			server_log.flush()
+			for s in seats:
+				if s.kind != 0 and (s.in_round or (not draw and s.i == winner)):
+					var r := _stat(s)
+					r["rounds"] += 1
+					if not draw and s.i == winner:
+						r["round_wins"] += 1
+			_save_stats()
 	elif phase == P.PH_ROUND_END:
 		phase_t -= 1
 		if phase_t <= 0:
@@ -636,10 +687,14 @@ func _match_tick() -> void:
 				_sync_points()
 			if winner != P.NO_ONE and seats[winner].points >= goal:
 				seats[winner].crowns += 1
+				if seats[winner].kind != 0:
+					var rw := _stat(seats[winner])
+					rw["match_wins"] += 1
+					_save_stats()
 				phase = P.PH_MATCH_END
 				phase_t = MATCH_END_TICKS
 				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points()}))
-				print("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s" % [round_no, winner, seats[winner].name, _score_line()])
+				_say("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s" % [round_no, winner, seats[winner].name, _score_line()])
 				server_log.store_line(JSON.stringify({"kind": "match", "t": Time.get_unix_time_from_system(), "match": match_no,
 					"rounds": round_no, "winner": winner, "people": _people(), "bot_level": sim.bot_level}))
 				server_log.flush()
@@ -665,7 +720,7 @@ func _begin_match() -> void:
 	round_no = 1
 	var n := _people() + _bots_now()
 	goal = goal_override if goal_override > 0 else _goal_for(n)
-	print("🏰 [MATCH] start: %d people + %d bots (%s), first to %d points" % [_people(), _bots_now(), SimScript.BrainScript.NAMES[sim.bot_level], goal])
+	_say("🏰 [MATCH] start: %d people + %d bots (%s), first to %d points" % [_people(), _bots_now(), SimScript.BrainScript.NAMES[sim.bot_level], goal])
 	_start_round()
 
 # The arena of the next round: the pick, or MIX's next one (G5).
@@ -713,6 +768,10 @@ func _start_round() -> void:
 		s.in_round = s.kind != 0
 		if s.in_round:
 			seat_list.append({"id": s.i, "bot": s.kind == 2 or s.client_id == 0})
+			var r := _stat(s)
+			if r.get("_m", 0) != match_no:   # this server's match number, kept in memory only
+				r["_m"] = match_no
+				r["matches"] += 1
 	sim.set_arena(_next_arena())
 	if arena_pick == P.ARENA_MIX:
 		mix_i += 1
@@ -729,14 +788,14 @@ func _start_round() -> void:
 	phase = P.PH_ROUND_START
 	phase_t = ROUND_START_TICKS
 	_round_start_tick = sim.tick + ROUND_START_TICKS
-	print("🏰 [ROUND] %d start on %s: %d fighters (%d people, %d bots) %s" % [round_no, sim.level.name, seat_list.size(), _people(), _bots_now(), _score_line()])
+	_say("🏰 [ROUND] %d start on %s: %d fighters (%d people, %d bots) %s" % [round_no, sim.level.name, seat_list.size(), _people(), _bots_now(), _score_line()])
 	seats_dirty = true
 
 # Fewer than 2 fighters for the next round (people left, no bots fill in):
 # nobody wins the match, everyone goes back to the lobby (backlog 35).
 func _stop_match() -> void:
 	var n := _people() + _bots_now()
-	print("🏰 [MATCH] stopped after %d round%s: %d fighter%s left %s" % [round_no, "" if round_no == 1 else "s", n, "" if n == 1 else "s", _score_line()])
+	_say("🏰 [MATCH] stopped after %d round%s: %d fighter%s left %s" % [round_no, "" if round_no == 1 else "s", n, "" if n == 1 else "s", _score_line()])
 	_out(0, JSON.stringify({"kind": "note", "text": "The match stopped: a match needs 2 fighters."}))
 	_to_lobby()
 
@@ -753,7 +812,7 @@ func _to_lobby() -> void:
 	round_no = 0
 	winner = P.NO_ONE
 	sim.set_arena(_next_arena())
-	print("🏰 [LOBBY] back in the lobby: %d people seated" % _people())
+	_say("🏰 [LOBBY] back in the lobby: %d people seated" % _people())
 	seats_dirty = true
 
 func _sync_points() -> void:
@@ -786,12 +845,26 @@ func _log_deaths(evs: Array) -> void:
 		var vn: String = seats[victim].name if victim < SEATS else "?"
 		var when := _round_secs()
 		round_deaths.append([victim, killer, e[4], e[1], e[2], snappedf(when, 0.01)])
+		if victim < SEATS and seats[victim].kind != 0:
+			var rv := _stat(seats[victim])
+			rv["deaths"] += 1
+			if killer == victim:
+				rv["self_kills"] += 1
+		if killer < SEATS and killer != victim and seats[killer].kind != 0:
+			var rk := _stat(seats[killer])
+			rk["kills"] += 1
+			if e[4] == 1:
+				rk["arrow_kills"] += 1
+			elif e[4] == 3:
+				rk["stomp_kills"] += 1
+			else:
+				rk["other_kills"] += 1
 		if killer == victim:
-			print("🏰 [KILL] seat %d '%s' killed themselves (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
+			_say("🏰 [KILL] seat %d '%s' killed themselves (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
 		elif killer < SEATS:
-			print("🏰 [KILL] seat %d '%s' killed seat %d '%s' (%s) %.2f s after FIGHT, %d left" % [killer, seats[killer].name, victim, vn, cause, when, sim.alive_count()])
+			_say("🏰 [KILL] seat %d '%s' killed seat %d '%s' (%s) %.2f s after FIGHT, %d left" % [killer, seats[killer].name, victim, vn, cause, when, sim.alive_count()])
 		else:
-			print("🏰 [KILL] seat %d '%s' died (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
+			_say("🏰 [KILL] seat %d '%s' died (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
 
 # The seat list, to one client (id) or to all (0).
 func _send_seats(target: int) -> void:
@@ -1034,6 +1107,7 @@ func _report() -> void:
 	}
 	server_log.store_line(JSON.stringify(rec))
 	server_log.flush()
+	last_rec = rec
 	if not quiet:
 		var rtts: Array = []
 		for pc in per_client:
@@ -1087,3 +1161,290 @@ func _cpu_model() -> String:
 		if line.begins_with("model name"):
 			return line.split(":")[1].strip_edges()
 	return "?"
+
+# ------------------------------------------------------------------ the host port (p4.2)
+# A tagged line: printed, and kept for the host page's recent events.
+func _say(line: String) -> void:
+	print(line)
+	var tag := ""
+	var text := line
+	var a := line.find("[")
+	var b := line.find("]", a + 1)
+	if a >= 0 and b > a:
+		tag = line.substr(a + 1, b - a - 1)
+		text = line.substr(b + 1).strip_edges()
+	events_ring.append({"t": Time.get_unix_time_from_system(), "hhmm": Time.get_time_string_from_system().substr(0, 5),
+		"tag": tag, "text": text})
+	if events_ring.size() > EVENTS_MAX:
+		events_ring.pop_front()
+
+func _seat_names() -> Array:
+	var out: Array = []
+	for s in seats:
+		out.append(s.name)
+	return out
+
+# The players' numbers tonight, by name (a bot's as "bot:" + its name).
+func _stat(s: Seat) -> Dictionary:
+	var bot := s.kind == 2
+	var key := ("bot:" if bot else "") + s.name
+	if not stats.has(key):
+		var r := {"name": s.name, "bot": bot}
+		for k in STAT_KEYS:
+			r[k] = 0
+		stats[key] = r
+	return stats[key]
+
+func _count_events(evs: Array) -> void:
+	for e in evs:
+		var k: int = e[0]
+		if k != P.E_SHOOT and k != P.E_CATCH:
+			continue
+		var i: int = e[3]
+		if i < 0 or i >= SEATS or seats[i].kind == 0:
+			continue
+		var r := _stat(seats[i])
+		if k == P.E_SHOOT:
+			r["shots"] += 1
+		else:
+			r["catches"] += 1
+
+func _save_stats() -> void:
+	if stats_path == "":
+		return
+	var f := FileAccess.open(stats_path, FileAccess.WRITE)
+	if f == null:
+		return
+	var rows: Array = []
+	for r in stats.values():
+		var row: Dictionary = r.duplicate()
+		row.erase("_m")
+		rows.append(row)
+	f.store_string(JSON.stringify({"since": stats_since, "players": rows}))
+	f.close()
+
+# Tonight's numbers come back when the server starts again the same day.
+func _load_stats(path: String) -> void:
+	stats_path = path
+	stats_since = Time.get_unix_time_from_system()
+	if not FileAccess.file_exists(path):
+		return
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(d) != TYPE_DICTIONARY:
+		return
+	stats_since = float(d.get("since", stats_since))
+	for r in d.get("players", []):
+		if typeof(r) != TYPE_DICTIONARY or not r.has("name"):
+			continue
+		var rec := {"name": str(r["name"]), "bot": bool(r.get("bot", false))}
+		for k in STAT_KEYS:
+			rec[k] = int(r.get(k, 0))
+		stats[("bot:" if rec["bot"] else "") + rec["name"]] = rec
+
+# One request a connection, answered on this thread (it owns the seats), then closed.
+func _host_poll() -> void:
+	while host.is_connection_available():
+		var t := host.take_connection()
+		if host_conns.size() >= 8:
+			t.disconnect_from_host()
+			continue
+		var h := HostConn.new()
+		h.tcp = t
+		h.ms = Time.get_ticks_msec()
+		host_conns.append(h)
+	if host_conns.is_empty():
+		return
+	var keep: Array = []
+	for h in host_conns:
+		h.tcp.poll()
+		if h.tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			continue
+		var n: int = h.tcp.get_available_bytes()
+		if n > 0:
+			var got: Array = h.tcp.get_partial_data(n)
+			if got[0] == OK:
+				h.buf = h.buf + got[1]
+		if _host_try(h):
+			continue
+		if Time.get_ticks_msec() - h.ms > 3000 or h.buf.size() > HOST_MAX:
+			h.tcp.disconnect_from_host()
+			continue
+		keep.append(h)
+	host_conns = keep
+
+# true: answered (the connection is closed); false: the request is not all here yet.
+func _host_try(h: HostConn) -> bool:
+	var head := h.buf.get_string_from_ascii()
+	var end := head.find("\r\n\r\n")
+	if end < 0:
+		return false
+	var lines := head.substr(0, end).split("\r\n")
+	var first := lines[0].split(" ")
+	if first.size() < 2:
+		_host_reply(h.tcp, 400, {"ok": false, "text": "Not an http request."})
+		return true
+	var length := 0
+	for i in range(1, lines.size()):
+		var colon := lines[i].find(":")
+		if colon > 0 and lines[i].substr(0, colon).strip_edges().to_lower() == "content-length":
+			length = int(lines[i].substr(colon + 1).strip_edges())
+	if length > HOST_MAX:
+		_host_reply(h.tcp, 400, {"ok": false, "text": "Too big."})
+		return true
+	if h.buf.size() < end + 4 + length:
+		return false
+	var body := {}
+	if length > 0:
+		var parsed = JSON.parse_string(h.buf.slice(end + 4, end + 4 + length).get_string_from_utf8())
+		if typeof(parsed) == TYPE_DICTIONARY:
+			body = parsed
+	var method := first[0]
+	var path := first[1].get_slice("?", 0)
+	if method == "GET" and (path == "/state" or path == "/"):
+		_host_reply(h.tcp, 200, _host_state())
+	elif method == "POST":
+		var r: Array = _host_cmd(path.trim_prefix("/"), body)
+		var code := 200 if r[0] else (404 if str(r[1]).begins_with("Unknown") else 400)
+		_host_reply(h.tcp, code, {"ok": r[0], "text": r[1], "state": _host_state()})
+	else:
+		_host_reply(h.tcp, 404, {"ok": false, "text": "Unknown: %s %s" % [method, path]})
+	return true
+
+func _host_reply(t: StreamPeerTCP, code: int, data: Dictionary) -> void:
+	var body := JSON.stringify(data).to_utf8_buffer()
+	var reason: String = {200: "OK", 400: "Bad Request", 404: "Not Found"}.get(code, "Error")
+	var head := "HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: %d\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" % [code, reason, body.size()]
+	t.put_data(head.to_ascii_buffer() + body)
+	t.disconnect_from_host()
+
+# The commands: any time; a bots, level or arena change made in a match counts from the next round.
+func _host_cmd(cmd: String, d: Dictionary) -> Array:
+	var in_match := phase != P.PH_LOBBY and phase != P.PH_COUNTDOWN
+	var later := " from the next round" if in_match else ""
+	match cmd:
+		"bots":
+			var n := clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
+			bots_wanted = n
+			seats_dirty = true
+			_say("🏰 [HOST] bots %d%s" % [n, later])
+			return [true, "Bots: %d%s." % [n, later]]
+		"bot_level":
+			var lv := int(d.get("n", -1))
+			if lv < SimScript.BrainScript.EASY or lv > SimScript.BrainScript.HARD:
+				return [false, "The bots' level is 1 (EASY), 2 (NORMAL) or 3 (HARD)."]
+			sim.bot_level = lv
+			seats_dirty = true
+			_say("🏰 [HOST] bots %s%s" % [SimScript.BrainScript.NAMES[lv], later])
+			return [true, "Bots %s%s." % [SimScript.BrainScript.NAMES[lv], later]]
+		"arena":
+			var n := int(d.get("n", -99))
+			if n != P.ARENA_MIX and not SimScript.LevelScript.PLAY.has(n):
+				return [false, "No arena %d." % n]
+			arena_pick = n
+			if not in_match:
+				sim.set_arena(_next_arena())
+			seats_dirty = true
+			_say("🏰 [HOST] arena %s%s" % [_arena_label(n), later])
+			return [true, "Arena %s%s." % [_arena_label(n), later]]
+		"kick":
+			var i := int(d.get("seat", -1))
+			if i < 0 or i >= SEATS or seats[i].kind != 1:
+				return [false, "Seat %d has no person in it." % i]
+			var s: Seat = seats[i]
+			var who := s.name
+			var cid := s.client_id
+			_free_seat_now(s)
+			if cid != 0 and conns.has(cid):
+				var c: Conn = conns[cid]
+				c.seat = -1
+				_out(cid, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": c.name, "phase": phase}))
+				_out(cid, JSON.stringify({"kind": "note", "text": "The host took your seat. Press JOIN to play again."}))
+			_say("🏰 [HOST] kicked seat %d '%s': back to watching" % [i, who])
+			return [true, "%s is back to watching." % who]
+		"start":
+			if phase != P.PH_LOBBY:
+				return [false, "A match is already on."]
+			if _people() + _bots_now() < 2:
+				return [false, "A match needs 2 fighters: add a bot."]
+			phase = P.PH_COUNTDOWN
+			phase_t = COUNTDOWN_TICKS
+			seats_dirty = true
+			_say("🏰 [LOBBY] START by the host: %d people + %d bots" % [_people(), _bots_now()])
+			return [true, "The match starts in %d s." % (COUNTDOWN_TICKS / 60)]
+		"stop":
+			if phase == P.PH_LOBBY:
+				return [false, "No match to end: the lobby is open."]
+			_say("🏰 [HOST] ended the match in round %d %s" % [round_no, _score_line()])
+			_out(0, JSON.stringify({"kind": "note", "text": "The host ended the match."}))
+			_to_lobby()
+			return [true, "The match ended: back to the lobby."]
+	return [false, "Unknown command: %s" % cmd]
+
+# The addresses phones on this network use (no loopback, Tailscale or Docker ones).
+func _lan_ips() -> Array:
+	var out: Array = []
+	for a in IP.get_local_addresses():
+		if a.begins_with("192.168.") or a.begins_with("10."):
+			out.append(a)
+	out.sort()
+	return out
+
+func _host_state() -> Dictionary:
+	var pings := {}
+	var per: Array
+	if net_thread_on:
+		net_mutex.lock()
+		per = net_per_client.duplicate(true)
+		net_mutex.unlock()
+	else:
+		per = _client_list()
+	for pc in per:
+		pings[int(pc["id"])] = int(pc["rtt"])
+	var seat_list: Array = []
+	for s in seats:
+		var c: Conn = conns.get(s.client_id) if s.client_id != 0 else null
+		var held: bool = s.kind == 1 and s.client_id == 0
+		seat_list.append({"i": s.i, "name": s.name, "kind": s.kind, "who": ["empty", "person", "bot"][s.kind],
+			"online": s.kind == 2 or s.client_id != 0, "held_s": ceili(s.hold_t / 60.0) if held else 0,
+			"points": s.points, "crowns": s.crowns, "in_round": s.in_round,
+			"ip": c.ip if c != null else "", "ping_ms": pings.get(s.client_id, -1), "client": s.client_id})
+	var watching: Array = []
+	for id in conns:
+		var c: Conn = conns[id]
+		if c.ok and c.seat < 0:
+			watching.append({"client": c.id, "name": c.name, "ip": c.ip, "ping_ms": pings.get(c.id, -1)})
+	var arenas: Array = [{"n": P.ARENA_MIX, "name": "MIX"}]
+	for n in SimScript.LevelScript.PLAY:
+		arenas.append({"n": n, "name": SimScript.LevelScript.name_of(n)})
+	var levels: Array = []
+	for lv in range(SimScript.BrainScript.EASY, SimScript.BrainScript.HARD + 1):
+		levels.append({"n": lv, "name": SimScript.BrainScript.NAMES[lv]})
+	var people_rows: Array = []
+	var bot_rows: Array = []
+	for k in stats:
+		var r: Dictionary = stats[k].duplicate()
+		r.erase("_m")
+		var shots: int = r["shots"]
+		r["hit_pct"] = snappedf(100.0 * r["arrow_kills"] / shots, 0.1) if shots > 0 else 0.0
+		r["kd"] = snappedf(float(r["kills"]) / maxi(1, r["deaths"]), 0.01)
+		if r["bot"]:
+			bot_rows.append(r)
+		else:
+			people_rows.append(r)
+	var by_kills := func(x: Dictionary, y: Dictionary) -> bool:
+		return x["kills"] > y["kills"] or (x["kills"] == y["kills"] and str(x["name"]) < str(y["name"]))
+	people_rows.sort_custom(by_kills)
+	bot_rows.sort_custom(by_kills)
+	return {"ok": true, "version": P.VERSION, "t": Time.get_unix_time_from_system(),
+		"up_s": (Time.get_ticks_msec() - started_ms) / 1000.0,
+		"phase": phase, "phase_name": PHASE_NAMES[phase], "round": round_no,
+		"goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
+		"match": match_no, "arena_pick": arena_pick, "arena_pick_name": _arena_label(arena_pick),
+		"arena_now": sim.level.id, "arena_now_name": sim.level.name, "arenas": arenas,
+		"bots_wanted": bots_wanted, "bots_now": _bots_now(), "max_bots": MAX_BOTS,
+		"bot_level": sim.bot_level, "bot_level_name": SimScript.BrainScript.NAMES[sim.bot_level], "levels": levels,
+		"people": _people(), "watchers": watching.size(), "lan": _lan_ips(), "page_port": 8443, "game_port": port,
+		"seats": seat_list, "watching": watching,
+		"tick": {"mean_ms": last_rec.get("tick_mean_ms", 0.0), "max_ms": last_rec.get("tick_max_ms", 0.0),
+			"cpu_pct": last_rec.get("cpu_pct", 0.0), "rss_mb": last_rec.get("rss_mb", 0.0)},
+		"stats_since": stats_since, "stats": people_rows + bot_rows, "events": events_ring}
