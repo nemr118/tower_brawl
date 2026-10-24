@@ -147,8 +147,8 @@ func _burst(kind: String, pos: Vector2, color := Color.WHITE, rot := 0.0) -> voi
 	e.modulate = color
 	e.restart()
 
-func flash(pos: Vector2, size: float, color: Color, secs: float) -> void:
-	if not enabled:
+func flash(pos: Vector2, size: float, color: Color, secs: float, always := false) -> void:
+	if not enabled and not always:   # always (p4.5): a flash every look draws, LOW too
 		return
 	var f: Array = flashes[flash_i]
 	flash_i = (flash_i + 1) % flashes.size()
@@ -254,6 +254,8 @@ func on_event(e: Array) -> void:
 		_burst("death_burst", pos, c)
 		_burst("soul", pos)
 		flash(pos, 4.0, Color(1, 1, 1), 0.12)
+		flash(pos, 7.0, c.lightened(0.3), 0.3, true)       # p4.5: the death bursts in its colour, every look
+		light_burst(pos, c.lightened(0.2), 2.6, 3.2, 0.5)  # and lights the walls around it (NORMAL, HIGH)
 		shake = maxf(shake, 6.0)
 		if e[4] == 4:
 			_burst("flame_burst", pos)

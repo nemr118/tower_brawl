@@ -124,6 +124,7 @@ func _ready() -> void:
 	lobby.look_pressed.connect(_on_look)
 	lobby.arena_pressed.connect(_on_arena)
 	lobby.bot_level_pressed.connect(_on_bot_level)
+	lobby.power_pressed.connect(_on_power)
 	lobby.set_look(str(opts["look"]) if look_test else look)
 	sticks = Sticks.new()
 	add_child(sticks)
@@ -453,6 +454,10 @@ func _on_arena() -> void:
 
 func _on_bots(n: int) -> void:
 	net.send({"kind": "bots", "n": n})
+
+# The lobby's POWER button (p4.5): the power arrows on or off for everyone.
+func _on_power() -> void:
+	net.send({"kind": "power", "n": 0 if int(seats_msg.get("power", 0)) != 0 else 1})
 
 # The lobby's bots level button: EASY, NORMAL, HARD, then EASY (G6).
 func _on_bot_level() -> void:

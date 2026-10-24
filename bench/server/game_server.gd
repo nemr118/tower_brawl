@@ -30,8 +30,9 @@
 #   each person's address and ping), the settings, the players' numbers tonight,
 #   the last 80 events. POST /bots {n} (0..7), /bot_level {n} (1..3), /arena {n}
 #   (P.ARENA_MIX or an arena of LevelScript.PLAY): any time, in a match from the
-#   next round; /kick {seat} (a person goes back to watching), /start, /stop (the
-#   match ends, back to the lobby). A reply: {ok, text, state}. 0 (the default): off.
+#   next round; /power {n} (p4.5: the power arrows on or off, from the next shot);
+#   /kick {seat} (a person goes back to watching), /start, /stop (the match ends,
+#   back to the lobby). A reply: {ok, text, state}. 0 (the default): off.
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -43,9 +44,9 @@
 # close) comes up, net_out (a snapshot for all, a JSON text for one) goes down.
 # The JSON (text frames). From a client: hello {name, version, token},
 # join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
-# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), name {name}. From the server: welcome {seat, version, name, phase},
+# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.5: 1 the power arrows on, 0 off), name {name}. From the server: welcome {seat, version, name, phase},
 # version_error {server, yours}, full, note {text}, seats {phase, round, goal,
-# bots, bots_wanted, bot_level, people, arena (the pick), arena_now (the round's,
+# bots, bots_wanted, bot_level, power, people, arena (the pick), arena_now (the round's,
 # or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
 # round_end {round, winner, name,
 # draw, points}, match_end {winner, name, points}.
@@ -435,6 +436,12 @@ func _on_text(c: Conn, txt: String) -> void:
 			arena_pick = n
 			sim.set_arena(_next_arena())
 			_say("🏰 [LOBBY] arena %s, picked by seat %d '%s'" % [_arena_label(arena_pick), c.seat, seats[c.seat].name])
+			seats_dirty = true
+	elif kind == "power":
+		var on := int(d.get("n", 0)) != 0
+		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and on != sim.power_arrows:
+			sim.power_arrows = on
+			_say("🏰 [LOBBY] power arrows %s, picked by seat %d '%s'" % ["ON" if on else "OFF", c.seat, seats[c.seat].name])
 			seats_dirty = true
 	elif kind == "name":
 		if c.seat >= 0:
@@ -873,7 +880,8 @@ func _send_seats(target: int) -> void:
 		list.append({"i": s.i, "name": s.name, "kind": s.kind, "on": s.kind == 2 or s.client_id != 0,
 			"points": s.points, "crowns": s.crowns, "in": s.in_round})
 	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
-		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
+		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.power_arrows else 0,
+		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"seats": list}
 	_out(target, JSON.stringify(msg))
 	if target == 0:
@@ -1361,6 +1369,11 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 				_out(cid, JSON.stringify({"kind": "note", "text": "The host took your seat. Press JOIN to play again."}))
 			_say("🏰 [HOST] kicked seat %d '%s': back to watching" % [i, who])
 			return [true, "%s is back to watching." % who]
+		"power":
+			sim.power_arrows = int(d.get("n", 0)) != 0
+			seats_dirty = true
+			_say("🏰 [HOST] power arrows %s" % ("ON" if sim.power_arrows else "OFF"))
+			return [true, "Power arrows %s, from the next shot." % ("ON" if sim.power_arrows else "OFF")]
 		"start":
 			if phase != P.PH_LOBBY:
 				return [false, "A match is already on."]
@@ -1443,6 +1456,7 @@ func _host_state() -> Dictionary:
 		"arena_now": sim.level.id, "arena_now_name": sim.level.name, "arenas": arenas,
 		"bots_wanted": bots_wanted, "bots_now": _bots_now(), "max_bots": MAX_BOTS,
 		"bot_level": sim.bot_level, "bot_level_name": SimScript.BrainScript.NAMES[sim.bot_level], "levels": levels,
+		"power_arrows": sim.power_arrows,
 		"people": _people(), "watchers": watching.size(), "lan": _lan_ips(), "page_port": 8443, "game_port": port,
 		"seats": seat_list, "watching": watching,
 		"tick": {"mean_ms": last_rec.get("tick_mean_ms", 0.0), "max_ms": last_rec.get("tick_max_ms", 0.0),

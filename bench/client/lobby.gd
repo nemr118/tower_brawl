@@ -13,13 +13,14 @@ signal bots_changed(n: int)
 signal look_pressed
 signal arena_pressed
 signal bot_level_pressed
+signal power_pressed
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
 const LevelScript = preload("res://sim/level.gd")
 const LEVEL_NAMES := ["OLD", "EASY", "NORMAL", "HARD"]   # sim/brain.gd NAMES
 const HELP_PC := "PC: A D run · W or space jumps · S down, S + jump drops through a ledge · shift dodges the way you hold · hold the mouse button to aim, let go to fire"
-const HELP_PHONE := "Phone: left stick runs, push it up to jump, down + past the rim to drop · right stick aims, let go to fire · DODGE button, or flick the left stick past its rim"
+const HELP_PHONE := "Phone: left stick runs, push it up to jump, down + past the rim to drop · right thumb: pull back past the ring and let go to fire (the arrow flies the other way) · DODGE button, or flick the left stick past its rim"
 
 var root := Control.new()
 var title := Label.new()
@@ -33,6 +34,7 @@ var bot_level_btn := Button.new()
 var start_btn := Button.new()
 var look_btn := Button.new()
 var arena_btn := Button.new()
+var power_btn := Button.new()     # p4.5: POWER ARROWS on or off
 var status_label := Label.new()
 var help := Label.new()
 var seated := false
@@ -75,8 +77,10 @@ func _init() -> void:
 		var lab := Label.new()
 		_label(lab, "", Vector2(530, y), Vector2(910, 52), 32, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT)
 		rows.append([swatch, lab])
-	_button(arena_btn, "ARENA: MIX", Vector2(470, 742), Vector2(540, 64), 28)
+	_button(arena_btn, "ARENA: MIX", Vector2(470, 742), Vector2(330, 64), 24)
 	arena_btn.pressed.connect(func(): arena_pressed.emit())
+	_button(power_btn, "POWER: OFF", Vector2(810, 742), Vector2(200, 64), 24)
+	power_btn.pressed.connect(func(): power_pressed.emit())
 	_label(bots_label, "BOTS: 7", Vector2(470, 818), Vector2(220, 70), 34, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT)
 	_button(bots_minus, "-", Vector2(690, 818), Vector2(70, 70), 40)
 	_button(bots_plus, "+", Vector2(770, 818), Vector2(70, 70), 40)
@@ -191,6 +195,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 	var pick := int(m.get("arena", P.ARENA_MIX))
 	arena_btn.text = "ARENA: %s" % ("MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick))
 	arena_btn.disabled = not seated or not in_lobby
+	power_btn.text = "POWER: %s" % ("ON" if int(m.get("power", 0)) != 0 else "OFF")
+	power_btn.disabled = not seated or not in_lobby
 	if phase == P.PH_COUNTDOWN:
 		start_btn.text = "STARTING IN %d" % ceili(left / 60.0)
 		start_btn.disabled = true

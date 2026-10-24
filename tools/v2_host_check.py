@@ -138,6 +138,10 @@ def main():
         check(code == 400, f"POST /arena 7 refused: {r.get('text')}")
         code, r = call(base, "/stop", {})
         check(code == 400, f"POST /stop in the lobby refused: {r.get('text')}")
+        code, r = call(base, "/power", {"n": 1})
+        check(code == 200 and r["state"]["power_arrows"] is True, f"POST /power 1: {r.get('text')}")
+        code, r = call(base, "/power", {"n": 0})
+        check(code == 200 and r["state"]["power_arrows"] is False, f"POST /power 0: {r.get('text')}")
 
         # a match
         code, r = call(base, "/start", {})

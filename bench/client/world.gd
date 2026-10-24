@@ -87,6 +87,7 @@ var threats := Node2D.new()
 var bodies := Node2D.new()       # p4.3: the fighters and your ring, the first thing in the threats layer: never darkened
 var ring := Line2D.new()         # p4.3: the ring under your feet, in your colour
 var ring_glow := Sprite2D.new()
+var fighter_glows: Array = []    # p4.5: a soft glow in each fighter's colour, under it (one a slot)
 var me := -1                     # your seat (the game client, set_me); -1: none (the benchmark, a watcher)
 var me_shown := -2               # the seat the outlines were last set for
 var me_phase := -1
@@ -282,6 +283,15 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	ring.visible = false
 	bodies.add_child(ring)
 	for i in 32:
+		var fg := Sprite2D.new()
+		fg.texture = HALO
+		fg.material = add_mat
+		fg.scale = Vector2(2.4, 2.1)
+		fg.modulate = Color(TEAM[i % 8], 0.3)
+		fg.visible = false
+		bodies.add_child(fg)
+		fighter_glows.append(fg)
+	for i in 32:
 		var s := Sprite2D.new()
 		s.region_enabled = true
 		s.offset = Vector2(0, -58)
@@ -458,11 +468,17 @@ func set_variant(id: String) -> bool:
 static func variant_label(id: String) -> String:
 	return VARIANTS[id][2] if VARIANTS.has(id) else id
 
+# p4.5 (the user: the benchmark page's lighting, its glow and bloom, moving lights,
+# fire and explosions): spirit lights drift on NORMAL (glow only) and HIGH (2 of
+# them real lights), bloom on HIGH, and the newest flying arrows carry real
+# lights on HIGH (arrow_lights); every look gives fighters and arrows a glow.
 static func parts_for_tier(t: int) -> Dictionary:
 	return {"tier": t, "lit": t >= 1, "torch_lights": 0 if t < 1 else (4 if t < 2 else 8), "grid_lights": 0,
 		"dyn_lights": t >= 2, "particles": t >= 2, "fog": 3 if t >= 6 else (2 if t >= 3 else (1 if t >= 2 else 0)),
 		"fog_loops": true, "shafts": t >= 2, "lights_draw": "all", "fighter_shader": t >= 3, "post": t >= 3,
-		"shake": t >= 3}
+		"shake": t >= 3, "wisps": 16 if t >= 6 else (12 if t >= 3 else (8 if t >= 2 else 0)),
+		"wisp_lights": 16 if t >= 6 else (2 if t >= 3 else 0), "bloom": t >= 3,
+		"arrow_lights": 8 if t >= 6 else (4 if t >= 3 else 0)}
 
 func apply_parts(p: Dictionary) -> bool:
 	var t: int = p["tier"]
@@ -496,12 +512,12 @@ func apply_parts(p: Dictionary) -> bool:
 	rain.emitting = max_on
 	splash.visible = max_on
 	splash.emitting = max_on
-	_set_wisps(16 if max_on else 0)
+	_set_wisps(int(p["wisps"]), int(p["wisp_lights"]))
 	storm = max_on
-	bloom_on = max_on
+	bloom_on = p["bloom"]
 	distort_on = max_on
 	post.visible = p["post"]
-	post.material.set_shader_parameter("bloom", 1.0 if max_on else 0.0)
+	post.material.set_shader_parameter("bloom", 1.0 if p["bloom"] else 0.0)
 	shake_on = p["shake"]
 	copies = 2 if t == 5 else 1
 	fx.set_tier(fx_on, p["dyn_lights"])
@@ -529,7 +545,7 @@ func _show_light(l: PointLight2D) -> void:
 func set_level(lv: int) -> Dictionary:
 	fx.set_ratio(0.6 + 0.04 * lv)
 	_set_fog_layers(mini(5, 2 + lv / 3 + 1))
-	_set_wisps(mini(MAX_WISPS, 8 + lv * 3))
+	_set_wisps(mini(MAX_WISPS, 8 + lv * 3), MAX_WISPS)   # the limit test: every spirit light is a real light
 	copies = mini(4, 1 + lv / 3)
 	return {"particles": fx.ratio * boost, "fog_layers": fog_on, "wisps": wisp_on, "copies": copies}
 
@@ -538,11 +554,12 @@ func _set_fog_layers(n: int) -> void:
 	for i in fogs.size():
 		fogs[i].visible = i < n
 
-func _set_wisps(n: int) -> void:
+# n spirit lights drift (a glowing sprite each); the first `lit` of them are real lights too.
+func _set_wisps(n: int, lit: int) -> void:
 	wisp_on = n
 	for i in wisps.size():
 		wisps[i][0].visible = i < n
-		wisps[i][1].enabled = i < n
+		wisps[i][1].enabled = i < mini(n, lit)
 
 func _clear_dynamic() -> void:
 	for id in arrows.keys():
@@ -583,11 +600,15 @@ func render(s: Dictionary, delta: float) -> void:
 				if int(cand["id"]) == i:
 					f = cand
 					break
+		var fg: Sprite2D = fighter_glows[i]
 		if f.is_empty() or tier == 4:
 			spr.visible = false
+			fg.visible = false
 			continue
 		spr.visible = true
 		spr.position = Vector2(f["x"] + 18.0, f["y"] + 63.0)
+		fg.visible = f["state"] != P.F_DEAD
+		fg.position = Vector2(f["x"] + 18.0, f["y"] + 30.0)
 		spr.flip_h = (f["flags"] & 1) == 0
 		var frame := _frame(f, slot, i)
 		spr.region_rect = Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128)
@@ -800,6 +821,10 @@ func _render_arrows(al: Dictionary) -> void:
 	for id in arrows.keys():
 		if not al.has(id):
 			_free_arrow(id)
+	var lit := 0                   # flying arrows with a real light now (arrow_lights, p4.5)
+	for id in arrows:
+		if arrows[id][3] != null:
+			lit += 1
 	for id in al:
 		var a: Dictionary = al[id]
 		var e: Array = arrows.get(id, [])
@@ -809,6 +834,12 @@ func _render_arrows(al: Dictionary) -> void:
 			spr.region_enabled = true
 			spr.region_rect = Rect2(0, a["kind"] * 8, 32, 8)
 			spr.offset = Vector2(-12, 0)
+			var g := Sprite2D.new()   # p4.5: a glow along the arrow while it flies, every look
+			g.texture = HALO
+			g.material = add_mat
+			g.scale = Vector2(1.1, 0.45)
+			g.modulate = Color(FX.KIND_COLOR[int(a["kind"]) % 5], 0.55)
+			spr.add_child(g)
 			threats.add_child(spr)
 			e = [spr, null, "", null]
 			arrows[id] = e
@@ -816,6 +847,7 @@ func _render_arrows(al: Dictionary) -> void:
 		spr.position = Vector2(a["x"], a["y"])
 		spr.rotation = a["ang"]
 		var flying: bool = a["state"] == P.S_FLY
+		spr.get_child(0).visible = flying
 		if parts["particles"] and flying and e[1] == null:
 			var k: String = TRAIL.get(a["kind"], "trail_plain")
 			e[1] = fx.take_loop(k)
@@ -828,6 +860,10 @@ func _render_arrows(al: Dictionary) -> void:
 				e[1].global_position = spr.position
 		if parts["dyn_lights"] and a["kind"] == P.A_FIRE and e[3] == null and flying:
 			e[3] = _take_light(Color(1, 0.6, 0.2), 1.2, 1.4)
+			lit += 1
+		elif e[3] == null and flying and lit < int(parts["arrow_lights"]):
+			e[3] = _take_light(Color(FX.KIND_COLOR[int(a["kind"]) % 5]).lerp(Color(1, 0.9, 0.7), 0.5), 0.9, 1.0)
+			lit += 1
 		if e[3] != null:
 			e[3].position = spr.position
 			if not flying:
