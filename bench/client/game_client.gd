@@ -213,9 +213,12 @@ func _process(delta: float) -> void:
 	world.render(view, delta)
 	var aim_on := false
 	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
+	if not me.is_empty():
+		sticks.arrows_left = int(me["arrows"])
 	if shoot_held and not me.is_empty():
 		aim_on = int(me["state"]) == P.F_NORMAL
-		world.show_aim(Vector2(me["x"] + 18.0, me["y"] + 28.0), aim_deg10 * TAU / 3600.0, aim_on)
+		var armed: bool = sticks.aim_armed if (sticks.active and sticks.visible) else true   # the mouse held: armed
+		world.show_aim(Vector2(me["x"] + 18.0, me["y"] + 28.0), aim_deg10 * TAU / 3600.0, aim_on, armed, int(me["arrows"]) <= 0)
 	if not aim_on:
 		world.show_aim(Vector2.ZERO, 0.0, false)
 	if predicting:   # the HUD shows your arrows as the prediction has them (a shot counts at once)

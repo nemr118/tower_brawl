@@ -5,14 +5,20 @@
 # the thumb stays up (re-armed under JUMP_REARM_DEG); within DOWN_DEG of straight
 # down it holds down, and past the rim there it presses jump (down + jump: the
 # drop through a ledge); past the rim anywhere else it dodges that way. Right
-# half: the aim stick: touching it aims (the fighter stands still on the
-# ground), the thumb's direction is the aim, and lifting it fires. A DODGE
-# button sits at the right edge. buttons() and aim_deg10() feed net.send_input.
+# half (p4.4, the user's pick): pull back to shoot. The thumb down draws the bow
+# (the fighter stands still on the ground); pulling it away aims the other way
+# (pull left, the arrow flies right); past the ring (ARM_RADIUS) the shot is
+# armed: the ring turns gold and "LET GO: ARROW!" shows, and letting go then
+# always fires. Let go inside the ring: no shot (B_CANCEL, sent until the next
+# touch so a skipped tick cannot lose it). A DODGE button sits at the right
+# edge. buttons() and aim_deg10() feed net.send_input.
 extends CanvasLayer
 
 const P = preload("res://sim/proto.gd")
 const MOVE_RADIUS := 240.0
-const AIM_RADIUS := 210.0
+const AIM_RADIUS := 210.0       # how far the thumb's knob follows
+const ARM_RADIUS := 110.0       # p4.4: pull past this ring and the shot is armed
+const RED := Color(1.0, 0.35, 0.3)
 const RIM_PAD := 30.0
 const RIM_REARM := 0.85
 const NOISE := 0.08
@@ -41,6 +47,9 @@ var aim_center := Vector2.ZERO
 var aim_offset := Vector2.ZERO
 var aim_dir := Vector2.RIGHT
 var aim_set := false
+var aim_armed := false            # p4.4: the thumb is past the ring: letting go fires
+var aim_cancel := false           # p4.4: the last let-go was inside the ring: B_CANCEL until the next touch
+var arrows_left := 3              # the game client's count, for the ring (NO ARROWS)
 var dodge_touch := -1
 var jump_tap := 0
 var dodge_tap := 0
@@ -93,6 +102,8 @@ func _touch(e: InputEventScreenTouch) -> void:
 		elif p.x >= win.x * 0.5 and aim_touch == -1:
 			aim_touch = e.index
 			aim_center = p
+			aim_armed = false
+			aim_cancel = false
 			_aim(p)
 	else:
 		if e.index == move_touch:
@@ -102,7 +113,9 @@ func _touch(e: InputEventScreenTouch) -> void:
 			in_down = false
 			in_jump = false
 		elif e.index == aim_touch:
-			aim_touch = -1          # lifting the thumb fires: the next tick sends no shoot bit
+			aim_touch = -1          # let go: the next tick sends no shoot bit: past the ring it fires,
+			aim_cancel = not aim_armed   # inside it B_CANCEL lowers the bow
+			aim_armed = false
 			aim_offset = Vector2.ZERO
 		elif e.index == dodge_touch:
 			dodge_touch = -1
@@ -155,8 +168,9 @@ func _aim(p: Vector2) -> void:
 	var dist := off.length()
 	aim_offset = off.limit_length(AIM_RADIUS * k)
 	if dist > AIM_RADIUS * k * NOISE:
-		aim_dir = off / dist
+		aim_dir = -off / dist   # pull back: the arrow flies the other way
 		aim_set = true
+	aim_armed = dist >= ARM_RADIUS * k
 
 # The buttons this physics tick (proto B_*). A tap lasts TAP_TICKS ticks.
 func buttons() -> int:
@@ -179,6 +193,8 @@ func buttons() -> int:
 		jump_tap -= 1
 	if aim_touch != -1:
 		b |= P.B_SHOOT
+	elif aim_cancel:
+		b |= P.B_CANCEL
 	if dodge_touch != -1 or dodge_tap > 0:
 		b |= P.B_DODGE
 	if dodge_tap > 0:
@@ -216,15 +232,41 @@ func _paint(n: Node2D) -> void:
 		mcol = Color(BLUE, 0.9)
 	_thumb(n, mc + (move_offset if mlive else Vector2.ZERO), mcol, ma)
 	n.draw_string(font, mc + Vector2(-mr, -mr - 14.0 * k), "MOVE · up jumps · down + rim drops · rim dodges", HORIZONTAL_ALIGNMENT_LEFT, -1, int(20 * k), Color(1, 1, 1, 0.35))
-	# right: aim
+	# right: pull back to shoot (p4.4). The ring is the arming line; armed, it turns
+	# gold (or red with an empty quiver) and says what letting go will do.
 	var alive := aim_touch != -1
 	var ac := aim_center if alive else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
-	var ar := AIM_RADIUS * k
+	var ring := ARM_RADIUS * k
 	var aa := 0.9 if alive else 0.45
-	_base(n, ac, ar, aa)
-	n.draw_line(ac, ac + aim_dir * ar, Color(GOLD, 0.8 * aa), 2.0 * k, true)
-	_thumb(n, ac + (aim_offset if alive else Vector2.ZERO), Color(GOLD, 0.9) if alive else Color(1.0, 1.0, 1.0, 0.85 * aa), aa)
-	n.draw_string(font, ac + Vector2(-ar, -ar - 14.0 * k), "AIM · hold to aim · let go to fire", HORIZONTAL_ALIGNMENT_LEFT, -1, int(20 * k), Color(1, 1, 1, 0.35))
+	var armed := alive and aim_armed
+	var col := (RED if arrows_left <= 0 else GOLD) if armed else Color(1, 1, 1)
+	n.draw_circle(ac, ring, Color(col, 0.22) if armed else Color(0.12, 0.14, 0.2, 0.35 * aa))
+	n.draw_arc(ac, ring, 0.0, TAU, 64, Color(col, 0.95 if armed else 0.55 * aa), (5.0 if armed else 2.0) * k, true)
+	if alive and aim_set:
+		var tip := ac + aim_dir * (ring + 40.0 * k)
+		n.draw_line(ac, tip, Color(col, 0.9 if armed else 0.4), (4.0 if armed else 2.0) * k, true)
+		if armed:
+			var side := aim_dir.orthogonal() * 14.0 * k
+			n.draw_colored_polygon(PackedVector2Array([tip + aim_dir * 22.0 * k, tip + side, tip - side]), Color(col, 0.95))
+	_thumb(n, ac + (aim_offset if alive else Vector2.ZERO), Color(col, 0.9) if alive else Color(1.0, 1.0, 1.0, 0.85 * aa), aa)
+	var say := "AIM · thumb down, pull back past the ring, let go"
+	var say_col := Color(1, 1, 1, 0.35)
+	var say_size := 20
+	if alive:
+		if not armed:
+			say = "PULL PAST THE RING"
+			say_col = Color(1, 1, 1, 0.8)
+			say_size = 26
+		elif arrows_left <= 0:
+			say = "NO ARROWS"
+			say_col = Color(RED, 1.0)
+			say_size = 30
+		else:
+			say = "LET GO: ARROW!"
+			say_col = Color(GOLD, 1.0)
+			say_size = 30
+	n.draw_string_outline(font, ac + Vector2(-ring * 2.0, -ring - 18.0 * k), say, HORIZONTAL_ALIGNMENT_CENTER, ring * 4.0, int(say_size * k), int(5 * k), Color(0, 0, 0, 0.8 if alive else 0.0))
+	n.draw_string(font, ac + Vector2(-ring * 2.0, -ring - 18.0 * k), say, HORIZONTAL_ALIGNMENT_CENTER, ring * 4.0, int(say_size * k), say_col)
 	# the dodge button
 	var dc := _dodge_center()
 	var held := dodge_touch != -1

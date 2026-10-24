@@ -44,9 +44,10 @@ const DRAW := [[1, 1], [16, 24], [10, 16], [8, 12]]       # ticks the bow is dra
 const PAUSE := [[20, 50], [70, 130], [40, 80], [25, 50]]  # ticks after a shot before the next one
 const LOOK_EVERY := 6           # a shot is looked for every 6 ticks
 const SHOT_RANGE := 900.0       # no shot at a target farther than this
-const AIM_HOLD := 30            # drawn this long past the draw with no path, on the ground: lower the bow with a jump
+const AIM_HOLD := 30            # drawn this long past the draw with no path, on the ground: lower the bow (B_CANCEL)
 const AIM_HOLD_MAX := 120       # and in the air, at most this long: then the shot goes anyway
-const SHOT_OFFSETS := [0.0, -0.07, 0.07, -0.14, 0.14, -0.21, 0.21]   # radians tried around the straight line past 420 px
+const SHOT_OFFSETS := [0.0, -0.07, 0.07, -0.14, 0.14, -0.21, 0.21]   # radians tried around each arc's angle past 420 px
+const NEAR_OFFSETS := [0.0, -0.035, 0.035]                          # and closer
 const CATCH := [0.0, 0.2, 0.5, 0.8]   # the chance it dodges into an arrow coming at it (rolled once an arrow)
 const PEOPLE := [1.0, 1.6, 1.0, 0.6]  # how far away a person seems when it picks a target (a factor on the
                                       # distance): EASY bots go for each other first, HARD bots for people
@@ -84,7 +85,7 @@ class Mind:
 	var draw_t := 0             # ticks drawn so far
 	var draw_need := 0          # ticks to draw before the shot
 	var look_t := 0             # ticks until it looks for a shot again
-	var lower := false          # the bow is being lowered with a jump (no path): shoot comes up next tick, no shot
+	var want_shot := false      # p4.4: this release is a shot; any other release gets B_CANCEL (think): no arrow
 	var seen := {}              # an arrow's id -> true: dodge into it when it is close; false: let it come
 	var only_dodge := false     # a test knob (the bot probe's catch test): stand, hold fire, only dodge
 	var goal_s := -1            # the routes: the surface it heads for (-1: none yet)
@@ -121,6 +122,11 @@ static func think(sim, f) -> void:
 		b = _old(sim, f, m) if f.level == OLD else _play(sim, f, m)
 	elif m.drawing:
 		m.drawing = false   # knocked out of it: the bow is down
+	if f.drawn and not (b & P.B_SHOOT):
+		if m.want_shot:
+			m.want_shot = false
+		else:
+			b |= P.B_CANCEL  # p4.4: a let-go shoot always fires now, so a release the brain does not mean says so
 	m.prev = b
 	sim.apply_input(f, b, m.aim)
 
@@ -177,6 +183,7 @@ static func _old(sim, f, m: Mind) -> int:
 		var ay := SimScript.wrap_d(f.y, tgt.y, H) - 20.0
 		m.aim = aim_steps(atan2(ay, ax) + rng.randf_range(-0.12, 0.12))
 		m.draw = 1
+		m.want_shot = true   # the tick after the draw: the release, a shot
 		f.shoot_cd = rng.randi_range(20, 50)
 	return _buttons(m)
 
@@ -261,27 +268,19 @@ static func _play(sim, f, m: Mind) -> int:
 	if dodge != 0:
 		m.player = null     # the dodge breaks a move: it plans again once it stands
 		m.plan_t = 0
-		if m.drawing:       # shoot stays down on the dodge tick: the dodge lowers the bow, no shot
-			m.drawing = false
-			return dodge | P.B_SHOOT
+		m.drawing = false   # a drawn bow comes down on the dodge tick (B_CANCEL, think): no shot
 		return dodge
-	if m.lower:             # the jump last tick lowered the bow: shoot comes up, no shot
-		m.lower = false
-		m.drawing = false
-	elif m.drawing and m.draw_t > 1 and not f.aiming:
-		m.drawing = false   # the bow never came up (a jump or a dodge took it): try again later
+	if m.drawing and m.draw_t > 1 and not f.aiming:
+		m.drawing = false   # the bow never came up (knocked out of it): it comes down (B_CANCEL), try again later
 	elif m.drawing:
-		m.jump = 0          # a jump would lower the bow
+		m.jump = 0          # it stands to shoot
 		m.jump_wait = false
 		if m.quit_draw and f.on_ground:
-			m.lower = true
+			m.drawing = false   # lower the bow: shoot comes up with B_CANCEL (think), no shot
 			f.shoot_cd = 60
 		else:
 			_draw(sim, f, m)
 		m.quit_draw = false
-		if m.lower:
-			m.down = 0      # down + jump on a ledge would drop through it, and the bow would stay up
-			_jump(m, 4)
 	elif f.arrows > 0 and f.shoot_cd == 0 and f.state == P.F_NORMAL and not f.aiming and m.player == null \
 			and (m.edge.is_empty() or absf(SimScript.wrap_d(f.x + SimScript.HALF_W, m.edge[0] * 30.0, W)) > 40.0):
 		m.look_t -= 1
@@ -299,9 +298,6 @@ static func _play(sim, f, m: Mind) -> int:
 				m.jump_wait = false
 	if rm == null:
 		return _buttons(m)
-	if m.lower or m.jump > 0:   # lowering the bow: a jump with shoot still down
-		m.jump = 0
-		return P.B_JUMP | P.B_SHOOT
 	if m.drawing:
 		return (walk & (P.B_LEFT | P.B_RIGHT)) | P.B_SHOOT   # no jump or drop while the bow is drawn
 	return walk
@@ -662,8 +658,8 @@ static func _dodge(sim, f, m: Mind) -> int:
 
 # A tick of the drawn bow: aim at the target; once drawn long enough, let go along
 # a path that reaches it (another target will do). With no path for AIM_HOLD more
-# ticks on the ground, lower the bow with a jump (a jump lets go of the aim with
-# no shot); in the air, wait to land, up to AIM_HOLD_MAX ticks, then shoot.
+# ticks on the ground, lower the bow (shoot comes up with B_CANCEL: no shot); in
+# the air, wait to land, up to AIM_HOLD_MAX ticks, then shoot.
 static func _draw(sim, f, m: Mind) -> void:
 	m.draw_t += 1
 	var tgt = sim.fighter(m.target)
@@ -685,13 +681,15 @@ static func _draw(sim, f, m: Mind) -> void:
 			ang = pick[1]
 	if is_nan(ang):
 		if past >= AIM_HOLD and f.on_ground:
-			m.lower = true
+			m.drawing = false   # lower the bow: shoot comes up with B_CANCEL (think), no shot
 			f.shoot_cd = 60     # and move a while before drawing again
+			return
 		if past < AIM_HOLD_MAX:
 			return
 	if not is_nan(ang):
 		m.aim = aim_steps(ang + sim.rng.randfn(0.0, AIM_ERR[f.level]))
 	m.drawing = false   # shoot is up this tick: the shot
+	m.want_shot = true
 	m.idle_t = 0
 	var pz: Array = PAUSE[f.level]
 	f.shoot_cd = sim.rng.randi_range(pz[0], pz[1])
@@ -720,7 +718,8 @@ static func _pick_shot(sim, f) -> Array:
 # The angle of a shot from f's bow that reaches o (a copy of the arrow flown with
 # the sim's numbers, through the wrap; lead: how far ahead of o's run to aim), or
 # NAN when every try meets a wall first or falls short. The nearest wrap copy
-# first; straight at it, then a little above and below (for the fall past 450 px).
+# first; p4.4: the arrow lobs, so the tries are the low arc to the aim point, then
+# the high one (lob_angles), each with a little above and below.
 static func find_shot(sim, f, o, lead: float) -> float:
 	var bx := float(f.x + SimScript.HALF_W)
 	var by := float(f.y + SimScript.ARROW_Y)
@@ -739,24 +738,43 @@ static func find_shot(sim, f, o, lead: float) -> float:
 		var vy: float = o.vy * lead if not o.on_ground else 0.0
 		var ax: float = c[1] + SimScript.HALF_W + vx * t_fly - bx
 		var ay: float = c[2] + SimScript.MID_Y + vy * t_fly - by
-		var straight := atan2(ay, ax)
-		var tries: Array = SHOT_OFFSETS if c[0] > 420.0 else [0.0]
-		for off in tries:
-			var ang: float = straight + off
-			var dir := Vector2.from_angle(ang)
-			var r := fly(sim, bx + dir.x * 30.0, by + dir.y * 30.0, dir.x * SimScript.ARROW_SPEED, dir.y * SimScript.ARROW_SPEED,
-				int(t_fly * 1.25) + 6, [c[1], c[2], vx, vy])
-			if r[0] == FLY_HIT:
-				return ang
+		var offs: Array = SHOT_OFFSETS if c[0] > 420.0 else NEAR_OFFSETS
+		for arc in lob_angles(ax, ay):
+			var t_arc: float = absf(ax) / maxf(1.0, absf(cos(arc)) * SimScript.ARROW_SPEED)
+			for off in offs:
+				var ang: float = arc + off
+				var dir := Vector2.from_angle(ang)
+				var r := fly(sim, bx + dir.x * 30.0, by + dir.y * 30.0, dir.x * SimScript.ARROW_SPEED, dir.y * SimScript.ARROW_SPEED,
+					int(maxf(t_fly, t_arc) * 1.25) + 6, [c[1], c[2], vx, vy])
+				if r[0] == FLY_HIT:
+					return ang
 	return NAN
+
+# The angles that send an arrow (ARROW_SPEED, falling by ARROW_LOB_G a tick from
+# the bow) through the point (x, y) from the bow, y down: the low arc, then the
+# high one; [] out of reach; the line itself straight up or down.
+static func lob_angles(x: float, y: float) -> Array:
+	var v2: float = SimScript.ARROW_SPEED * SimScript.ARROW_SPEED
+	var g: float = SimScript.ARROW_LOB_G
+	var ax := absf(x)
+	if ax < 1.0:
+		return [atan2(y, x)]
+	var disc := v2 * v2 - g * (g * ax * ax - 2.0 * y * v2)
+	if disc < 0.0:
+		return []
+	var r := sqrt(disc)
+	var out: Array = []
+	for up in [atan((v2 - r) / (g * ax)), atan((v2 + r) / (g * ax))]:
+		out.append(-up if x >= 0.0 else PI + up)
+	return out
 
 # ------------------------------------------------------------------ a copy of an arrow
 const FLY_NONE := 0     # still flying after max_t ticks
 const FLY_WALL := 1     # stuck in a block or a ledge (from above)
 const FLY_HIT := 2      # met the box
 
-# A flying arrow's next max_t ticks, as sim._update_arrow moves it (straight for
-# ARROW_STRAIGHT ticks after the shot, then falling; whole steps of 4 px; a block
+# A flying arrow's next max_t ticks, as sim._update_arrow moves it (p4.4: falling
+# by ARROW_LOB_G a tick from the bow, no drag; whole steps of 4 px; a block
 # stops it, a ledge only from above). box: [x, y, vx, vy] (and a slow-down a
 # tick, as a dodge has), a body's top-left and how it moves a tick, met the way
 # sim._arrow_hit_fighters meets one; [] for none.
@@ -771,9 +789,7 @@ static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: 
 	var slow: float = box[4] if box.size() > 4 else 1.0
 	for k in range(1, max_t + 1):
 		t += 1
-		if t > SimScript.ARROW_STRAIGHT:
-			vy = minf(vy + SimScript.ARROW_GRAVITY, SimScript.ARROW_MAX_FALL)
-			vx = move_toward(vx, 0.0, SimScript.ARROW_DRAG)
+		vy = minf(vy + SimScript.ARROW_LOB_G, SimScript.ARROW_MAX_FALL)
 		var steps := maxi(1, ceili(maxf(absf(vx), absf(vy)) / 4.0))
 		var sx := vx / steps
 		var sy := vy / steps

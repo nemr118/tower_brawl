@@ -51,9 +51,10 @@ const CATCH_HOLD := 10              # DODGE_CATCH_DELAY: a catch holds the fight
 const COYOTE_TICKS := 6             # JUMP_GRACE
 const AIM_HELP_R := 36.0 * S        # a shot snaps to an enemy this close (FindAutoLockAngle: 36 px)
 const AIM_HELP_DEG := 65.0          # and within this angle of the aim (13/36 pi)
-const ARROW_SPEED := 4.0 * S        # Arrow.cs SPEED
-const ARROW_STRAIGHT := 25          # LIFE (the straight part)
-const ARROW_GRAVITY := 0.2 * S      # GRAVITY
+const ARROW_SPEED := 16.0           # p4.4: a lob, slower than TowerFall's 4.0 * S (Arrow.cs SPEED) so the arc shows
+const ARROW_LOB_G := 0.2            # p4.4: a flying arrow falls from the moment it leaves the bow (the user's pick:
+                                    # a true arc; TowerFall flies straight 25 ticks first): at 45 degrees it reaches 1 280 px
+const ARROW_GRAVITY := 0.2 * S      # GRAVITY (a falling arrow: knocked out of its flight)
 const ARROW_DRAG := 0.03 * S        # H_DRAG
 const ARROW_MAX_FALL := 5.5 * S     # MAX_FALL
 const ARROW_NO_SELF := 10
@@ -115,7 +116,10 @@ class Fighter:
 	var catch_t: int = 0
 	var arrows: int = 3
 	var aim: float = 0.0
-	var aiming: bool = false
+	var aiming: bool = false    # the bow is up (you stand still on the ground)
+	var drawn: bool = false     # p4.4: shoot is held: a draw is on, through jumps, ledges, dodges and knocks
+	var shot_wait: bool = false # p4.4: let go while the bow could not be up: it fires the first tick it can
+	var shot_aim: float = 0.0   # and its aim, as it was let go
 	var points: int = 0         # the server copies the seat's points here for the snapshot
 	var killer: int = 255       # who killed this fighter (255: the arena itself)
 	var dead_t: int = 0
@@ -303,7 +307,10 @@ func last_alive() -> Fighter:
 # A person's buttons for this tick (proto B_*, aim in 0.1 degree steps). Sets
 # what _update_fighter reads: move_dir, the jump (pressed: want_jump with a
 # short buffer; held: hold_jump for the higher jump), down (drop_t), shoot
-# (held: aiming; let go: the shot), and a dodge the way the stick points.
+# (held: drawn, and the bow up whenever the fighter can; let go: the shot, at
+# once or the first tick it can; with B_CANCEL: no shot), and a dodge the way
+# the stick points. p4.4: a let-go shoot always fires (the user: about half the
+# shots never left the bow): a jump, a ledge grab or a dodge no longer drops it.
 func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 	var prev := f.buttons
 	f.buttons = buttons
@@ -320,15 +327,19 @@ func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 			f.want_jump = true
 			f.jump_buf = JUMP_BUFFER
 	if buttons & P.B_SHOOT:
-		if not f.aiming and not (prev & P.B_SHOOT) and f.state == P.F_NORMAL:
+		f.drawn = true
+		if not f.aiming and f.state == P.F_NORMAL:
 			f.aiming = true
-	elif f.aiming:
+	elif f.drawn:
+		f.drawn = false
 		f.aiming = false
-		if f.state == P.F_NORMAL:
-			if f.arrows > 0:
-				_shoot(f, _aim_help(f, f.aim), _pick_kind() if power_arrows else P.A_NORMAL)
-			else:
-				_event(P.E_DRYFIRE, f.x + HALF_W, f.y + MID_Y, f.id, 0)
+		if buttons & P.B_CANCEL:
+			pass                # let go inside the ring (or a bot lowering its bow): no arrow
+		elif f.state == P.F_NORMAL:
+			_fire(f, f.aim)
+		else:
+			f.shot_wait = true  # a dodge, a ledge hang, a knock: the shot leaves the first tick it can
+			f.shot_aim = f.aim
 	if (buttons & P.B_DODGE) and not (prev & P.B_DODGE):
 		if f.state == P.F_DODGE:
 			f.dodge_t = mini(f.dodge_t, 1)   # a second press ends the dodge
@@ -449,6 +460,8 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 	f.state_t = 0
 	f.arrows = START_QUIVER
 	f.aiming = false
+	f.drawn = false
+	f.shot_wait = false
 	f.dodge_t = 0
 	f.dodge_cd = 0
 	f.dodge_jump_t = 0
@@ -472,10 +485,15 @@ func _kill(f: Fighter, killer: int, cause: int) -> void:
 	f.state_t = 0
 	f.dead_t = RESPAWN_TICKS
 	f.aiming = false
+	f.drawn = false
+	f.shot_wait = false
 	f.killer = killer
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
 
 func _update_fighter(f: Fighter) -> void:
+	if f.shot_wait and f.state == P.F_NORMAL:   # p4.4: let go in a dodge, a ledge hang or a knock: it fires now
+		f.shot_wait = false
+		_fire(f, f.shot_aim)
 	if f.state == P.F_DEAD:
 		f.dead_t -= 1
 		f.state_t += 1
@@ -601,14 +619,12 @@ func _update_fighter(f: Fighter) -> void:
 				f.vx += JUMP_HBOOST * f.move_dir
 				f.coyote = 0
 				f.on_ground = false
-				f.aiming = false
 				_event(P.E_JUMP, f.x + HALF_W, f.y + BODY_H, f.id, 0)
 			elif f.wall != 0:
 				f.vy = -JUMP
 				f.vx = -f.wall * WALLJUMP_X
 				f.facing = -f.wall
 				f.wj_t = 12
-				f.aiming = false
 				_event(P.E_WALLJUMP, f.x + (BODY_W if f.wall > 0 else 0), f.y + MID_Y, f.id, 1 if f.wall > 0 else 0)
 				f.wall = 0
 			else:
@@ -696,6 +712,13 @@ func _aim_help(f: Fighter, ang: float) -> float:
 		best = a2
 	return best
 
+# A let-go shot: an arrow (the aim help on the angle), or a dry fire with an empty quiver.
+func _fire(f: Fighter, ang: float) -> void:
+	if f.arrows > 0:
+		_shoot(f, _aim_help(f, ang), _pick_kind() if power_arrows else P.A_NORMAL)
+	else:
+		_event(P.E_DRYFIRE, f.x + HALF_W, f.y + MID_Y, f.id, 0)
+
 func _shoot(f: Fighter, ang: float, kind: int) -> void:
 	f.arrows -= 1
 	f.aim = ang
@@ -762,9 +785,11 @@ func _update_arrow(a: Arrow) -> void:
 				a.dead = true
 				_explode(a.x, a.y, a.owner)
 		return
-	if a.state == P.S_FALL or a.t > ARROW_STRAIGHT:
+	if a.state == P.S_FALL:
 		a.vy = minf(a.vy + ARROW_GRAVITY, ARROW_MAX_FALL)
 		a.vx = move_toward(a.vx, 0.0, ARROW_DRAG)
+	else:
+		a.vy = minf(a.vy + ARROW_LOB_G, ARROW_MAX_FALL)   # the lob: no drag, a clean arc (brain.fly copies it)
 	if a.vx != 0.0 or a.vy != 0.0:
 		a.ang = atan2(a.vy, a.vx)
 	var steps := maxi(1, ceili(maxf(absf(a.vx), absf(a.vy)) / 4.0))
@@ -1148,7 +1173,8 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u16(mini(f.burn_t, 65535))
 	buf.put_u16(mini(f.miasma_t, 65535))
 	buf.put_u8((1 if f.on_ground else 0) | (2 if f.aiming else 0) | (4 if f.want_jump else 0) \
-		| (8 if f.rolling else 0) | (16 if f.in_smoke else 0))
+		| (8 if f.rolling else 0) | (16 if f.in_smoke else 0) | (32 if f.drawn else 0) | (64 if f.shot_wait else 0))
+	buf.put_double(f.shot_aim)
 
 func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.x = buf.get_16()
@@ -1185,3 +1211,6 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.want_jump = (b & 4) != 0
 	f.rolling = (b & 8) != 0
 	f.in_smoke = (b & 16) != 0
+	f.drawn = (b & 32) != 0
+	f.shot_wait = (b & 64) != 0
+	f.shot_aim = buf.get_double()

@@ -116,6 +116,7 @@ var distort_on := false
 var copies := 1
 var fighters: Array = []     # [sprite, material, plain tex, lit tex, ghost timer, ground tick when dead]
 var aim_pointer := Line2D.new()
+var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while the shot is armed
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -327,6 +328,9 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	aim_pointer.default_color = Color(1.0, 0.95, 0.6, 0.85)
 	aim_pointer.visible = false
 	threats.add_child(aim_pointer)
+	aim_head.polygon = PackedVector2Array([Vector2(22, 0), Vector2(-4, -12), Vector2(-4, 12)])
+	aim_head.visible = false
+	threats.add_child(aim_head)
 	for i in 2:
 		var wall: Sprite2D = [walls_l, walls_r][i]
 		wall.texture = PX
@@ -372,12 +376,27 @@ func _render_ring(fl: Array, delta: float) -> void:
 	ring_glow.scale = Vector2(1.5, 0.45) * k
 	ring_glow.modulate = Color(c.r, c.g, c.b, 0.5 + 0.15 * sin(time * 4.0))
 
-# Your own aim while you hold shoot: a short line from the bow (the game client).
-func show_aim(pos: Vector2, ang: float, on: bool) -> void:
+# Your own aim while you hold shoot (the game client). p4.4: armed (letting go
+# fires: a phone's thumb past the ring, or the mouse held) it is a bold gold
+# arrow from the bow, red with an empty quiver; not armed, a thin pale line.
+func show_aim(pos: Vector2, ang: float, on: bool, armed: bool = true, empty: bool = false) -> void:
 	aim_pointer.visible = on
-	if on:
-		var d := Vector2.from_angle(ang)
-		aim_pointer.points = PackedVector2Array([pos + d * 34.0, pos + d * 110.0])
+	aim_head.visible = on and armed
+	if not on:
+		return
+	var d := Vector2.from_angle(ang)
+	var col := Color(1.0, 0.35, 0.3, 0.95) if empty else Color(1.0, 0.85, 0.3, 0.95)
+	if armed:
+		aim_pointer.width = 7.0
+		aim_pointer.default_color = col
+		aim_pointer.points = PackedVector2Array([pos + d * 34.0, pos + d * 140.0])
+		aim_head.color = col
+		aim_head.position = pos + d * 140.0
+		aim_head.rotation = ang
+	else:
+		aim_pointer.width = 3.0
+		aim_pointer.default_color = Color(1.0, 1.0, 1.0, 0.45)
+		aim_pointer.points = PackedVector2Array([pos + d * 34.0, pos + d * 90.0])
 
 func _build_tiles(layer: TileMapLayer, tex: Texture2D) -> void:
 	var ts := TileSet.new()

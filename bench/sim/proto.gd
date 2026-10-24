@@ -31,7 +31,7 @@ extends RefCounted
 
 # The game's version. tools/v2_build.sh bumps the last number on every build and
 # names the pck after it; the server turns away a client with another version.
-const VERSION := "v0.2.0-p4.3"
+const VERSION := "v0.2.0-p4.4"
 
 const PORT := 8091
 const T_SNAP := 1
@@ -51,6 +51,7 @@ const B_DOWN := 8         # held: fall faster, drop through a ledge with jump, a
 const B_JUMP := 16        # held: a higher jump
 const B_SHOOT := 32       # held: aim (standing still on the ground); let go: fire
 const B_DODGE := 64
+const B_CANCEL := 128      # p4.4: let go of shoot with this: the bow comes down, no arrow (a phone's thumb let go inside the ring; a bot that lowers its bow)
 
 # the match, in the snapshot header
 const PH_LOBBY := 0

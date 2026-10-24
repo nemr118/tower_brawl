@@ -18,6 +18,7 @@ var fails := 0
 func _init() -> void:
 	_run_right_and_jump()
 	_shoot_and_catch()
+	_shots_lock_in()
 	_kill_stays_dead()
 	_drop_through_a_ledge()
 	_frozen_round_start()
@@ -147,9 +148,14 @@ func _shoot_and_catch() -> void:
 	_check("holding shoot does not fire yet", a.arrows == 3 and a.aiming and sim.arrows.is_empty(), "arrows=%d aiming=%s" % [a.arrows, a.aiming])
 	var caught := false
 	var dead := false
+	var dodged := false
 	for i in 40:
 		sim.apply_input(a, 0, 0)
-		sim.apply_input(b, P.B_DODGE if i == 9 else 0, 0)   # b dodges 9 ticks after the shot
+		# b dodges into the arrow when it is 6 ticks of flight away (p4.4: the arrow lobs, so a
+		# dodge away from it can leave it short, in the floor)
+		var near: bool = not dodged and not sim.arrows.is_empty() and b.x - sim.arrows[0].x < 6.0 * SimScript.ARROW_SPEED
+		sim.apply_input(b, (P.B_DODGE | P.B_LEFT) if near else 0, 0)
+		dodged = dodged or near
 		sim.step()
 		for e in sim.take_events():
 			if e[0] == P.E_CATCH and e[3] == 1:
@@ -164,6 +170,93 @@ func _shoot_and_catch() -> void:
 	evs = _press(sim, a, P.B_SHOOT, 0, 2)
 	evs.append_array(_press(sim, a, 0, 0, 1))
 	_check("an empty quiver gives a dry-fire event", _has(evs, P.E_DRYFIRE, 0) and sim.arrows.is_empty() == (sim.live_arrow_count() == 0), "events=%s" % str(evs))
+
+# p4.4 (the user: about half the shots never left the bow): a let-go shoot always
+# fires: a jump keeps the bow drawn, a release in a dodge fires when the dodge
+# ends, a press in a dodge draws when it ends; B_CANCEL lowers the bow with no
+# arrow; and the arrow lobs, falling by ARROW_LOB_G a tick from the bow.
+func _shots_lock_in() -> void:
+	# a jump with the bow drawn, let go in the air: an arrow
+	var sim = _game(1)
+	var f = sim.fighters[0]
+	sim._place(f, Vector2i(240, 1020))
+	sim.step()
+	sim.take_events()
+	var evs := _press(sim, f, P.B_SHOOT, 0, 3)
+	evs.append_array(_press(sim, f, P.B_SHOOT | P.B_JUMP, 0, 4))
+	var air: bool = not f.on_ground
+	var still_up: bool = f.aiming and f.drawn
+	evs.append_array(_press(sim, f, 0, 0, 1))
+	_check("a jump keeps the bow drawn, and let go in the air it fires", air and still_up and _has(evs, P.E_SHOOT, 0) and f.arrows == 2,
+		"in the air=%s, drawn after the jump=%s, arrows=%d" % [air, still_up, f.arrows])
+	# let go in a dodge: the arrow leaves the first tick after the dodge, at the aim it was let go with
+	sim = _game(1)
+	f = sim.fighters[0]
+	sim._place(f, Vector2i(240, 1020))
+	sim.step()
+	sim.take_events()
+	_press(sim, f, P.B_SHOOT, 900, 3)                       # drawn, aimed down (90.0 degrees)
+	_press(sim, f, P.B_SHOOT | P.B_DODGE | P.B_RIGHT, 0, 1)  # the dodge takes the bow down; shoot still held
+	var in_dodge: bool = f.state == P.F_DODGE
+	evs = _press(sim, f, P.B_RIGHT, 3150, 1)                # let go in the dodge, aimed up-right (315 degrees)
+	var waited: bool = f.shot_wait and not _has(evs, P.E_SHOOT)
+	var after := 0
+	for i in 40:
+		evs = _press(sim, f, 0, 0, 1)
+		after += 1
+		if _has(evs, P.E_SHOOT, 0):
+			break
+	var ang_ok: bool = not sim.arrows.is_empty() and absf(angle_difference(sim.arrows[0].ang, deg_to_rad(315.0))) < 0.2
+	_check("let go in a dodge, the arrow leaves when the dodge ends, at the aim it was let go with", in_dodge and waited and after <= sim.DODGE_TICKS + 1 and f.arrows == 2 and ang_ok,
+		"in the dodge=%s, waited=%s, fired %d ticks later (the dodge: %d), arrows=%d, angle ok=%s" % [in_dodge, waited, after, sim.DODGE_TICKS, f.arrows, ang_ok])
+	# shoot pressed in a dodge: the bow comes up when it ends; let go: an arrow
+	sim = _game(1)
+	f = sim.fighters[0]
+	sim._place(f, Vector2i(240, 1020))
+	sim.step()
+	sim.take_events()
+	_press(sim, f, P.B_DODGE | P.B_RIGHT, 0, 1)
+	_press(sim, f, P.B_SHOOT, 0, 2)
+	var down_in_dodge: bool = f.state == P.F_DODGE and f.drawn and not f.aiming
+	for i in 30:
+		_press(sim, f, P.B_SHOOT, 0, 1)
+		if f.state == P.F_NORMAL and f.aiming:
+			break
+	var up_after: bool = f.aiming
+	evs = _press(sim, f, 0, 0, 1)
+	_check("shoot pressed in a dodge draws when the dodge ends; let go fires", down_in_dodge and up_after and _has(evs, P.E_SHOOT, 0),
+		"drawn in the dodge, bow down=%s, bow up after=%s, arrows=%d" % [down_in_dodge, up_after, f.arrows])
+	# B_CANCEL: the bow comes down, no arrow, no dry fire
+	sim = _game(1)
+	f = sim.fighters[0]
+	sim._place(f, Vector2i(240, 1020))
+	sim.step()
+	sim.take_events()
+	evs = _press(sim, f, P.B_SHOOT, 0, 3)
+	evs.append_array(_press(sim, f, P.B_CANCEL, 0, 1))
+	evs.append_array(_press(sim, f, 0, 0, 30))
+	_check("let go with B_CANCEL: no arrow, no dry fire, the bow down", not _has(evs, P.E_SHOOT) and not _has(evs, P.E_DRYFIRE) and f.arrows == 3 and not f.aiming and not f.drawn,
+		"arrows=%d aiming=%s drawn=%s" % [f.arrows, f.aiming, f.drawn])
+	# the lob: a flat shot falls by ARROW_LOB_G a tick from the bow, ARROW_SPEED across
+	sim = _game(1)
+	f = sim.fighters[0]
+	sim._place(f, Vector2i(240, 1020))
+	sim.step()
+	_press(sim, f, P.B_SHOOT, 0, 2)
+	_press(sim, f, 0, 0, 1)
+	var worst := 0.0
+	var n := 0
+	var x0: float = sim.arrows[0].x if not sim.arrows.is_empty() else 0.0
+	for k in 10:
+		if sim.arrows.is_empty() or sim.arrows[0].state != P.S_FLY:
+			break
+		var a = sim.arrows[0]
+		worst = maxf(worst, absf(a.vy - (k + 1) * SimScript.ARROW_LOB_G))
+		worst = maxf(worst, absf(a.x - (x0 + k * SimScript.ARROW_SPEED)))
+		n += 1
+		_press(sim, f, 0, 0, 1)
+	_check("the arrow lobs: it falls by ARROW_LOB_G a tick from the bow and keeps its speed across", n == 10 and worst < 0.001,
+		"%d ticks checked, the worst %.4f off (%.1f px a tick across, %.2f px a tick faster down each tick)" % [n, worst, SimScript.ARROW_SPEED, SimScript.ARROW_LOB_G])
 
 func _kill_stays_dead() -> void:
 	var sim = _game(2)

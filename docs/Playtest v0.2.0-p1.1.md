@@ -10,6 +10,7 @@ result: open (started 2026-10-10)
 ## On the night (phones and the PC keyboard, bots in the empty seats)
 - [ ] The controls make sense to the kids without a lesson (yes / no): 
 - [ ] A shot goes where I aimed (yes / no): 
+  - The user's note, 2026-10-24 (the gathering, p4.1 to p4.3): "Firing an arrow didn't feel consistent. It felt like I should have fired an arrow about 50% of the time, but no arrow was fired and I had ammo." Acted on in [[v0.2.0-p4.4 - Pull to Shoot]].
 - [ ] A dodge I timed caught the arrow (yes / no): 
 - [ ] My fighter moves the moment I press, on a phone too, and the others look smooth (yes / no): 
 - [ ] Rounds: too long, too short, or right: 
