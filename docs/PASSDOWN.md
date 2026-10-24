@@ -7,11 +7,11 @@ Two games in one repo. The old game (v0.1.7: Godot 4.7 web client, the Python re
 
 ## Now (2026-10-24)
 - **The home laptop runs v0.2.0-p2.1** beside the old game (`towerbrawl-v2.service`, wss 8091). **The ROG was a travel server at a family gathering on 2026-10-24** (v0.2.0-p4.3 at the end; user jobs: `tools/deploy_rog.sh`; the user opened its firewall), with the host page in Ignition on the PC (`http://100.69.199.3:8088/data/perspective/client/TowerBrawlServer`, tunnel `tb-host-tunnel`). Its logs and stats stay on the ROG (`~/tower_brawl/bench_results/2026-10-24/`).
-- **Waiting on a human:** (1) [[Playtest v0.2.0-p1.1]] (11 lines; line 6's note from the gathering is acted on in p4.3); (2) [[Playtest v0.1.7]] (the old game).
-- **Next:** with the sheet's verdict: the controls tuned from it (the last part of P2), then p4.3 on the home laptop (the deploy asks; then a 3-hour `--soak` there) with a new short sheet: p3.1's four lines, p4.1's three, p4.3's two; then the release v0.2.0 (G7) ([[v0.2-transformation-plan]]).
+- **Waiting on a human:** (1) [[Playtest v0.2.0-p1.1]] (11 lines; the gathering's notes on lines 2 and 6 are acted on in p4.4 and p4.3); (2) [[Playtest v0.1.7]] (the old game).
+- **Next:** p4.5, the lighting polish (the user: it looked better on the benchmark page); then p4.x on the home laptop (the deploy asks; then a 3-hour `--soak` there) with a new sheet from the pages' "For the next sheet" lines; then the release v0.2.0 (G7) ([[v0.2-transformation-plan]]).
 - **Ideas:** a TV page (the user's, 2026-10-10: `?tv`, the match full screen, phones as pads; a PC on HDMI or Roku mirroring); stats views, a replay skip key, sound (G9). [[PASSDOWN-2026-09-05]].
+- **v0.2.0-p4.4 "Pull to Shoot":** a shot locks in (`drawn`, `shot_wait`: jumps, ledges, dodges no longer drop it), `B_CANCEL`, pull back past the ring to arm on a phone (gold: "LET GO: ARROW!"), arrows lob (16 px a tick, 0.2 a tick²), the bots aim the arc. [[v0.2.0-p4.4 - Pull to Shoot]].
 - **v0.2.0-p4.3 "See Yourself":** every fighter bright (never darkened: they draw in the arrows' layer) and outlined in its colour on every look; yours white with a ring under your feet; the fighter shader's `COLOR` fix. [[v0.2.0-p4.3 - See Yourself]].
-- **v0.2.0-p4.2 "Host Controls":** the host port (`--admin-port 8092`, 127.0.0.1, JSON: state, bots, level, arena, kick, start, stop), the players' numbers (`v2_stats.json`), the host page (`~/Work/tower_brawl_ignition/build_host.py`), the panel's keys. [[v0.2.0-p4.2 - Host Controls]].
 
 ## Open backlog
 `N. **Title** — state — next action — detail`. Numbers are never reused; closed: [[closed]].
