@@ -1,7 +1,7 @@
 # The arena as the phone draws it, inside the render SubViewport. Layers:
 # 0 the lit world (background, tiles, torches, back fog, fighters, dust and
 # smoke, lights), 1 threats (arrows, miasma clouds, the purple walls, the 3D
-# fighters: never darkened), 2 glow (added fire, sparks, flashes, front fog, shafts, rain,
+# fighters: never darkened; since p4.3 the 2D fighters and your ring too), 2 glow (added fire, sparks, flashes, front fog, shafts, rain,
 # lightning, spirit lights), 3 the post shader. set_tier() switches what a
 # ladder tier asks for, set_variant() a split-test step (one part on or off),
 # set_level() turns the limit test's dial, render() draws.
@@ -16,7 +16,6 @@ const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"
 const FIGHTER_TEX := [preload("res://assets/fighter_p0.png"), preload("res://assets/fighter_p1.png"),
 	preload("res://assets/fighter_p2.png"), preload("res://assets/fighter_p3.png"), preload("res://assets/fighter_p4.png"),
 	preload("res://assets/fighter_p5.png"), preload("res://assets/fighter_p6.png"), preload("res://assets/fighter_p7.png")]
-const FIGHTER_N := preload("res://assets/fighter_n.png")
 const TILES := preload("res://assets/tiles.png")
 const TILES_N := preload("res://assets/tiles_n.png")
 const BG_FAR := preload("res://assets/bg_far.png")
@@ -85,6 +84,13 @@ var threat_layer := CanvasLayer.new()
 var glow_layer := CanvasLayer.new()
 var post_layer := CanvasLayer.new()
 var threats := Node2D.new()
+var bodies := Node2D.new()       # p4.3: the fighters and your ring, the first thing in the threats layer: never darkened
+var ring := Line2D.new()         # p4.3: the ring under your feet, in your colour
+var ring_glow := Sprite2D.new()
+var me := -1                     # your seat (the game client, set_me); -1: none (the benchmark, a watcher)
+var me_shown := -2               # the seat the outlines were last set for
+var me_phase := -1
+var pulse_t := 99.0              # seconds since your round began: the ring starts big and bright
 var glow := Node2D.new()
 var post := ColorRect.new()
 var tiles_plain := TileMapLayer.new()
@@ -146,6 +152,7 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		layer[0].follow_viewport_enabled = true
 		add_child(layer[0])
 		layer[0].add_child(layer[2])
+	threats.add_child(bodies)    # first, so arrows, clouds and the walls draw over the fighters
 	post_layer.layer = 3
 	add_child(post_layer)
 	post.size = Vector2(render_size)
@@ -259,17 +266,29 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		else:
 			glow.add_child(r)
 		fogs.append(r)
+	ring_glow.texture = HALO
+	ring_glow.material = add_mat
+	ring_glow.visible = false
+	bodies.add_child(ring_glow)
+	var pts := PackedVector2Array()
+	for k in 40:
+		pts.append(Vector2(cos(TAU * k / 40.0) * 32.0, sin(TAU * k / 40.0) * 9.0))
+	ring.points = pts
+	ring.closed = true
+	ring.width = 4.0
+	ring.joint_mode = Line2D.LINE_JOINT_ROUND
+	ring.antialiased = true
+	ring.visible = false
+	bodies.add_child(ring)
 	for i in 32:
 		var s := Sprite2D.new()
 		s.region_enabled = true
 		s.offset = Vector2(0, -58)
 		var m := ShaderMaterial.new()
 		m.shader = SH_FIGHTER
-		var lit_tex := CanvasTexture.new()
-		lit_tex.diffuse_texture = FIGHTER_TEX[i % 8]
-		lit_tex.normal_texture = FIGHTER_N
-		add_child(s)
-		fighters.append([s, m, FIGHTER_TEX[i % 8], lit_tex, 0.0, -1])
+		m.set_shader_parameter("glow_color", TEAM[i % 8].lightened(0.3))
+		bodies.add_child(s)
+		fighters.append([s, m, FIGHTER_TEX[i % 8], null, 0.0, -1])   # [3]: the lit texture until p4.3
 	rain = fx.take_loop("rain")
 	rain.position = Vector2(860, -60)
 	splash = fx.take_loop("rain_splash")
@@ -320,6 +339,38 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		wall.material = wm
 		threats.add_child(wall)
 	fx.prewarm(Vector2(960, 1200))
+
+# p4.3: your seat and the phase, from the game client before each render (the
+# outlines, and the ring under your feet that starts big when a round begins).
+func set_me(seat: int, phase: int) -> void:
+	me = seat
+	if phase != me_phase:
+		me_phase = phase
+		if phase == P.PH_ROUND_START:
+			pulse_t = 0.0
+
+func _render_ring(fl: Array, delta: float) -> void:
+	pulse_t += delta
+	var f: Dictionary = {}
+	if me >= 0 and tier != 4:
+		for cand in fl:
+			if int(cand["id"]) == me:
+				f = cand
+				break
+	var on: bool = not f.is_empty() and f["state"] != P.F_DEAD
+	ring.visible = on
+	ring_glow.visible = on
+	if not on:
+		return
+	var c: Color = TEAM[me % 8].lightened(0.15)
+	var k := 1.0 + 0.6 * clampf(1.0 - pulse_t / 3.0, 0.0, 1.0)
+	var feet := Vector2(f["x"] + 18.0, f["y"] + 63.0)
+	ring.position = feet
+	ring.scale = Vector2(k, k)
+	ring.default_color = Color(c.r, c.g, c.b, 0.95)
+	ring_glow.position = feet
+	ring_glow.scale = Vector2(1.5, 0.45) * k
+	ring_glow.modulate = Color(c.r, c.g, c.b, 0.5 + 0.15 * sin(time * 4.0))
 
 # Your own aim while you hold shoot: a short line from the bow (the game client).
 func show_aim(pos: Vector2, ang: float, on: bool) -> void:
@@ -437,9 +488,10 @@ func apply_parts(p: Dictionary) -> bool:
 	fx.set_tier(fx_on, p["dyn_lights"])
 	fx.set_ratio(0.6 if max_on else 1.0)
 	for f in fighters:
-		f[0].texture = f[3] if lights_on else f[2]
-		f[0].material = f[1] if p["fighter_shader"] else null
+		f[0].texture = f[2]      # p4.3: in the threats layer the fighters are never darkened or lit
+		f[0].material = f[1]     # and every look outlines them in their colour
 		f[0].modulate = Color.WHITE
+	me_shown = -2
 	f3d.set_active(t == 4)
 	_clear_dynamic()
 	for group in [get_children(), fx.lit.get_children()]:
@@ -494,6 +546,12 @@ func render(s: Dictionary, delta: float) -> void:
 	# The game: slot = seat, so a fighter keeps its colour whatever seats are
 	# taken. The benchmark's copies (T5, T7) repeat the seats, so they go by index.
 	var by_seat := copies == 1
+	if me_shown != me:
+		me_shown = me
+		for i in fighters.size():
+			var fm: ShaderMaterial = fighters[i][1]
+			fm.set_shader_parameter("glow_color", Color.WHITE if i == me else TEAM[i % 8].lightened(0.3))
+			fm.set_shader_parameter("glow_px", 4.0 if i == me else 3.0)
 	for i in fighters.size():
 		var slot: Array = fighters[i]
 		var spr: Sprite2D = slot[0]
@@ -516,18 +574,16 @@ func render(s: Dictionary, delta: float) -> void:
 		spr.region_rect = Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128)
 		var burn := 1.0 if (f["flags"] & 8) != 0 else 0.0
 		var poison := 1.0 if (f["flags"] & 16) != 0 else 0.0
-		if parts["fighter_shader"]:
-			slot[1].set_shader_parameter("burn", burn)
-			slot[1].set_shader_parameter("poison", poison)
-			var hit_flash: bool = (f["state"] == P.F_HURT or f["state"] == P.F_DEAD) and f["st"] < 4
-			slot[1].set_shader_parameter("flash", 1.0 if hit_flash or (f["state"] == P.F_DODGE and f["st"] < 2) else 0.0)
-		else:
-			spr.modulate = Color(1, 0.75, 0.55) if burn > 0.0 else (Color(0.85, 0.7, 1.0) if poison > 0.0 else Color.WHITE)
+		slot[1].set_shader_parameter("burn", burn)
+		slot[1].set_shader_parameter("poison", poison)
+		var hit_flash: bool = (f["state"] == P.F_HURT or f["state"] == P.F_DEAD) and f["st"] < 4
+		slot[1].set_shader_parameter("flash", 1.0 if hit_flash or (f["state"] == P.F_DODGE and f["st"] < 2) else 0.0)
 		if parts["particles"] and f["state"] == P.F_DODGE:
 			slot[4] -= delta
 			if slot[4] <= 0.0:
 				slot[4] = 0.035
 				fx.ghost(FIGHTER_TEX[i % 8], spr.region_rect, spr.position + Vector2(0, -58), spr.flip_h, TEAM[i % 8])
+	_render_ring(fl, delta)
 	_render_arrows(s["arrows"])
 	_render_zones(s["zones"])
 	_render_walls(s)

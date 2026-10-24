@@ -14,6 +14,7 @@ result: open (started 2026-10-10)
 - [ ] My fighter moves the moment I press, on a phone too, and the others look smooth (yes / no): 
 - [ ] Rounds: too long, too short, or right: 
 - [ ] 8 on one screen: I find myself within a second (yes / no): 
+  - The user's note, 2026-10-24, playing p4.1 on a phone at a family gathering (the server on the ROG): "The characters need more lighting or more highlights. It's hard to tell which character you're controlling." Acted on in [[v0.2.0-p4.3 - See Yourself]].
 - [ ] At FIGHT the bots wait a moment: the kids move before the first arrow (yes / no): 
 - [ ] A phone stuck on "Still connecting" showed the hint, and it worked (yes / no / did not happen): 
 - [ ] The purple walls: the kids saw them coming and got out of the way (yes / no): 

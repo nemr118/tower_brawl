@@ -209,6 +209,7 @@ func _process(delta: float) -> void:
 	var view: Dictionary = net.sample(rt, -1, own)
 	if predicting and not view.is_empty():
 		view["arrows"] = present.arrows_at(s, pred.tick, pred.me, my_seat, view["fighters"], pred.sim.arrows, delta)
+	world.set_me(my_seat, phase)
 	world.render(view, delta)
 	var aim_on := false
 	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
