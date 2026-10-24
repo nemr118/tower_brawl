@@ -41,3 +41,4 @@ Items 2, 3, 4, 6, 7, 8 and 9 of that list are now open backlog 17 to 22. Closed:
 - **9** — closed in v0.1.3 — does not apply any more: the arena shift is off and the pieces that swung past the top edge are gone (the tower, [[arena-tower]]) — [[v0.0.31 - Top Edge Probe]].
 - **24** — closed in v0.1.3 — does not apply any more: nothing turns, so nothing sweeps the floor corners (the tower) — [[v0.0.39 - Anchored Ground]].
 - **35** — closed in v0.2.0-p1.2 — a match with fewer than 2 fighters left for the next round stops and goes back to the lobby (`_stop_match`, a note to everyone; nobody wins it) — [[v0.2.0-p1.2 - Before the Night]].
+- **29** — closed in v0.2.0-p1.1 — decided: 8 players (D8, settled by D0b on 2026-09-10, [[Design Decisions v0.2]]); the first playable has 8 seats — [[v0.2.0-p1.1 - First Playable]].
