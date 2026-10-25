@@ -15,6 +15,12 @@ const PowersView = preload("res://client/powers_view.gd")
 const ThemeView = preload("res://client/theme_view.gd")
 const EdgesView = preload("res://client/edges_view.gd")
 const BoilerView = preload("res://client/boiler_view.gd")
+const Polish = preload("res://client/polish.gd")         # the polish of 2026-10-25: a switch for each new look piece
+const DressView = preload("res://client/dress_view.gd")  # polish: the castle arenas' dressing (castle_depth, _moss, _ledges, _sconces)
+const BG_FAR_CASTLE := preload("res://assets/bg_castle_far.png")   # polish "castle_backdrop" (tools/gen_dressing.gd)
+const BG_MID_CASTLE := preload("res://assets/bg_castle_mid.png")
+const ARROWS2 := preload("res://assets/fx_arrows2.png")           # polish "arrows2"
+const SH_SHAFT2 := preload("res://shaders/shaft2.gdshader")       # polish "shaft_motes": the shafts with dust in them
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
 	Color("a85ae8"), Color("f08a2c"), Color("35d6d0"), Color("f06aa8")]
 const FIGHTER_TEX := [preload("res://assets/fighter_p0.png"), preload("res://assets/fighter_p1.png"),
@@ -133,6 +139,7 @@ var theme_view                   # p4.9: an arena's holiday look (client/theme_v
 var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
 var edges                        # p4.11: the arena's shapes stand out (client/edges_view.gd: halo behind, light on top)
 var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd), theme "nightmare"
+var dress                        # polish: the castle arenas' dressing, over the tiles (client/dress_view.gd)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -197,7 +204,7 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		sh.polygon = PackedVector2Array([Vector2(x - 40, 60), Vector2(x + 40, 60), Vector2(x + 190, 900), Vector2(x - 110, 900)])
 		sh.uv = PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)])
 		var m := ShaderMaterial.new()
-		m.shader = SH_SHAFT
+		m.shader = SH_SHAFT2 if Polish.on("shaft_motes") else SH_SHAFT   # polish "shaft_motes"
 		m.set_shader_parameter("phase", i * 2.1)
 		sh.material = m
 		glow.add_child(sh)
@@ -383,6 +390,10 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	add_child(boiler)
 	move_child(boiler, edges.get_index())   # behind the tiles (it may add parts to other layers in setup)
 	boiler.setup(self)
+	dress = DressView.new()          # polish: right over the tiles, in the lit layer (the night darkens it, the torches light it)
+	add_child(dress)
+	move_child(dress, tiles_lit.get_index() + 1)
+	dress.setup(glow, add_mat)
 	fx.prewarm(Vector2(960, 1200))
 
 # p4.3: your seat and the phase, from the game client before each render (the
@@ -486,6 +497,10 @@ func set_arena(n: int) -> void:
 func _apply_theme() -> void:
 	var hw: bool = level.theme == "halloween"
 	dark_base = Color(0.42, 0.32, 0.55) if hw else Color(0.36, 0.36, 0.5)
+	var castle: bool = level.theme == ""
+	var new_bg: bool = castle and Polish.on("castle_backdrop")   # polish: the castle arenas' new backdrop
+	bg_far.texture = BG_FAR_CASTLE if new_bg else BG_FAR
+	bg_mid.texture = BG_MID_CASTLE if new_bg else BG_MID
 	dark.color = dark_base
 	# p4.11: the backdrop a step dimmer and cooler, the blocks a step brighter: the play
 	# space stands out from what is only scenery (the user: too little contrast)
@@ -495,13 +510,15 @@ func _apply_theme() -> void:
 		layer.modulate = Color(0.98, 0.9, 1.1) if hw else Color(1.12, 1.12, 1.16)
 	var fx_on: bool = parts.get("particles", false)
 	for tr in torches:
-		tr[0].visible = not hw
+		tr[0].visible = not hw and not (castle and Polish.on("castle_sconces"))   # polish: dress_view draws a sconce there
 		tr[2].visible = fx_on and not hw
 		tr[2].emitting = fx_on and not hw
 		tr[1].color = Color(1.0, 0.5, 0.15) if hw else Color(1.0, 0.62, 0.3)
 	theme_view.set_theme(level.theme, level.torches)
 	if edges != null:
 		edges.build(level)
+	if dress != null:
+		dress.build(level, fx_on)
 	if boiler != null:
 		boiler.set_theme(level)
 
@@ -938,7 +955,7 @@ func _render_arrows(al: Dictionary) -> void:
 		if e.is_empty():
 			var spr := Sprite2D.new()
 			var kind := int(a["kind"])
-			spr.texture = ARROWS if kind != P.A_SEED else null
+			spr.texture = (ARROWS2 if Polish.on("arrows2") else ARROWS) if kind != P.A_SEED else null   # polish "arrows2"
 			spr.region_enabled = true
 			spr.region_rect = Rect2(0, (P.A_BOMB if kind == P.A_PUMPKIN else kind) * 8, 32, 8)
 			spr.offset = Vector2(-12, 0)
