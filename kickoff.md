@@ -10,7 +10,7 @@ Where things stand (2026-10-25 evening): the ROG laptop is the travel server at 
 
 Next:
 1. After the night: tools/pull_rog_logs.sh, then tools/v2_night_report.py on the night's v2_server.jsonl; ask the user how it went (the iPhones on the Home Screen, GHOSTFACE's rate, the boiler room, candies).
-2. A short sheet in docs/ from the "For the next sheet" lines of p4.12, p4.13, p4.14 (one yes/no line each, one verdict).
+2. The sheet is ready: docs/Playtest v0.2.0-p4.14.md (made 2026-10-25 afternoon from the p4.12 to p4.14 lines; it takes over p1.1's sheet, now archived). Ask the user to fill it in, then act on its verdict.
 3. Then (ask first): the newest build on the home laptop and a 3-hour --soak; the release v0.2.0 (G7).
 Ideas waiting: a castle loading picture for after Halloween (tools/comfy/, ask before any GPU run), the arenas a step brighter for lit rooms, the in-match banners in the lobby's font, the ROG app's links page that does not open as a window.
 
