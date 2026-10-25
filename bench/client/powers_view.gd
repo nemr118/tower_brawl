@@ -13,6 +13,8 @@ extends Node2D
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const GhostfaceScript = preload("res://client/ghostface.gd")
+const Polish = preload("res://client/polish.gd")
+const ICONS2 := preload("res://assets/pu_icons.png")   # p4.13 polish "icons2": ComfyUI's power-up pictures (64 px a cell, kind - 1)
 const COLORS := {P.PU_FIRE: Color(1.0, 0.55, 0.15), P.PU_BOMB: Color(1.0, 0.32, 0.25), P.PU_POISON: Color(0.72, 0.4, 1.0),
 	P.PU_SMOKE: Color(0.8, 0.82, 0.88), P.PU_SHIELD: Color(0.35, 0.85, 1.0), P.PU_INF: Color(1.0, 0.85, 0.3),
 	P.PU_FLY: Color(0.95, 0.97, 1.0), P.PU_BIG: Color(0.5, 1.0, 0.45), P.PU_CATS: Color(0.55, 1.0, 0.6),
@@ -342,7 +344,7 @@ func _draw() -> void:
 		if kind >= 0:   # a badge with the picture, and one small word under it
 			var r := (17.0 if p[5] else 14.0) * (1.0 + 0.35 * clampf((k - 0.85) / 0.15, 0.0, 1.0))
 			draw_circle(at, r + 3.0, Color(0.03, 0.03, 0.07, 0.75 * a))
-			draw_circle(at, r, Color(col.darkened(0.2), a))
+			draw_circle(at, r, Color(disc(col), a))
 			draw_arc(at, r, 0.0, TAU, 24, Color(GOLD if p[5] else PV_WHITE, a), 2.0)
 			draw_icon(self, at, kind, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
 			if p[1] != "":
@@ -426,7 +428,7 @@ func _draw_candy_pop(cp: Dictionary) -> void:
 		var a0 := t * 2.0 + i * TAU / 8.0
 		draw_arc(at, r + 3.0, a0, a0 + TAU / 8.0, 6, Color(CANDY_COLS[i % 2], a), 5.0)
 	var icon: int = cp["icon"]
-	draw_circle(at, r, Color(Color(COLORS.get(icon, Color.WHITE)).darkened(0.25), a))
+	draw_circle(at, r, Color(disc(COLORS.get(icon, Color.WHITE)), a))
 	draw_icon(self, at, icon, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
 	var top := "TRICK!" if cp["trick"] else ("BOO!" if icon == P.PU_MASK else "TREAT!")
 	_text_c(at + Vector2(0, -r - 12.0), top, 16, Color(1.0, 0.75, 0.3, a))
@@ -461,7 +463,7 @@ func _draw_warning(o: Dictionary) -> void:
 	var a := 0.55 + 0.45 * prog
 	var ic := c + Vector2(0, -R - 34.0)
 	draw_circle(ic, 24.0, Color(0.05, 0.05, 0.1, 0.8 * a))
-	draw_circle(ic, 20.0, Color(col.darkened(0.25), a))
+	draw_circle(ic, 20.0, Color(disc(col), a))
 	draw_arc(ic, 20.0, 0.0, TAU, 24, Color(PV_WHITE if not big else GOLD, a), 3.0)
 	draw_icon(self, ic, int(o["kind"]), 13.0, Color(0.08, 0.06, 0.12, a), t)
 	if big:   # a gold ring, and the name of the one it is for, small
@@ -479,9 +481,12 @@ func _draw_orb(o: Dictionary) -> void:
 	if float(o["prog"]) > 0.8 and int(t * 8.0) % 2 == 0:
 		a = 0.35                     # about to fade: it blinks
 	draw_circle(c, r + 4.0, Color(0.05, 0.05, 0.1, 0.8 * a))
-	draw_circle(c, r, Color(col.darkened(0.25), a))
-	draw_circle(c + Vector2(-r * 0.3, -r * 0.35), r * 0.35, Color(1, 1, 1, 0.55 * a))
-	draw_arc(c, r, 0.0, TAU, 32, Color(1, 1, 1, 0.9 * a), 3.0)
+	draw_circle(c, r, Color(disc(col), a))
+	if Polish.on("icons2"):   # a thin shine, so the colour picture inside stays clear
+		draw_arc(c, r * 0.82, PI * 1.08, PI * 1.45, 8, Color(1, 1, 1, 0.5 * a), 2.0)
+	else:
+		draw_circle(c + Vector2(-r * 0.3, -r * 0.35), r * 0.35, Color(1, 1, 1, 0.55 * a))
+	draw_arc(c, r, 0.0, TAU, 32, Color(col.lerp(Color.WHITE, 0.5) if Polish.on("icons2") else Color.WHITE, 0.9 * a), 3.0)
 	draw_icon(self, c, int(o["kind"]), r * 0.62, Color(0.08, 0.06, 0.12, a), t)
 	if big:
 		for i in 8:
@@ -493,7 +498,18 @@ func _draw_orb(o: Dictionary) -> void:
 # the shield shines, a dot runs round INFINITE's loop, wings flap, the BIG arrow
 # grows, the cat's ears twitch, rain falls under the umbrella, the eye blinks, the
 # snowflake turns, the spikes bob, the bolt flashes. ci: any canvas; tt: seconds.
+# The disc behind a power-up's picture: its colour, darker; with ComfyUI's colour pictures
+# (polish "icons2") much darker, so the picture stands out.
+static func disc(col: Color) -> Color:
+	return col.darkened(0.62) if Polish.on("icons2") else col.darkened(0.25)
+
 static func draw_icon(ci: CanvasItem, c: Vector2, kind: int, s: float, col: Color, tt: float) -> void:
+	if kind >= 1 and kind <= 17 and Polish.on("icons2"):   # p4.13: ComfyUI's picture, bobbing a little
+		var half := s * 1.25
+		var bob := sin(tt * 3.0 + kind) * s * 0.05
+		ci.draw_texture_rect_region(ICONS2, Rect2(c + Vector2(-half, -half + bob), Vector2(half, half) * 2.0),
+			Rect2((kind - 1) * 64, 0, 64, 64), Color(1, 1, 1, col.a))
+		return
 	if kind == P.PU_FIRE:
 		var f := 1.0 + 0.15 * sin(tt * 18.0)
 		var sway := sin(tt * 9.0) * s * 0.15
@@ -672,7 +688,7 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 		var bc := Vector2(c.x + (i - (badges.size() - 1) / 2.0) * 26.0, by)
 		var col: Color = COLORS.get(badges[i], Color.WHITE)
 		draw_circle(bc, 12.0, Color(0.05, 0.05, 0.1, 0.8 * a))
-		draw_circle(bc, 10.0, Color(col.darkened(0.2), a))
+		draw_circle(bc, 10.0, Color(disc(col), a))
 		draw_icon(self, bc, badges[i], 6.5, Color(0.08, 0.06, 0.12, a), t)
 
 # p4.12 the black cat: walking its floor (legs, a curled tail, green eyes), PET ME over it;
@@ -868,8 +884,12 @@ func _paint_glow(g: Node2D) -> void:
 				g.draw_polyline(pts, Color(0.7, 0.85, 1.0, 0.65 + 0.35 * prog), 3.0)
 		else:
 			var r := 30.0 if o["big"] else 22.0
-			g.draw_circle(c, r * 2.3, Color(col, 0.16))
-			g.draw_circle(c, r * 1.5, Color(col, 0.22))
+			if Polish.on("icons2"):   # the glow as a ring round the orb, not over its picture
+				g.draw_arc(c, r * 1.65, 0.0, TAU, 40, Color(col, 0.16), r * 1.3)
+				g.draw_arc(c, r * 1.25, 0.0, TAU, 32, Color(col, 0.22), r * 0.5)
+			else:
+				g.draw_circle(c, r * 2.3, Color(col, 0.16))
+				g.draw_circle(c, r * 1.5, Color(col, 0.22))
 			if o["big"]:
 				g.draw_circle(c, r * 3.0, Color(GOLD, 0.12))
 	for b in bolts:

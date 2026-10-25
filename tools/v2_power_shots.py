@@ -33,6 +33,7 @@ ap.add_argument("--port", type=int, default=9338)
 ap.add_argument("--size", default="1280x720", help="the page's size (smaller pictures come faster)")
 ap.add_argument("--bolt-s", type=float, default=0.0, help="hold each lightning bolt this long (a test knob of the page)")
 ap.add_argument("--lobby-shot", action="store_true", help="also a picture of the lobby before the match starts: <out>_lobby.png")
+ap.add_argument("--extra", default="", help="more page options, e.g. polish_off=icons2 (joined with &)")
 a = ap.parse_args()
 
 
@@ -92,7 +93,7 @@ try:
     cmd("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=True)
     cmd("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
     cmd("Emulation.setUserAgentOverride", userAgent="Mozilla/5.0 (Linux; Android 15; SM-S938B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
-    cmd("Page.navigate", url=f"{a.url}?server={a.server}&name=Cam&join" + (f"&look={a.look}" if a.look else "") + (f"&bolt_s={a.bolt_s}" if a.bolt_s > 0 else ""))
+    cmd("Page.navigate", url=f"{a.url}?server={a.server}&name=Cam&join" + (f"&look={a.look}" if a.look else "") + (f"&bolt_s={a.bolt_s}" if a.bolt_s > 0 else "") + (f"&{a.extra}" if a.extra else ""))
     for i in range(60):
         drain(0.5)
         try:

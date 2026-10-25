@@ -268,7 +268,7 @@ func _power_banner(c: Control, font: Font) -> void:
 	c.draw_rect(r, Color(0.03, 0.03, 0.07, 0.72 * a))
 	c.draw_rect(Rect2(r.position, Vector2(r.size.x, 3.0)), Color(PV.GOLD if big else col, a))   # a coloured top edge
 	var ic := Vector2(r.position.x + 29.0, r.position.y + 26.0)
-	c.draw_circle(ic, 19.0 * pop, Color(col.darkened(0.2), a))
+	c.draw_circle(ic, 19.0 * pop, Color(PV.disc(col), a))
 	c.draw_arc(ic, 19.0 * pop, 0.0, TAU, 24, Color(PV.GOLD if big else Color.WHITE, a), 2.0)
 	PV.draw_icon(c, ic, banner_kind, 12.0 * pop, Color(0.08, 0.06, 0.12, a), BANNER_S - banner_t)
 	var x := r.position.x + 58.0
