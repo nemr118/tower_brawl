@@ -228,7 +228,7 @@ func on_event(e: Array) -> void:
 		_burst("debris", pos)
 		_burst("spark", pos, KIND_COLOR[e[3] % 5])
 	elif type == P.E_EXPLODE:
-		flash(pos, 5.0, Color(1, 0.9, 0.6), 0.16)
+		flash(pos, 5.0, Color(1, 0.9, 0.6), 0.16, true)   # p4.6: a blast shows on LOW too
 		ring(pos, 230.0, Color(1, 0.75, 0.35), 0.35)
 		ring(pos, 150.0, Color(1, 1, 0.9), 0.2)
 		_burst("blast_fire", pos)
@@ -241,13 +241,13 @@ func on_event(e: Array) -> void:
 		aberration = 1.0
 	elif type == P.E_IGNITE:
 		_burst("flame_burst", pos)
-		flash(pos, 4.0, Color(1, 0.6, 0.2), 0.15)
+		flash(pos, 4.0, Color(1, 0.6, 0.2), 0.15, true)
 		light_burst(pos, Color(1, 0.55, 0.2), 1.8, 2.2, 0.3)
 		scorch(pos + Vector2(0, 4))
 	elif type == P.E_MIASMA:
 		_burst("miasma_burst", pos)
 		ring(pos, 170.0, Color(0.75, 0.35, 1.0), 0.4)
-		flash(pos, 5.0, Color(0.7, 0.3, 1.0), 0.18)
+		flash(pos, 5.0, Color(0.7, 0.3, 1.0), 0.18, true)
 		shake = maxf(shake, 5.0)
 	elif type == P.E_DEATH:
 		var c: Color = team[e[3] % team.size()]

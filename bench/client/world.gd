@@ -919,37 +919,47 @@ func _render_zones(zl: Array) -> void:
 	zone_seen.clear()
 	var fxp: bool = parts["particles"]
 	var dl: bool = parts["dyn_lights"]
-	if not (fxp or dl):
-		return
-	# e = [kind, flames / cloud / smoke, embers / bubbles, halo, light]: parts that are off stay null
+	# e = [kind, flames / cloud / smoke, embers / bubbles, halo, light, base]: parts that are off stay null.
+	# p4.6: every look draws a zone (the user: on LOW the power arrows' fire, poison and smoke
+	# still killed but could not be seen): the fire's glow and the poison cloud always, and
+	# without particles a fire core and a smoke cloud sprite (base); particles and lights on top.
 	for z in zl:
 		var key := "%d:%d:%d" % [z["kind"], int(z["x"]), int(z["y"])]
 		zone_seen[key] = true
 		var e: Array = zones.get(key, [])
 		var pos := Vector2(z["x"], z["y"])
 		if e.is_empty():
-			e = [z["kind"], null, null, null, null]
+			e = [z["kind"], null, null, null, null, null]
 			if z["kind"] == P.Z_FIRE:
+				var halo := Sprite2D.new()
+				halo.texture = HALO
+				halo.material = add_mat
+				halo.modulate = Color(1, 0.5, 0.15, 0.5)
+				halo.scale = Vector2(z["size"] / 40.0, 1.6)
+				halo.position = pos + Vector2(0, -10)
+				glow.add_child(halo)
+				e[3] = halo
 				if fxp:
 					var flames: Node2D = fx.take_loop("fire_ground")
 					var embers: Node2D = fx.take_loop("embers")
 					flames.global_position = pos
 					embers.global_position = pos
-					var halo := Sprite2D.new()
-					halo.texture = HALO
-					halo.material = add_mat
-					halo.modulate = Color(1, 0.5, 0.15, 0.5)
-					halo.scale = Vector2(z["size"] / 40.0, 1.6)
-					halo.position = pos + Vector2(0, -10)
-					glow.add_child(halo)
 					e[1] = flames
 					e[2] = embers
-					e[3] = halo
+				else:
+					var core := Sprite2D.new()   # LOW: a bright band of fire on the floor
+					core.texture = HALO
+					core.material = add_mat
+					core.modulate = Color(1, 0.75, 0.3, 0.9)
+					core.scale = Vector2(z["size"] / 64.0, 0.7)
+					core.position = pos + Vector2(0, -6)
+					glow.add_child(core)
+					e[5] = core
 				if dl:
 					e[4] = _take_light(Color(1, 0.55, 0.2), 1.5, 2.0)
 					e[4].position = pos + Vector2(0, -30)
 			elif z["kind"] == P.Z_MIASMA:
-				if fxp:
+				if true:   # the cloud is the threat: every look
 					var cloud := Sprite2D.new()
 					cloud.texture = NOISE
 					cloud.region_enabled = true
@@ -962,9 +972,10 @@ func _render_zones(zl: Array) -> void:
 					m.set_shader_parameter("seed", fmod(pos.x * 0.013, 1.0))
 					cloud.material = m
 					threats.add_child(cloud)
+					e[1] = cloud
+				if fxp:
 					var bubbles: Node2D = fx.take_loop("miasma_bubbles")
 					bubbles.global_position = pos
-					e[1] = cloud
 					e[2] = bubbles
 				if dl:
 					e[4] = _take_light(Color(0.7, 0.3, 1.0), 1.2, 2.2)
@@ -973,6 +984,19 @@ func _render_zones(zl: Array) -> void:
 				var smoke: Node2D = fx.take_loop("smoke_cloud")
 				smoke.global_position = pos
 				e[1] = smoke
+			else:
+				var puff := Sprite2D.new()      # LOW: a soft grey cloud you cannot see through
+				puff.texture = HALO
+				puff.scale = Vector2.ONE * (z["size"] * 2.8 / 64.0)
+				puff.modulate = Color(0.62, 0.64, 0.7, 0.95)
+				puff.position = pos
+				var core := Sprite2D.new()      # a denser middle
+				core.texture = HALO
+				core.scale = Vector2.ONE * 0.6
+				core.modulate = Color(0.72, 0.74, 0.8, 1.0)
+				puff.add_child(core)
+				threats.add_child(puff)
+				e[5] = puff
 			zones[key] = e
 		if z["kind"] == P.Z_FIRE:
 			if e[4] != null:
@@ -982,6 +1006,8 @@ func _render_zones(zl: Array) -> void:
 				e[1].material.set_shader_parameter("life", z["life"])
 		elif e[1] != null:
 			e[1].emitting = z["life"] > 0.15
+		if e[5] != null and z["kind"] != P.Z_FIRE:
+			e[5].modulate.a = 0.85 * clampf(z["life"] * 4.0, 0.0, 1.0)   # the smoke thins as it ends
 	for key in zones.keys():
 		if not zone_seen.has(key):
 			_free_zone(key)
@@ -992,13 +1018,17 @@ func _free_zone(key) -> void:
 		if e[1] != null:
 			fx.give_loop("fire_ground", e[1])
 			fx.give_loop("embers", e[2])
+		if e[3] != null:
 			e[3].queue_free()
 	elif e[0] == P.Z_MIASMA:
 		if e[1] != null:
 			e[1].queue_free()
+		if e[2] != null:
 			fx.give_loop("miasma_bubbles", e[2])
 	elif e[1] != null:
 		fx.give_loop("smoke_cloud", e[1])
+	if e[5] != null:
+		e[5].queue_free()
 	if e[4] != null:
 		_give_light(e[4])
 	zones.erase(key)

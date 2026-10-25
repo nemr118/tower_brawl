@@ -21,6 +21,7 @@ result: open (started 2026-10-10)
 - [ ] The purple walls: the kids saw them coming and got out of the way (yes / no): 
 - [ ] A stomp I saw land on a head counted (yes / no / did not happen): 
 - [ ] Each phone stayed smooth; if its look stepped down, the note said so at the bottom (yes / no / did not happen): 
+  - The user's note, 2026-10-24: "the graphics settings not saving. They would only last a round, then revert back to low. Also, the effects from the different power arrows would disappear and be invisible but still be happening." Acted on in [[v0.2.0-p4.6 - Look Fixes]].
 
 ## Verdict
 - [ ] **Keep building** (the controls tuned from this sheet, then the super arena, G5), or **fix first**: the line that failed and a clock time (HH:MM): 

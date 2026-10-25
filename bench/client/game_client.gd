@@ -39,9 +39,10 @@ const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
 const LOOKS := ["low", "normal", "high"]
 const LOOK_TIER := {"low": 1, "normal": 2, "high": 3}
-const SLOW_MS := 20.0          # a frame that takes longer counts as slow
-const SLOW_SHARE := 0.05       # more than this share of slow frames in STEP_S: one step down
-const STEP_S := 3.0
+const PICKS := ["auto", "low", "normal", "high"]   # p4.6: the LOOK button; a picked look is kept, AUTO steps down
+const SLOW_MS := 33.4          # a frame slower than 30 fps counts as slow (p4.6; it was 20 ms)
+const SLOW_SHARE := 0.25       # more than this share of slow frames in STEP_S: one step down (p4.6; it was 5%)
+const STEP_S := 5.0            # (p4.6; it was 3 s: a few hitches from explosions stepped a phone down)
 const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
 const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb_up": [KEY_W, KEY_UP],
 	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT]}
@@ -77,7 +78,8 @@ var fps_t := 0.0
 var fps_now := 0.0
 var status := ""
 var status_t := 0.0
-var look := "high"
+var look := "high"              # the look in use: low, normal, high
+var look_pick := "auto"         # p4.6: what the LOOK button picked (kept on the device): auto or a look
 var look_test := false         # look= gave a test look: no setting, no step-down
 var frame_gaps := PackedFloat32Array()   # the last STEP_S of frame gaps in a match (ms)
 var frame_sum := 0.0
@@ -107,9 +109,10 @@ func _ready() -> void:
 	world.setup(Vector2i(1920, 1080), false, 1.0)
 	look_test = opts.has("look") and world.set_variant(str(opts["look"]))
 	if not look_test:
-		look = _storage_get(LOOK_KEY)
-		if not LOOKS.has(look):
-			look = _device_look()
+		look_pick = _storage_get(LOOK_KEY)
+		if not PICKS.has(look_pick):
+			look_pick = "auto"
+		look = _device_look() if look_pick == "auto" else look_pick
 		world.set_tier(LOOK_TIER[look])
 	slow_ms = float(opts.get("slow", 0))
 	display.texture = sub.get_texture()
@@ -125,7 +128,7 @@ func _ready() -> void:
 	lobby.arena_pressed.connect(_on_arena)
 	lobby.bot_level_pressed.connect(_on_bot_level)
 	lobby.power_pressed.connect(_on_power)
-	lobby.set_look(str(opts["look"]) if look_test else look)
+	lobby.set_look(str(opts["look"]) if look_test else _look_label())
 	sticks = Sticks.new()
 	add_child(sticks)
 	sticks.active = OS.has_feature("web_android") or OS.has_feature("web_ios") or OS.has_feature("mobile") \
@@ -263,20 +266,26 @@ func _device_look() -> String:
 		return "normal"
 	return "high"
 
-# The lobby's LOOK button: the next look, kept on this device.
+# The lobby's LOOK button (p4.6): AUTO, LOW, NORMAL, HIGH, kept on this device. A
+# picked look stays (the user: the look kept falling back to LOW after a round);
+# AUTO starts on the device's guess and may step down.
 func _on_look() -> void:
 	if look_test:
 		return
-	look = LOOKS[(LOOKS.find(look) + 1) % LOOKS.size()]
+	look_pick = PICKS[(PICKS.find(look_pick) + 1) % PICKS.size()]
+	look = _device_look() if look_pick == "auto" else look_pick
 	world.set_tier(LOOK_TIER[look])
-	_storage_set(LOOK_KEY, look)
-	lobby.set_look(look)
+	_storage_set(LOOK_KEY, look_pick)
+	lobby.set_look(_look_label())
 	_reset_frames(2.0)
-	print("🎮 [Look] %s, picked in the lobby" % look)
+	print("🎮 [Look] %s, picked in the lobby" % _look_label())
 
-# The step-down: the gaps between frames while a match is on screen. More than
-# SLOW_SHARE of them over SLOW_MS in the last STEP_S: one look down (not kept on
-# the device: the next visit starts on the picked look again).
+func _look_label() -> String:
+	return ("AUTO · %s" % look.to_upper()) if look_pick == "auto" else look.to_upper()
+
+# The step-down, on AUTO only (p4.6): the gaps between frames while a match is on
+# screen. More than SLOW_SHARE of them over SLOW_MS in the last STEP_S: one look
+# down (not kept on the device: the next visit starts on AUTO's guess again).
 func _watch_frames(in_match: bool) -> void:
 	if slow_ms > 0.0:   # the test knob: this frame takes at least slow_ms
 		var until := Time.get_ticks_usec() + int(slow_ms * 1000.0)
@@ -285,7 +294,7 @@ func _watch_frames(in_match: bool) -> void:
 	var now := Time.get_ticks_usec()
 	var gap := (now - last_frame_us) / 1000.0 if last_frame_us > 0 else 0.0
 	last_frame_us = now
-	if look_test or look == "low" or not in_match:
+	if look_test or look_pick != "auto" or look == "low" or not in_match:
 		_reset_frames(0.0)
 		return
 	if step_wait > 0.0:
@@ -306,8 +315,8 @@ func _watch_frames(in_match: bool) -> void:
 		var was := look
 		look = LOOKS[LOOKS.find(look) - 1]
 		world.set_tier(LOOK_TIER[look])
-		lobby.set_look(look)
-		hud.say("LOOK: %s · the game stepped down to stay smooth" % look.to_upper(), 4.0)
+		lobby.set_look(_look_label())
+		hud.say("LOOK: AUTO stepped down to %s to stay smooth (pick a look in the lobby to keep one)" % look.to_upper(), 5.0)
 		print("🎮 [Look] step down %s -> %s: %d of %d frames over %d ms in %.0f s" % [
 			was, look, frame_slow, frame_gaps.size(), int(SLOW_MS), STEP_S])
 		_reset_frames(STEP_S)
