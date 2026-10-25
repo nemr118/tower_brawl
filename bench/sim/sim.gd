@@ -18,6 +18,14 @@
 # P2: the client runs a copy for its own fighter (client/predict.gd) with
 # `predicting` on: no deaths, no pickups, and an arrow that reaches a fighter
 # stops there instead of hitting (the server settles all of those).
+# p4.9 power-ups (the user, 2026-10-24): an orb's lightning builds up over a random
+# floor spot, strikes (anyone close dies, the electricity runs through them), and the
+# orb waits there; touch it and it is yours. The regular ones last the match (keep):
+# an arrow kind (the newest wins), SHIELD, INFINITE ARROWS, FLYING, BIG ARROWS. BIG
+# ones come near a person behind the leader (Mario Kart's help from the back) and run
+# this round: GHOST CATS, RAIN, INVISIBLE, FREEZE, SPIKED SHIELD, SUPER SPEED. Every
+# power-up that moves or arms a fighter lives in its Fighter (write_fighter_state),
+# so the client's copy predicts it.
 # ==============================================================================
 extends RefCounted
 
@@ -81,7 +89,7 @@ const WALLS_GONE := -0.1            # the share before they come and after they 
 # pull back to 15% in 3 s, then close all the way (105%) in 11 s, then go in 4 s.
 const WALLS_STEPS := [[540, -0.1, 0.33, 0], [180, 0.33, 0.15, 0], [660, 0.15, 1.05, 1], [240, 1.05, -0.1, 2]]
 const WALLS_KEEP_AWAY := 240        # a bot keeps this far from a wall's edge
-const SMOKE_R := 230.0
+const SMOKE_R := 288.0              # p4.9: 25% bigger (was 230): standing in it, you cannot see anyone
 const SMOKE_TICKS := 480
 const HURT_TICKS := 18
 const LEDGE_HOP := 3.0 * S
@@ -93,6 +101,40 @@ const MID_Y := 31
 const ARROW_Y := 28                 # the arrow leaves the body this far below its top
 const W := 1920
 const H := 1080
+# p4.9 power-ups: an orb's warning builds up PU_WARN ticks, then the bolt strikes
+# (anyone within STRIKE_R of the orb dies) and the orb waits PU_LIFE ticks to be taken;
+# PU_GAP after it is taken or gone, the next warning starts (the first PU_FIRST after FIGHT).
+const PU_FIRST := 60
+const PU_WARN := 150
+const PU_GAP := 180
+const PU_LIFE := 600
+const STRIKE_R := 80.0
+const ORB_R := 30.0
+const ORB_UP := 34                  # the orb's middle sits this far above its floor spot
+const BIG_CHANCE := 0.3             # a drop is BIG this often with a person 1 point behind the leader (+0.15 a point more)
+const REGULAR_W := {P.PU_FIRE: 13, P.PU_BOMB: 13, P.PU_POISON: 12, P.PU_SMOKE: 12, P.PU_SHIELD: 14,
+	P.PU_INF: 12, P.PU_FLY: 11, P.PU_BIG: 13}
+const BIG_KINDS := [P.PU_CATS, P.PU_RAIN, P.PU_INVIS, P.PU_FREEZE, P.PU_SPIKES, P.PU_SPEED]
+const FLY_MAX := 1.4 * S            # FLYING: the stick floats the fighter this fast, any way
+const FLY_ACCEL := 0.12 * S
+const SLOW_MULT := 0.55             # RAIN: everyone else runs at this share of their speed
+const SPEED_MULT := 1.6             # SUPER SPEED
+const FREEZE_TICKS := 150
+const RAIN_TICKS := 480
+const INVIS_TICKS := 720
+const INVIS_CYCLE := 240            # INVISIBLE blinks: of each 4 s, 3 s out of sight, 1 s seen
+const INVIS_SEEN := 60
+const SPEED_TICKS := 600
+const SPIKES_TICKS := 1200
+const SPIKE_REGEN := 180
+const CATS_N := 3
+const CAT_TICKS := 420
+const CAT_SPEED := 4.0              # a ghost cat starts this fast, speeds up by CAT_ACCEL a tick to CAT_MAX (a run is 6.75)
+const CAT_MAX := 7.2
+const CAT_ACCEL := 0.05
+const CAT_R := 26.0
+const BIG_FX := 1.75                # BIG ARROWS: a blast, a fire or a cloud this much wider (3 times the area)
+const BIG_REACH := 22.0             # and the arrow meets a fighter this much farther out (it is drawn 3 times as big)
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -141,6 +183,20 @@ class Fighter:
 	var buttons: int = 0        # the last buttons applied, for the press edges
 	var mind = null             # the bot brain's memory (sim/brain.gd Mind)
 	var level: int = 0          # the brain's level (sim/brain.gd: OLD, EASY, NORMAL, HARD)
+	var vdir: int = 0           # p4.9: the stick up (-1, or jump) or down (1): FLYING floats that way
+	var pw_kind: int = 0        # p4.9 power-ups: the arrow kind every shot takes (0: plain)
+	var shield: int = 0         # SHIELD: arrows it still takes (0 or 1)
+	var inf: bool = false       # INFINITE ARROWS
+	var fly: bool = false       # FLYING
+	var big: bool = false       # BIG ARROWS
+	var freeze_t: int = 0       # frozen this many more ticks (someone's FREEZE): no buttons
+	var slow_t: int = 0         # slowed this many more ticks (someone's RAIN)
+	var speed_t: int = 0        # SUPER SPEED ticks left
+	var invis_t: int = 0        # INVISIBLE ticks left
+	var umbrella_t: int = 0     # its RAIN's ticks left: not slowed, a stomp bounces off
+	var spikes_t: int = 0       # SPIKED SHIELD ticks left
+	var spike_up: bool = false  # the spiked shield is up
+	var spike_regen: int = 0    # ticks until it is back after an arrow
 
 class Arrow:
 	var id: int = 0
@@ -156,6 +212,26 @@ class Arrow:
 	var stuck_t: int = 0
 	var fuse: int = -1
 	var dead: bool = false
+	var big: bool = false       # p4.9 BIG ARROWS
+
+class Orb:
+	var serial: int = 0         # a number of its own (the brain remembers what it decided about it)
+	var kind: int = 0           # proto PU_*
+	var big: bool = false
+	var state: int = 0          # proto ORB_WARN, ORB_LIVE
+	var t: int = 0              # ticks in this state
+	var x: float = 0.0          # its middle
+	var y: float = 0.0
+	var for_seat: int = -1      # a BIG one: the person it came for
+
+class Cat:
+	var owner: int = 0
+	var target: int = 0
+	var x: float = 0.0
+	var y: float = 0.0
+	var vx: float = 0.0
+	var vy: float = 0.0
+	var t: int = 0
 
 class Zone:
 	var kind: int = 0
@@ -187,6 +263,20 @@ var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i 
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
 var kind_weights: Array = [30, 17, 17, 17, 19]   # normal, fire, bomb, miasma, smoke
+var powerups := false           # p4.9: power-up orbs drop (the lobby's POWER-UPS)
+var orbs: Array = []            # Orb: one waits at a time
+var cats: Array = []            # Cat
+var pu_wait := PU_FIRST         # ticks until the next orb's warning (counts while no orb waits)
+var pu_last := 0                # the last regular kind (never twice in a row)
+var pu_last_big := 0
+var pu_last_x := -9999.0        # the last drop's spot (the next one lands away from it)
+var big_round := false          # a BIG one came this round (one a round)
+var keep := {}                  # seat -> [pw_kind, shield, inf, fly, big]: the match's power-ups, back each round
+var rain_owner := -1
+var rain_t := 0
+var spots: Array = []           # where an orb may land: feet spots on floors and ledges (for spots_level)
+var spots_level := -1
+var _orb_serial := 0
 
 func _init(n_fighters: int = 8, cap: int = 24, seed_value: int = 7) -> void:
 	level = LevelScript.new()
@@ -232,6 +322,7 @@ func step() -> void:
 		_update_arrow(a)
 	_tinks()
 	_pickups()
+	_update_powers()
 	_update_zones()
 	_update_walls()
 	_enforce_cap()
@@ -253,24 +344,26 @@ func start_round(seat_list: Array) -> void:
 	zones.clear()
 	events.clear()
 	_reset_walls()
-	var spots: Array = level.spawns.duplicate()
-	for i in range(spots.size() - 1, 0, -1):
+	_reset_powers_round()
+	var starts: Array = level.spawns.duplicate()
+	for i in range(starts.size() - 1, 0, -1):
 		var j := rng.randi_range(0, i)
-		var tmp = spots[i]
-		spots[i] = spots[j]
-		spots[j] = tmp
+		var tmp = starts[i]
+		starts[i] = starts[j]
+		starts[j] = tmp
 	if not fixed_spots.is_empty():
-		spots.clear()
+		starts.clear()
 		for k in fixed_spots:
-			spots.append(level.spawns[int(k) % level.spawns.size()])
+			starts.append(level.spawns[int(k) % level.spawns.size()])
 	for i in seat_list.size():
 		var f := Fighter.new()
 		f.id = int(seat_list[i]["id"])
 		f.bot = bool(seat_list[i]["bot"])
 		f.level = int(seat_list[i].get("level", bot_level))
 		fighters.append(f)
-		_place(f, spots[i % spots.size()])
+		_place(f, starts[i % starts.size()])
 		f.wait_t = rng.randi_range(BOT_WAIT_MIN, BOT_WAIT_MAX)   # only the brain reads it; it counts from FIGHT
+		_give_kept(f)
 
 func clear() -> void:
 	fighters.clear()
@@ -278,6 +371,19 @@ func clear() -> void:
 	zones.clear()
 	events.clear()
 	_reset_walls()
+	_reset_powers_round()
+
+# p4.9: a new match (or the lobby): the power-ups kept for the match go.
+func reset_powers() -> void:
+	keep.clear()
+
+func _reset_powers_round() -> void:
+	orbs.clear()
+	cats.clear()
+	rain_owner = -1
+	rain_t = 0
+	pu_wait = PU_FIRST
+	big_round = false
 
 func _reset_walls() -> void:
 	play_t = 0
@@ -315,8 +421,14 @@ func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 	var prev := f.buttons
 	f.buttons = buttons
 	f.aim = fposmod(aim * TAU / 3600.0, TAU)
-	if f.state == P.F_DEAD or frozen:
+	f.vdir = (1 if buttons & P.B_DOWN else 0) - (1 if buttons & (P.B_UP | P.B_JUMP) else 0)
+	if f.state == P.F_DEAD or frozen or f.freeze_t > 0:
 		f.move_dir = 0
+		if f.freeze_t > 0:      # p4.9 FREEZE: frozen solid: no run, jump, shot or dodge
+			f.vdir = 0
+			f.drawn = false
+			f.aiming = false
+			f.shot_wait = false
 		return
 	f.move_dir = (1 if buttons & P.B_RIGHT else 0) - (1 if buttons & P.B_LEFT else 0)
 	if buttons & P.B_DOWN:
@@ -513,6 +625,7 @@ func _update_fighter(f: Fighter) -> void:
 			_respawn(f)
 		return
 	f.state_t += 1
+	_power_timers(f)
 	if f.wj_t > 0:
 		f.wj_t -= 1
 	var was_ground := f.on_ground
@@ -572,12 +685,15 @@ func _update_fighter(f: Fighter) -> void:
 			f.state = P.F_NORMAL
 			f.state_t = 0
 			f.dodge_cd = DODGE_COOLDOWN
+	elif f.fly:
+		_fly(f)
 	else:
-		var accel := RUN_ACCEL if f.on_ground else AIR_ACCEL
+		var mult := speed_mult(f)
+		var accel := (RUN_ACCEL if f.on_ground else AIR_ACCEL) * mult
 		var stand_aim := f.aiming and f.on_ground   # aiming on the ground: you stand still
 		if f.move_dir != 0 and not stand_aim:
 			f.facing = f.move_dir
-			f.vx = move_toward(f.vx, RUN_MAX * f.move_dir, accel)
+			f.vx = move_toward(f.vx, RUN_MAX * mult * f.move_dir, accel)
 		else:
 			f.vx = move_toward(f.vx, 0.0, FRICTION if f.on_ground else AIR_FRICTION)
 		if f.aiming:
@@ -648,6 +764,55 @@ func _update_fighter(f: Fighter) -> void:
 	f.y = posmod(f.y, H)
 	_fighter_zones(f)
 
+# p4.9: the power-ups' clocks, one tick (a living fighter's).
+func _power_timers(f: Fighter) -> void:
+	if f.freeze_t > 0:
+		f.freeze_t -= 1
+	if f.slow_t > 0:
+		f.slow_t -= 1
+	if f.speed_t > 0:
+		f.speed_t -= 1
+	if f.invis_t > 0:
+		f.invis_t -= 1
+	if f.umbrella_t > 0:
+		f.umbrella_t -= 1
+	if f.spikes_t > 0:
+		f.spikes_t -= 1
+		if f.spike_regen > 0:
+			f.spike_regen -= 1
+			if f.spike_regen == 0:
+				f.spike_up = true
+		if f.spikes_t == 0:
+			f.spike_up = false
+
+# The share of its run speed a fighter has now: RAIN slows (not the umbrella's
+# owner), SUPER SPEED speeds up.
+static func speed_mult(f: Fighter) -> float:
+	return (SLOW_MULT if f.slow_t > 0 and f.umbrella_t <= 0 else 1.0) * (SPEED_MULT if f.speed_t > 0 else 1.0)
+
+# INVISIBLE now: of each INVIS_CYCLE, out of sight the first part, seen INVIS_SEEN.
+static func invisible(f: Fighter) -> bool:
+	return f.invis_t > 0 and posmod(INVIS_TICKS - f.invis_t, INVIS_CYCLE) < INVIS_CYCLE - INVIS_SEEN
+
+# FLYING (p4.9): no gravity; the stick (jump is up too) moves the body any way at
+# FLY_MAX, speeding up and slowing by FLY_ACCEL; no wall slides, ledge grabs or wall
+# jumps. Aiming on the ground still stands still; down on a ledge drops through it.
+func _fly(f: Fighter) -> void:
+	var mult := speed_mult(f)
+	var mx: int = 0 if (f.aiming and f.on_ground) else f.move_dir
+	if mx != 0:
+		f.facing = mx
+	if f.aiming:
+		f.facing = 1 if cos(f.aim) >= 0.0 else -1
+	f.vx = move_toward(f.vx, FLY_MAX * mult * mx, FLY_ACCEL * mult)
+	if f.vdir > 0 and f.on_ground and not box_hits_solid(f.x, f.y + 1, BODY_W, BODY_H) and _ledge_below(f.x, f.y + BODY_H):
+		f.dropping = 8
+		f.y += 1
+		f.on_ground = false
+	f.vy = move_toward(f.vy, FLY_MAX * mult * f.vdir, FLY_ACCEL * mult)
+	f.want_jump = false
+	f.wall = 0
+
 # A bot seat's buttons for this tick (sim/brain.gd presses them through
 # apply_input). A hook of its own so the probes can time it.
 func _brain(f: Fighter) -> void:
@@ -715,18 +880,21 @@ func _aim_help(f: Fighter, ang: float) -> float:
 
 # A let-go shot: an arrow (the aim help on the angle), or a dry fire with an empty quiver.
 func _fire(f: Fighter, ang: float) -> void:
-	if f.arrows > 0:
-		_shoot(f, _aim_help(f, ang), _pick_kind() if power_arrows else P.A_NORMAL)
+	if f.arrows > 0 or f.inf:
+		var kind: int = f.pw_kind if f.pw_kind > 0 else (_pick_kind() if power_arrows else P.A_NORMAL)
+		_shoot(f, _aim_help(f, ang), kind)
 	else:
 		_event(P.E_DRYFIRE, f.x + HALF_W, f.y + MID_Y, f.id, 0)
 
 func _shoot(f: Fighter, ang: float, kind: int) -> void:
-	f.arrows -= 1
+	if not f.inf:
+		f.arrows -= 1
 	f.aim = ang
 	var a := Arrow.new()
 	a.id = _next_arrow_id
 	_next_arrow_id = (_next_arrow_id % 65535) + 1
 	a.kind = kind
+	a.big = f.big
 	a.owner = f.id
 	var dir := Vector2.from_angle(ang)
 	a.x = f.x + HALF_W + dir.x * 30.0
@@ -753,17 +921,9 @@ func _stomps() -> void:
 			if absf(dx) >= BODY_W or absf(dy) >= BODY_H:
 				continue
 			if dy >= 20.0 and a.vy > 0.0:
-				_kill(b, a.id, 3)
-				b.vy = 4.0
-				b.vx = 0.0
-				a.vy = -JUMP
-				_event(P.E_JUMP, a.x + HALF_W, a.y + BODY_H, a.id, 1)
+				_stomp(a, b)
 			elif dy <= -20.0 and b.vy > 0.0:
-				_kill(a, b.id, 3)
-				a.vy = 4.0
-				a.vx = 0.0
-				b.vy = -JUMP
-				_event(P.E_JUMP, b.x + HALF_W, b.y + BODY_H, b.id, 1)
+				_stomp(b, a)
 			elif absf(a.vx - b.vx) > 9.0 and a.state != P.F_HURT and b.state != P.F_HURT:
 				var slow: Fighter = a if absf(a.vx) < absf(b.vx) else b
 				var fast: Fighter = b if slow == a else a
@@ -772,6 +932,23 @@ func _stomps() -> void:
 				var push := 2.0 if dx >= 0.0 else -2.0
 				a.vx -= push
 				b.vx += push
+
+# top comes down on under's head: a stomp. p4.9: SPIKED SHIELD's spikes kill the
+# stomper instead; RAIN's umbrella bounces the stomper off, nobody dies.
+func _stomp(top: Fighter, under: Fighter) -> void:
+	if under.spikes_t > 0:
+		_kill(top, under.id, 9)
+		top.vy = -JUMP * 0.6
+		return
+	if under.umbrella_t > 0:
+		top.vy = -JUMP
+		_event(P.E_JUMP, top.x + HALF_W, top.y + BODY_H, top.id, 1)
+		return
+	_kill(under, top.id, 3)
+	under.vy = 4.0
+	under.vx = 0.0
+	top.vy = -JUMP
+	_event(P.E_JUMP, top.x + HALF_W, top.y + BODY_H, top.id, 1)
 
 # ------------------------------------------------------------------ arrows
 func _update_arrow(a: Arrow) -> void:
@@ -784,7 +961,7 @@ func _update_arrow(a: Arrow) -> void:
 			a.fuse -= 1
 			if a.fuse == 0:
 				a.dead = true
-				_explode(a.x, a.y, a.owner)
+				_explode(a.x, a.y, a.owner, BIG_FX if a.big else 1.0)
 		return
 	if a.state == P.S_FALL:
 		a.vy = minf(a.vy + ARROW_GRAVITY, ARROW_MAX_FALL)
@@ -818,19 +995,20 @@ func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 	if not was_flying:
 		return
 	_event(P.E_STICK, int(a.x), int(a.y), a.kind, 1 if floor_hit else 0)
+	var k := BIG_FX if a.big else 1.0
 	if a.kind == P.A_FIRE:
 		if floor_hit:
-			_add_zone(P.Z_FIRE, a.x, surface_y, FIRE_WIDTH, FIRE_TICKS)
+			_add_zone(P.Z_FIRE, a.x, surface_y, FIRE_WIDTH * k, FIRE_TICKS)
 		else:
-			_add_zone(P.Z_FIRE, a.x, a.y + 20.0, 60.0, FIRE_TICKS / 2)
+			_add_zone(P.Z_FIRE, a.x, a.y + 20.0, 60.0 * k, FIRE_TICKS / 2)
 		_event(P.E_IGNITE, int(a.x), int(surface_y if floor_hit else a.y), 1 if floor_hit else 0, 0)
 	elif a.kind == P.A_BOMB:
 		a.fuse = BOMB_FUSE
 	elif a.kind == P.A_MIASMA:
-		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R, MIASMA_TICKS)
+		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
 		_event(P.E_MIASMA, int(a.x), int(a.y), 0, 0)
 	elif a.kind == P.A_SMOKE:
-		_add_zone(P.Z_SMOKE, a.x, a.y, SMOKE_R, SMOKE_TICKS)
+		_add_zone(P.Z_SMOKE, a.x, a.y, SMOKE_R * k, SMOKE_TICKS)
 		_event(P.E_SMOKE, int(a.x), int(a.y), 0, 0)
 
 func _arrow_hit_fighters(a: Arrow) -> bool:
@@ -839,7 +1017,8 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			continue
 		var dx := wrap_d(f.x, a.x, W)
 		var dy := wrap_d(f.y, a.y, H)
-		if dx < -4.0 or dx > BODY_W + 4.0 or dy < -4.0 or dy > BODY_H + 4.0:
+		var reach := 4.0 + (BIG_REACH if a.big else 0.0)
+		if dx < -reach or dx > BODY_W + reach or dy < -reach or dy > BODY_H + reach:
 			continue
 		if predicting:
 			return true   # the client's copy: the arrow waits here for the server's word (a catch or a hit)
@@ -849,22 +1028,26 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			f.catch_t = CATCH_HOLD
 			_event(P.E_CATCH, int(a.x), int(a.y), f.id, a.kind)
 			return true
+		if f.shield > 0 or (f.spikes_t > 0 and f.spike_up):
+			_block(f, a)
+			return true
+		var k := BIG_FX if a.big else 1.0
 		_kill(f, a.owner, 1)
 		f.vx = a.vx * 0.45
 		f.vy = -7.0 + a.vy * 0.3
 		if a.kind == P.A_SMOKE:
-			_add_zone(P.Z_SMOKE, a.x, a.y, SMOKE_R, SMOKE_TICKS)
+			_add_zone(P.Z_SMOKE, a.x, a.y, SMOKE_R * k, SMOKE_TICKS)
 			_event(P.E_SMOKE, int(a.x), int(a.y), 0, 0)
 		if a.kind == P.A_BOMB:
 			a.dead = true
-			_explode(a.x, a.y, a.owner)
+			_explode(a.x, a.y, a.owner, k)
 		elif a.kind == P.A_MIASMA:
 			a.dead = true
-			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R, MIASMA_TICKS)
+			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
 			_event(P.E_MIASMA, int(a.x), int(a.y), 0, 0)
 		else:
 			if a.kind == P.A_FIRE:
-				_add_zone(P.Z_FIRE, a.x, f.y + BODY_H, 90.0, FIRE_TICKS / 2)
+				_add_zone(P.Z_FIRE, a.x, f.y + BODY_H, 90.0 * k, FIRE_TICKS / 2)
 				_event(P.E_IGNITE, int(a.x), f.y + BODY_H, 1, 0)
 			a.state = P.S_FALL
 			a.vx *= -0.15
@@ -872,9 +1055,27 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 		return true
 	return false
 
-func _explode(x: float, y: float, owner: int) -> void:
-	_event(P.E_EXPLODE, int(x), int(y), owner, 0)
-	var r2 := EXPLODE_R * EXPLODE_R
+# A shield takes the arrow (p4.9): the arrow drops off with no blast or cloud. The
+# spiked shield first (it comes back after SPIKE_REGEN); SHIELD is used up, for the
+# match too.
+func _block(f: Fighter, a: Arrow) -> void:
+	if f.spikes_t > 0 and f.spike_up:
+		f.spike_up = false
+		f.spike_regen = SPIKE_REGEN
+	else:
+		f.shield = 0
+		if keep.has(f.id):
+			keep[f.id][1] = 0
+	a.state = P.S_FALL
+	a.vx *= -0.3
+	a.vy = -7.0
+	a.fuse = -1
+	_event(P.E_SHIELD_POP, int(a.x), int(a.y), f.id, a.kind)
+
+# A blast at (x, y): k > 1 for a BIG arrow's (the event's b says so).
+func _explode(x: float, y: float, owner: int, k: float = 1.0) -> void:
+	_event(P.E_EXPLODE, int(x), int(y), owner, 1 if k > 1.0 else 0)
+	var r2 := EXPLODE_R * EXPLODE_R * k * k
 	for f in fighters:
 		if f.state == P.F_DEAD:
 			continue
@@ -952,6 +1153,333 @@ func _enforce_cap() -> void:
 			stuck -= 1
 			if stuck <= arrow_cap:
 				return
+
+# ------------------------------------------------------------------ power-ups (p4.9)
+# One tick: the rain slows everyone but its owner, the ghost cats hunt, an orb's
+# warning turns into the strike, a waiting orb is taken (or fades), and with no orb
+# waiting the next one's clock runs (not once the round is decided).
+func _update_powers() -> void:
+	if predicting or frozen:
+		return
+	if rain_t > 0:
+		rain_t -= 1
+		for f in fighters:
+			if f.id != rain_owner and f.state != P.F_DEAD:
+				f.slow_t = maxi(f.slow_t, rain_t)
+	_update_cats()
+	if not powerups:
+		return
+	for i in range(orbs.size() - 1, -1, -1):
+		var o: Orb = orbs[i]
+		o.t += 1
+		if o.state == P.ORB_WARN:
+			if o.t >= PU_WARN:
+				_strike(o)
+		elif o.t >= PU_LIFE:
+			_event(P.E_PU_GONE, int(o.x), int(o.y), o.kind, 1 if o.big else 0)
+			orbs.remove_at(i)
+			pu_wait = PU_GAP
+		else:
+			var f := _orb_taker(o)
+			if f != null:
+				orbs.remove_at(i)
+				pu_wait = PU_GAP
+				_give(f, o.kind)
+	if orbs.is_empty() and alive_count() > 1 and walls_melt_t < 0:
+		pu_wait -= 1
+		if pu_wait <= 0:
+			_drop()
+
+# The bolt hits the orb's spot: everyone within STRIKE_R dies (cause 7: the page runs
+# the electricity through them), and the orb is there to take.
+func _strike(o: Orb) -> void:
+	o.state = P.ORB_LIVE
+	o.t = 0
+	_event(P.E_STRIKE, int(o.x), int(o.y), o.kind, 1 if o.big else 0)
+	for f in fighters:
+		if f.state == P.F_DEAD:
+			continue
+		var dx := wrap_d(o.x, f.x + HALF_W, W)
+		var dy := wrap_d(o.y, f.y + MID_Y, H)
+		if dx * dx + dy * dy <= STRIKE_R * STRIKE_R:
+			_kill(f, 255, 7)
+			f.vx = signf(dx) * 5.0
+			f.vy = -9.0
+
+# The first living fighter touching the orb that may take it, or null.
+func _orb_taker(o: Orb) -> Fighter:
+	for f in fighters:
+		if f.state == P.F_DEAD or not may_take(f, o):
+			continue
+		if absf(wrap_d(f.x + HALF_W, o.x, W)) < HALF_W + ORB_R and absf(wrap_d(f.y + MID_Y, o.y, H)) < MID_Y + ORB_R:
+			return f
+	return null
+
+# A BIG orb: a person behind the leader only. FLYING: people only (a bot walks
+# its routes). The rest: anyone.
+func may_take(f: Fighter, o: Orb) -> bool:
+	if o.big:
+		return not f.bot and f.points < top_points()
+	if o.kind == P.PU_FLY:
+		return not f.bot
+	return true
+
+# The most points anyone in the round has (the BIG rule).
+func top_points() -> int:
+	var top := 0
+	for f in fighters:
+		top = maxi(top, f.points)
+	return top
+
+# The power-up is f's: a regular one is kept for the match (keep), a BIG one runs now.
+func _give(f: Fighter, kind: int) -> void:
+	_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, kind)
+	if kind >= P.PU_FIRE and kind <= P.PU_SMOKE:
+		f.pw_kind = kind          # the arrow kinds share the numbers 1..4
+	elif kind == P.PU_SHIELD:
+		f.shield = 1
+	elif kind == P.PU_INF:
+		f.inf = true
+		f.arrows = maxi(f.arrows, START_QUIVER)
+	elif kind == P.PU_FLY:
+		f.fly = true
+	elif kind == P.PU_BIG:
+		f.big = true
+	elif kind == P.PU_CATS:
+		_send_cats(f)
+	elif kind == P.PU_RAIN:
+		rain_owner = f.id
+		rain_t = RAIN_TICKS
+		f.umbrella_t = RAIN_TICKS
+		f.slow_t = 0
+	elif kind == P.PU_INVIS:
+		f.invis_t = INVIS_TICKS
+	elif kind == P.PU_FREEZE:
+		for o in fighters:
+			if o != f and o.state != P.F_DEAD:
+				o.freeze_t = FREEZE_TICKS
+				o.drawn = false
+				o.aiming = false
+				o.shot_wait = false
+		_event(P.E_FREEZE, f.x + HALF_W, f.y + MID_Y, f.id, 0)
+	elif kind == P.PU_SPIKES:
+		f.spikes_t = SPIKES_TICKS
+		f.spike_up = true
+		f.spike_regen = 0
+	elif kind == P.PU_SPEED:
+		f.speed_t = SPEED_TICKS
+	if kind <= P.PU_BIG:
+		keep[f.id] = [f.pw_kind, f.shield, f.inf, f.fly, f.big]
+
+# A new round's fighter gets its seat's kept power-ups back (a bot never flies:
+# a person's seat played by the brain for a while skips FLYING, the seat keeps it).
+func _give_kept(f: Fighter) -> void:
+	if not keep.has(f.id):
+		return
+	var k: Array = keep[f.id]
+	f.pw_kind = k[0]
+	f.shield = k[1]
+	f.inf = k[2]
+	f.fly = k[3] and not f.bot
+	f.big = k[4]
+
+# GHOST CATS: CATS_N cats leave f, each after one of the nearest enemies (more cats
+# than enemies: some share one).
+func _send_cats(f: Fighter) -> void:
+	var near: Array = []
+	for o in fighters:
+		if o != f and o.state != P.F_DEAD:
+			var dx := wrap_d(f.x, o.x, W)
+			var dy := wrap_d(f.y, o.y, H)
+			near.append([dx * dx + dy * dy, o.id])
+	if near.is_empty():
+		return
+	near.sort_custom(func(a, b): return a[0] < b[0])
+	for k in CATS_N:
+		var c := Cat.new()
+		c.owner = f.id
+		c.target = near[k % near.size()][1]
+		c.x = f.x + HALF_W
+		c.y = f.y + 10.0
+		var ang := -PI / 2.0 + (k - 1) * 0.9
+		c.vx = cos(ang) * CAT_SPEED
+		c.vy = sin(ang) * CAT_SPEED
+		cats.append(c)
+
+# The ghost cats (p4.9, the user's daughter: "sending a cat out at other people"):
+# each floats through walls toward its target, faster and faster; touching it kills
+# it (cause 8) unless it is dodging (a catch: the cat is gone). A cat whose target
+# died hunts the nearest other enemy; after CAT_TICKS it fades.
+func _update_cats() -> void:
+	for i in range(cats.size() - 1, -1, -1):
+		var c: Cat = cats[i]
+		c.t += 1
+		var tgt := fighter(c.target)
+		if tgt == null or tgt.state == P.F_DEAD:
+			tgt = _cat_target(c)
+			if tgt != null:
+				c.target = tgt.id
+		if c.t >= CAT_TICKS or tgt == null:
+			_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 0)
+			cats.remove_at(i)
+			continue
+		var dx := wrap_d(c.x, tgt.x + HALF_W, W)
+		var dy := wrap_d(c.y, tgt.y + MID_Y, H)
+		var d := maxf(1.0, sqrt(dx * dx + dy * dy))
+		var speed := minf(CAT_MAX, CAT_SPEED + c.t * CAT_ACCEL)
+		c.vx = lerpf(c.vx, dx / d * speed, 0.12)
+		c.vy = lerpf(c.vy, dy / d * speed, 0.12)
+		c.x = fposmod(c.x + c.vx, W)
+		c.y = fposmod(c.y + c.vy, H)
+		if absf(dx) < HALF_W + CAT_R * 0.5 and absf(dy) < MID_Y + CAT_R * 0.5:
+			if tgt.state == P.F_DODGE:
+				_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 1)
+			else:
+				_kill(tgt, c.owner, 8)
+				tgt.vy = -6.0
+			cats.remove_at(i)
+
+func _cat_target(c: Cat) -> Fighter:
+	var best: Fighter = null
+	var bd := INF
+	for f in fighters:
+		if f.id == c.owner or f.state == P.F_DEAD:
+			continue
+		var dx := wrap_d(c.x, f.x + HALF_W, W)
+		var dy := wrap_d(c.y, f.y + MID_Y, H)
+		if dx * dx + dy * dy < bd:
+			bd = dx * dx + dy * dy
+			best = f
+	return best
+
+# The next orb: its warning starts over a floor spot. BIG (one a round) when a
+# person is behind the leader, more often the further behind, near the person
+# furthest behind (but clear of everyone, so its bolt kills nobody); else a regular
+# kind, never the last one again, on a random spot away from the last.
+func _drop() -> void:
+	_ensure_spots()
+	if spots.is_empty():
+		pu_wait = PU_GAP
+		return
+	var top := top_points()
+	var low: Fighter = null
+	for f in fighters:
+		if f.state != P.F_DEAD and not f.bot and f.points < top:
+			if low == null or f.points < low.points or (f.points == low.points and rng.randf() < 0.5):
+				low = f
+	var o := Orb.new()
+	_orb_serial += 1
+	o.serial = _orb_serial
+	o.state = P.ORB_WARN
+	var spot := Vector2(-1.0, -1.0)
+	if low != null and not big_round and rng.randf() < BIG_CHANCE + 0.15 * (top - low.points - 1):
+		spot = _spot_near(low)
+		if spot.x >= 0.0:
+			o.big = true
+			o.for_seat = low.id
+			o.kind = _pick_big()
+			big_round = true
+	if spot.x < 0.0:
+		o.kind = _pick_regular()
+		spot = _spot_random()
+	o.x = spot.x
+	o.y = spot.y - ORB_UP
+	pu_last_x = spot.x
+	orbs.append(o)
+	_event(P.E_PU_WARN, int(o.x), int(o.y), o.kind, 1 if o.big else 0)
+
+# A regular kind by REGULAR_W, never the last one; FLYING only with a person alive
+# to take it.
+func _pick_regular() -> int:
+	var person := false
+	for f in fighters:
+		if f.state != P.F_DEAD and not f.bot:
+			person = true
+	var total := 0
+	for k in REGULAR_W:
+		if k != pu_last and (k != P.PU_FLY or person):
+			total += REGULAR_W[k]
+	var r := rng.randi() % maxi(1, total)
+	for k in REGULAR_W:
+		if k == pu_last or (k == P.PU_FLY and not person):
+			continue
+		r -= REGULAR_W[k]
+		if r < 0:
+			pu_last = k
+			return k
+	pu_last = P.PU_SHIELD
+	return P.PU_SHIELD
+
+func _pick_big() -> int:
+	var pick: int = BIG_KINDS[rng.randi() % BIG_KINDS.size()]
+	if pick == pu_last_big:
+		pick = BIG_KINDS[(BIG_KINDS.find(pick) + 1 + rng.randi() % (BIG_KINDS.size() - 1)) % BIG_KINDS.size()]
+	pu_last_big = pick
+	return pick
+
+# A random orb spot: inside the band the purple walls leave, away from the last drop.
+func _spot_random() -> Vector2:
+	var reach: int = walls_width() + 150 if walls_share > 0.0 else 0
+	for i in 16:
+		var sp: Vector2 = spots[rng.randi() % spots.size()]
+		if sp.x < reach or sp.x > W - reach:
+			continue
+		if absf(wrap_d(sp.x, pu_last_x, W)) < 300.0 and i < 12:
+			continue
+		return sp
+	return spots[rng.randi() % spots.size()]
+
+# A spot 150 to 520 px from f's feet (about 300 is best), with nobody within the
+# bolt's reach of the orb; (-1, -1) for none.
+func _spot_near(f: Fighter) -> Vector2:
+	var best := Vector2(-1.0, -1.0)
+	var bd := INF
+	var fx := float(f.x + HALF_W)
+	var fy := float(f.y + BODY_H)
+	var reach: int = walls_width() + 150 if walls_share > 0.0 else 0
+	for sp in spots:
+		if sp.x < reach or sp.x > W - reach:
+			continue
+		var d := Vector2(wrap_d(fx, sp.x, W), wrap_d(fy, sp.y, H)).length()
+		if d < 150.0 or d > 520.0:
+			continue
+		var clear := true
+		for o in fighters:
+			if o.state != P.F_DEAD and Vector2(wrap_d(o.x + HALF_W, sp.x, W), wrap_d(o.y + MID_Y, sp.y - ORB_UP, H)).length() < STRIKE_R + 40.0:
+				clear = false
+				break
+		if not clear:
+			continue
+		var score := absf(d - 300.0) + rng.randf() * 60.0
+		if score < bd:
+			bd = score
+			best = sp
+	return best
+
+# The orb spots of this arena: the feet spot over every floor or ledge cell a body
+# can stand on (level.stands), not in the side walls' outer columns.
+func _ensure_spots() -> void:
+	if spots_level == level.id and not spots.is_empty():
+		return
+	spots_level = level.id
+	spots.clear()
+	for cy in range(1, level.ROWS):
+		for cx in range(2, level.COLS - 2):
+			var sp := Vector2i(cx * 30 + 15, cy * 30)
+			if level.cell(cx, cy) != 0 and level.cell(cx, cy - 1) == 0 and level.stands(sp):
+				spots.append(Vector2(sp))
+
+# The quarter seconds left of f's BIG power-up (the longest that runs), for the page.
+static func big_left(f: Fighter) -> int:
+	return maxi(maxi(f.invis_t, f.speed_t), maxi(f.umbrella_t, f.spikes_t))
+
+# The snapshot's power bits (proto PW_*).
+static func power_bits(f: Fighter) -> int:
+	return (P.PW_SHIELD if f.shield > 0 else 0) | (P.PW_INF if f.inf else 0) | (P.PW_FLY if f.fly else 0) \
+		| (P.PW_BIG if f.big else 0) | (P.PW_INVIS if invisible(f) else 0) | (P.PW_INVIS_ON if f.invis_t > 0 else 0) \
+		| (P.PW_FROZEN if f.freeze_t > 0 else 0) | (P.PW_SLOW if f.slow_t > 0 and f.umbrella_t <= 0 else 0) \
+		| (P.PW_UMBRELLA if f.umbrella_t > 0 else 0) | (P.PW_SPIKES if f.spikes_t > 0 else 0) \
+		| (P.PW_SPIKE_UP if f.spikes_t > 0 and f.spike_up else 0) | (P.PW_SPEED if f.speed_t > 0 else 0)
 
 # ------------------------------------------------------------------ zones
 func _add_zone(kind: int, x: float, y: float, size: float, life: int) -> void:
@@ -1103,7 +1631,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		if a.dead:
 			continue
 		buf.put_u16(a.id)
-		buf.put_u8(a.kind | (a.state << 4))
+		buf.put_u8(a.kind | (a.state << 4) | (0x40 if a.big else 0))
 		if a.state == P.S_STUCK:
 			buf.put_16(int(a.x))
 			buf.put_16(int(a.y))
@@ -1128,6 +1656,35 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(e[2])
 		buf.put_u8(e[3] & 255)
 		buf.put_u8(e[4] & 255)
+	# p4.9 the power-ups (the format: proto.gd; readers before p4.9 stop after the events)
+	buf.put_u8(P.PW_TAG)
+	var pf: Array = []
+	for f in fighters:
+		if power_bits(f) != 0 or f.pw_kind != 0:
+			pf.append(f)
+	buf.put_u8(pf.size())
+	for f in pf:
+		buf.put_u8(f.id)
+		buf.put_u16(power_bits(f))
+		buf.put_u8(f.pw_kind)
+		buf.put_u8(mini(255, ceili(big_left(f) / 15.0)))
+	buf.put_u8(orbs.size())
+	for o in orbs:
+		buf.put_u8(o.state)
+		buf.put_u8(o.kind)
+		buf.put_u8(1 if o.big else 0)
+		buf.put_16(int(o.x))
+		buf.put_16(int(o.y))
+		buf.put_u8(clampi(int(255.0 * o.t / (PU_WARN if o.state == P.ORB_WARN else PU_LIFE)), 0, 255))
+		buf.put_u8(o.for_seat & 255)
+	buf.put_u8(cats.size())
+	for c in cats:
+		buf.put_u8(c.owner)
+		buf.put_u8(c.target)
+		buf.put_16(int(c.x))
+		buf.put_16(int(c.y))
+	buf.put_u8(rain_owner if rain_t > 0 and rain_owner >= 0 else P.NO_ONE)
+	buf.put_u8(mini(255, ceili(rain_t / 15.0)))
 
 # The snapshot's fighter flags (proto.gd): 1 facing right, 2 on the ground, 4 at a
 # wall, 8 burning, 16 poisoned, 32 rolling or pulling up, 64 wall jump, 128 in smoke.
@@ -1176,6 +1733,17 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u8((1 if f.on_ground else 0) | (2 if f.aiming else 0) | (4 if f.want_jump else 0) \
 		| (8 if f.rolling else 0) | (16 if f.in_smoke else 0) | (32 if f.drawn else 0) | (64 if f.shot_wait else 0))
 	buf.put_double(f.shot_aim)
+	buf.put_8(f.vdir)               # p4.9 the power-ups
+	buf.put_u8(f.pw_kind)
+	buf.put_u8(f.shield)
+	buf.put_u8((1 if f.inf else 0) | (2 if f.fly else 0) | (4 if f.big else 0) | (8 if f.spike_up else 0))
+	buf.put_u16(mini(f.freeze_t, 65535))
+	buf.put_u16(mini(f.slow_t, 65535))
+	buf.put_u16(mini(f.speed_t, 65535))
+	buf.put_u16(mini(f.invis_t, 65535))
+	buf.put_u16(mini(f.umbrella_t, 65535))
+	buf.put_u16(mini(f.spikes_t, 65535))
+	buf.put_u16(mini(f.spike_regen, 65535))
 
 func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.x = buf.get_16()
@@ -1215,3 +1783,18 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.drawn = (b & 32) != 0
 	f.shot_wait = (b & 64) != 0
 	f.shot_aim = buf.get_double()
+	f.vdir = buf.get_8()
+	f.pw_kind = buf.get_u8()
+	f.shield = buf.get_u8()
+	var pb := buf.get_u8()
+	f.inf = (pb & 1) != 0
+	f.fly = (pb & 2) != 0
+	f.big = (pb & 4) != 0
+	f.spike_up = (pb & 8) != 0
+	f.freeze_t = buf.get_u16()
+	f.slow_t = buf.get_u16()
+	f.speed_t = buf.get_u16()
+	f.invis_t = buf.get_u16()
+	f.umbrella_t = buf.get_u16()
+	f.spikes_t = buf.get_u16()
+	f.spike_regen = buf.get_u16()

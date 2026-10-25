@@ -6,10 +6,16 @@
 #             u8 winner (NO_ONE = none), u16 walls (each purple wall's width in px,
 #             + 0x8000 when they kill), u8 arena (G5: the layout in sim/level.gd),
 #             u8 fighters, u16 arrows, u8 zones, u16 events,
-#             fighter x14 B, arrow x8 B (stuck) or x21 B (in the air), zone x9 B, event x7 B
+#             fighter x14 B, arrow x8 B (stuck) or x21 B (in the air), zone x9 B, event x7 B,
+#             then (p4.9, the power-ups; older readers stop after the events) u8 PW_TAG,
+#             u8 n, n x (u8 seat, u16 PW_* bits, u8 arrow kind, u8 quarter seconds left of
+#             its BIG power-up), u8 orbs, orb x (u8 state, u8 kind, u8 big, s16 x, s16 y,
+#             u8 progress 0..255, u8 the seat a BIG one came for), u8 cats, cat x (u8 owner,
+#             u8 target, s16 x, s16 y), u8 the rain's owner (NO_ONE: no rain), u8 its quarter
+#             seconds left
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
-#   arrow     u16 id, u8 kind | state << 4, then stuck: s16 x, s16 y, u8 angle (256 steps);
+#   arrow     u16 id, u8 kind | state << 4 | 0x40 a BIG arrow (p4.9), then stuck: s16 x, s16 y, u8 angle (256 steps);
 #             in the air (P2: the client flies it on to its own tick): f32 x, f32 y,
 #             f32 vx, f32 vy (px per tick), u8 age (ticks, at most 255), u8 owner (seat)
 #   input     (u8 T_INPUT, u32 tick, u8 buttons, u16 aim in 0.1 degree steps) x4 (the last 4 ticks).
@@ -85,6 +91,55 @@ const Z_FIRE := 1
 const Z_MIASMA := 2
 const Z_SMOKE := 3
 
+# p4.9 power-ups (the user, 2026-10-24: the power arrows' randomness made them hard to
+# use; orbs dropped by lightning instead). The kinds an orb holds: 1..4 are the arrow
+# kinds (a fighter's shots take that kind for the rest of the match), then the other
+# regular ones, then the BIG ones (only for a person behind the leader, this round).
+const PU_FIRE := 1
+const PU_BOMB := 2
+const PU_POISON := 3
+const PU_SMOKE := 4
+const PU_SHIELD := 5       # takes one arrow (not a stomp)
+const PU_INF := 6          # the quiver never empties
+const PU_FLY := 7          # the stick floats you any way (people only: the bots walk their routes)
+const PU_BIG := 8          # arrows 3 times as big, their blast, fire and clouds 3 times the area
+const PU_CATS := 9         # BIG: 3 ghost cats hunt the nearest enemies (the user's daughter's idea)
+const PU_RAIN := 10        # BIG: everyone else runs slower for 8 s; your umbrella stops stomps
+const PU_INVIS := 11       # BIG: invisible 3 s, seen 1 s, for 12 s
+const PU_FREEZE := 12      # BIG: everyone else frozen for 2.5 s
+const PU_SPIKES := 13      # BIG: a shield that comes back 3 s after each arrow, spikes kill a stomper, 20 s
+const PU_SPEED := 14       # BIG: run 1.6 times as fast for 10 s
+const PU_NAMES := {1: "FIRE ARROWS", 2: "BOMB ARROWS", 3: "POISON ARROWS", 4: "SMOKE ARROWS", 5: "SHIELD",
+	6: "INFINITE ARROWS", 7: "FLYING", 8: "BIG ARROWS", 9: "GHOST CATS", 10: "RAIN", 11: "INVISIBLE",
+	12: "FREEZE", 13: "SPIKED SHIELD", 14: "SUPER SPEED"}
+const PU_SHORT := {1: "FIRE", 2: "BOMB", 3: "POISON", 4: "SMOKE", 5: "SHIELD", 6: "INFINITE", 7: "FLY", 8: "BIG",
+	9: "CATS", 10: "RAIN", 11: "INVISIBLE", 12: "FREEZE", 13: "SPIKES", 14: "SPEED"}
+# what each one does, in a line (the page says it when you take one)
+const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
+	2: "every arrow you shoot blows up, all match", 3: "every arrow you shoot leaves a poison cloud, all match",
+	4: "every arrow leaves smoke: whoever stands in it cannot see anyone, all match",
+	5: "the next arrow that hits you bounces off (stomps still count)", 6: "your arrows never run out, all match",
+	7: "move the stick any way to float around, all match", 8: "your arrows and their blasts are huge, all match",
+	9: "three ghost cats hunt the nearest players (dodge one to stop it)", 10: "everyone else is slow in the rain; your umbrella stops stomps",
+	11: "you blink out of sight: 3 seconds gone, 1 second seen", 12: "everyone else is frozen solid for a moment",
+	13: "arrows bounce off (it comes back), and spikes on top kill anyone who stomps you", 14: "you run super fast"}
+const ORB_WARN := 0        # an orb's states: the lightning builds up over its spot
+const ORB_LIVE := 1        # it struck: the orb waits to be taken
+const PW_TAG := 0xB5       # the snapshot's power-up part starts with this byte
+# a fighter's power bits (the snapshot's power-up part)
+const PW_SHIELD := 1
+const PW_INF := 2
+const PW_FLY := 4
+const PW_BIG := 8
+const PW_INVIS := 16       # out of sight now (the blink: the server says when)
+const PW_INVIS_ON := 32    # has INVISIBLE (its own page draws it faint)
+const PW_FROZEN := 64
+const PW_SLOW := 128       # slowed by someone's rain
+const PW_UMBRELLA := 256
+const PW_SPIKES := 512
+const PW_SPIKE_UP := 1024  # the spiked shield is up (not waiting to come back)
+const PW_SPEED := 2048
+
 # events: [type, x, y, a, b]
 const E_JUMP := 1        # a = fighter
 const E_LAND := 2        # a = fighter, b = fall speed
@@ -94,7 +149,7 @@ const E_STICK := 5       # a = kind, b = 1 floor / 0 wall
 const E_EXPLODE := 6     # a = owner
 const E_IGNITE := 7      # a = 1 floor / 0 wall
 const E_MIASMA := 8
-const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls)
+const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls, 7 lightning, 8 a ghost cat, 9 spikes)
 const E_CATCH := 10      # a = fighter, b = kind
 const E_PICKUP := 11     # a = fighter, b = kind
 const E_SPAWN := 12      # a = fighter
@@ -105,6 +160,13 @@ const E_LEDGE := 16      # a = fighter, b = 1 wall on the right
 const E_SMOKE := 17
 const E_DRYFIRE := 18    # a = fighter: let go of shoot with an empty quiver
 const E_KILL := 19       # p4.8 (the deathcam): a = the killer (255: none, the arena), b = the fighter who died
+const E_PU_WARN := 20    # p4.9: an orb's lightning starts to build up: x, y its middle; a = kind; b = 1 BIG
+const E_STRIKE := 21     # the lightning strikes there (anyone close dies): a = kind; b = 1 BIG
+const E_PU_GET := 22     # a = fighter, b = kind: it took the orb
+const E_PU_GONE := 23    # an orb nobody took fades: a = kind
+const E_SHIELD_POP := 24 # a = fighter: its shield took an arrow; b = the arrow's kind
+const E_CAT_POOF := 25   # a ghost cat is gone: a = owner; b = 1 caught by a dodge
+const E_FREEZE := 26     # a = the fighter who froze everyone else
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)
@@ -113,5 +175,6 @@ const F2_AIMING := 2
 const F2_AWAY := 4
 
 # the death causes, for the log lines
-const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls"}
+const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
+	8: "a ghost cat", 9: "spikes"}
 const WALLS_DEADLY_BIT := 0x8000

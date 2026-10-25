@@ -62,6 +62,7 @@ const NEAR_TARGET := 260.0      # on its target's floor it stops this far from i
 const HUNT := [0.0, 0.3, 0.5, 0.8]    # by level: the chance a new plan hunts the target (else it roams)
 const MODE_TICKS := [120, 240]  # a plan (hunt or roam) lasts 2 to 4 s
 const IDLE_TICKS := 150         # not 90 px from where it was for 2.5 s with no shot: it lowers the bow and roams
+const SEEK := [0.0, 0.35, 0.55, 0.75]   # p4.9: by level, the chance it goes for a power-up orb (rolled once an orb)
 # the 8 ways, from right going clockwise (y grows down): the dodge into an arrow
 const WAYS8 := [P.B_RIGHT, P.B_DOWN | P.B_RIGHT, P.B_DOWN, P.B_DOWN | P.B_LEFT, P.B_LEFT, P.B_UP | P.B_LEFT,
 	P.B_UP, P.B_UP | P.B_RIGHT]
@@ -109,6 +110,8 @@ class Mind:
 	var still_x := 0            # and where
 	var near_t := 0             # ticks it has stood near its target on the target's floor with no shot
 	var fetch := -1             # the arrow it goes to fetch (its id), or -1
+	var orb := -1               # p4.9: the power-up orb it goes for (its serial), or -1
+	var orbs_seen := {}         # an orb's serial -> true: go for it; false: leave it
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
 static func think(sim, f) -> void:
@@ -298,6 +301,10 @@ static func _play(sim, f, m: Mind) -> int:
 				m.jump_wait = false
 	if rm == null:
 		return _buttons(m)
+	var flee := _strike_flee(sim, f) if m.player == null else 0
+	if flee != 0:
+		m.drawing = false   # the bow comes down (B_CANCEL, think): it gets out of the way first
+		return (walk & ~(P.B_LEFT | P.B_RIGHT | P.B_SHOOT)) | (P.B_RIGHT if flee > 0 else P.B_LEFT)
 	if m.drawing:
 		return (walk & (P.B_LEFT | P.B_RIGHT)) | P.B_SHOOT   # no jump or drop while the bow is drawn
 	return walk
@@ -375,8 +382,11 @@ static func _route_move(sim, f, m: Mind, rm, tgt) -> int:
 			m.plan_t = 0        # someone took it: plan again
 		else:
 			m.goal_x = a.x
+	if m.orb >= 0 and _orb_by_serial(sim, m.orb) == null:
+		m.orb = -1
+		m.plan_t = 0            # p4.9: someone took the orb (or it faded): plan again
 	if here == m.goal_s or m.edge.is_empty():
-		var near: bool = m.hunting and m.fetch < 0 and f.arrows > 0 and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
+		var near: bool = m.hunting and m.fetch < 0 and m.orb < 0 and f.arrows > 0 and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
 		var b := _toward(f, m.goal_x, NEAR_TARGET if near else 0.0)
 		if f.arrows == 0 and m.fetch < 0 and tgt != null and here == _surface_under(rm, tgt) and b != 0 \
 				and absf(SimScript.wrap_d(f.x, tgt.x, W)) < 90.0 and (m.prev & P.B_JUMP) == 0:
@@ -482,6 +492,9 @@ static func _goal(sim, f, m: Mind, rm, tgt, here: int) -> void:
 			return
 	m.walls_goal = false
 	m.fetch = -1
+	m.orb = -1
+	if _orb_goal(sim, f, m, rm, here):
+		return
 	if f.arrows < 2:
 		var got := _fetch_goal(sim, f, m, rm, here)
 		if got:
@@ -528,6 +541,55 @@ static func _fetch_goal(sim, f, m: Mind, rm, here: int) -> bool:
 				m.fetch = a.id
 			break
 	return m.fetch >= 0
+
+# p4.9: a power-up orb waiting to be taken (not FLYING or a BIG one: those are for
+# people), if the level's roll for that orb said go and its floor is in reach: the
+# goal is its floor, at its x. Returns true with a goal.
+static func _orb_goal(sim, f, m: Mind, rm, here: int) -> bool:
+	for o in sim.orbs:
+		if o.state != P.ORB_LIVE or not sim.may_take(f, o):
+			continue
+		if not m.orbs_seen.has(o.serial):
+			m.orbs_seen[o.serial] = sim.rng.randf() < SEEK[f.level]
+		if not m.orbs_seen[o.serial]:
+			continue
+		var cx := roundi(o.x / 30.0)
+		var r := posmod(roundi((o.y + SimScript.ORB_UP) / 30.0), 36)
+		var s := -1
+		for k in [0, -1, 1]:
+			s = rm.at.get(Vector2i(posmod(cx + k, 64), r), -1)
+			if s >= 0:
+				break
+		if s < 0 or rm.cost[here][s] == INF:
+			continue
+		m.goal_s = s
+		m.goal_x = o.x
+		m.orb = o.serial
+		return true
+	return false
+
+static func _orb_by_serial(sim, serial: int):
+	for o in sim.orbs:
+		if o.serial == serial and o.state == P.ORB_LIVE:
+			return o
+	return null
+
+# p4.9: an orb's lightning builds up near: step away from it (1 right, -1 left, 0:
+# no need). EASY notices only half of them.
+static func _strike_flee(sim, f) -> int:
+	if f.level == OLD or not f.on_ground or f.state != P.F_NORMAL:
+		return 0
+	var r: float = SimScript.STRIKE_R + 60.0
+	for o in sim.orbs:
+		if o.state != P.ORB_WARN:
+			continue
+		var dx := SimScript.wrap_d(o.x, f.x + SimScript.HALF_W, W)
+		var dy := SimScript.wrap_d(o.y, f.y + SimScript.MID_Y, H)
+		if dx * dx + dy * dy < r * r:
+			if f.level == EASY and (o.serial + f.id) % 2 == 0:
+				continue
+			return 1 if dx >= 0.0 else -1
+	return 0
 
 # The place of surface s inside the band the walls leave nearest the middle (its
 # feet x), or -1.
@@ -697,8 +759,10 @@ static func _draw(sim, f, m: Mind) -> void:
 # The first of the 3 nearest enemies with a path: [the fighter, the angle], or [].
 static func _pick_shot(sim, f) -> Array:
 	var near: Array = []
+	if f.in_smoke:
+		return []          # p4.9: inside smoke it sees nobody
 	for o in sim.fighters:
-		if o == f or o.state == P.F_DEAD:
+		if o == f or o.state == P.F_DEAD or SimScript.invisible(o):
 			continue
 		var dx := SimScript.wrap_d(f.x, o.x, W)
 		var dy := SimScript.wrap_d(f.y, o.y, H)
@@ -818,12 +882,15 @@ static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: 
 
 # ------------------------------------------------------------------ what a bot sees
 # The nearest living enemy (one hidden in smoke only up close); a person's distance
-# times people_w (PEOPLE by level; OLD: 1).
+# times people_w (PEOPLE by level; OLD: 1). p4.9: none while it stands in smoke
+# (smoke blinds whoever is inside), and never an INVISIBLE one out of sight.
 static func nearest_enemy(sim, f, people_w := 1.0):
 	var best = null
 	var bd := INF
+	if f.in_smoke:
+		return null
 	for o in sim.fighters:
-		if o == f or o.state == P.F_DEAD:
+		if o == f or o.state == P.F_DEAD or SimScript.invisible(o):
 			continue
 		var dx := SimScript.wrap_d(f.x, o.x, W)
 		var dy := SimScript.wrap_d(f.y, o.y, H)

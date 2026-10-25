@@ -11,6 +11,7 @@
 #       [--net-thread 0|1] [--net-sleep-ms 4] [--admin-port 8092] [--admin-bind 127.0.0.1]
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
+# --no-powerups: no power-up orbs (p4.9; the lobby's POWER-UPS switch starts ON).
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
@@ -30,7 +31,7 @@
 #   each person's address and ping), the settings, the players' numbers tonight,
 #   the last 80 events. POST /bots {n} (0..7), /bot_level {n} (1..3), /arena {n}
 #   (P.ARENA_MIX or an arena of LevelScript.PLAY): any time, in a match from the
-#   next round; /power {n} (p4.5: the power arrows on or off, from the next shot);
+#   next round; /power {n} (p4.9: the power-up orbs on or off, at once; it was p4.5's power arrows);
 #   /kick {seat} (a person goes back to watching), /start, /stop (the match ends,
 #   back to the lobby). A reply: {ok, text, state}. 0 (the default): off.
 # Inputs land on their tick (P2): each input carries the server tick it is for,
@@ -44,7 +45,7 @@
 # close) comes up, net_out (a snapshot for all, a JSON text for one) goes down.
 # The JSON (text frames). From a client: hello {name, version, token},
 # join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
-# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.5: 1 the power arrows on, 0 off), name {name},
+# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.9: 1 the power-up orbs on, 0 off), name {name},
 # skip (p4.8: a seated player ends the match's end, the deathcam's montage, for everyone: the lobby),
 # report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
 # step_downs, shots_armed, shots_cancelled, mouse_shots, errors [], errors_total} (p4.7: a phone's own
@@ -219,6 +220,7 @@ func _ready() -> void:
 	sim = SimScript.new(0, 24, int(Time.get_unix_time_from_system()))
 	sim.respawn = false
 	sim.power_arrows = o.has("power-arrows")
+	sim.powerups = not o.has("no-powerups")
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):
@@ -257,14 +259,14 @@ func _ready() -> void:
 	started_ms = Time.get_ticks_msec()
 	sec_start_ms = started_ms
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
-		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "goal_override": goal_override,
+		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "powerups": sim.powerups, "goal_override": goal_override,
 		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick), "bot_level": SimScript.BrainScript.NAMES[sim.bot_level],
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(), "soak": soak,
 		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on, "admin_port": host_port}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
-	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power arrows %s, %s, arena %s, cpu %s x%d, report in %s" % [
-		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, SimScript.BrainScript.NAMES[sim.bot_level], "on" if sim.power_arrows else "off",
+	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power-ups %s, %s, arena %s, cpu %s x%d, report in %s" % [
+		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, SimScript.BrainScript.NAMES[sim.bot_level], "on" if sim.powerups else "off",
 		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls", _arena_label(arena_pick),
 		info["cpu"], info["cores"], log_path])
 	if net_thread_on:
@@ -312,6 +314,7 @@ func _physics_process(_dt: float) -> void:
 	sim.step()
 	var evs: Array = sim.take_events()
 	_log_deaths(evs)
+	_log_powers(evs)
 	_count_events(evs)
 	pending_events.append_array(evs)
 	var t2 := Time.get_ticks_usec()
@@ -454,9 +457,9 @@ func _on_text(c: Conn, txt: String) -> void:
 			seats_dirty = true
 	elif kind == "power":
 		var on := int(d.get("n", 0)) != 0
-		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and on != sim.power_arrows:
-			sim.power_arrows = on
-			_say("🏰 [LOBBY] power arrows %s, picked by seat %d '%s'" % ["ON" if on else "OFF", c.seat, seats[c.seat].name])
+		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and on != sim.powerups:
+			sim.powerups = on
+			_say("🏰 [LOBBY] power-ups %s, picked by seat %d '%s'" % ["ON" if on else "OFF", c.seat, seats[c.seat].name])
 			seats_dirty = true
 	elif kind == "name":
 		if c.seat >= 0:
@@ -553,6 +556,7 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 	if not back:
 		s.name = c.name if c.name != "Player" else "Player %d" % (s.i + 1)
 		s.token = c.token
+		sim.keep.erase(s.i)   # p4.9: a new person: none of the seat's kept power-ups
 		s.points = 0
 		s.crowns = 0
 		s.in_round = false
@@ -575,6 +579,7 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 	seats_dirty = true
 
 func _free_seat_now(s: Seat) -> void:
+	sim.keep.erase(s.i)     # p4.9: the seat's kept power-ups go with its person
 	var f = sim.fighter(s.i)
 	if f != null:
 		f.bot = true
@@ -783,6 +788,7 @@ func _round_secs() -> float:
 
 func _begin_match() -> void:
 	match_no += 1
+	sim.reset_powers()     # p4.9: a new match: no power-ups kept
 	for s in seats:
 		s.points = 0
 	round_no = 1
@@ -869,6 +875,7 @@ func _stop_match() -> void:
 
 func _to_lobby() -> void:
 	sim.clear()
+	sim.reset_powers()
 	sim.frozen = false
 	for s in seats:
 		if s.kind == 2:
@@ -941,7 +948,7 @@ func _send_seats(target: int) -> void:
 		list.append({"i": s.i, "name": s.name, "kind": s.kind, "on": s.kind == 2 or s.client_id != 0,
 			"points": s.points, "crowns": s.crowns, "in": s.in_round})
 	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
-		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.power_arrows else 0,
+		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.powerups else 0,
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"seats": list}
 	_out(target, JSON.stringify(msg))
@@ -1264,6 +1271,20 @@ func _stat(s: Seat) -> Dictionary:
 		stats[key] = r
 	return stats[key]
 
+# p4.9: who took which power-up (a [POWER] line and a "power" line in v2_server.jsonl),
+# and the lightning, the freeze and the BIG drops for the log.
+func _log_powers(evs: Array) -> void:
+	for e in evs:
+		var k: int = e[0]
+		if k == P.E_PU_GET:
+			var i: int = e[3]
+			var who: String = seats[i].name if i >= 0 and i < SEATS else "?"
+			_say("🏰 [POWER] seat %d '%s' took %s%s" % [i, who, P.PU_NAMES.get(e[4], str(e[4])), " (BIG)" if e[4] >= P.PU_CATS else ""])
+			server_log.store_line(JSON.stringify({"kind": "power", "t": Time.get_unix_time_from_system(), "match": match_no,
+				"round": round_no, "seat": i, "name": who, "power": P.PU_NAMES.get(e[4], str(e[4])), "s": snappedf(_round_secs(), 0.01)}))
+		elif k == P.E_PU_WARN and e[4] == 1:
+			_say("🏰 [POWER] a BIG %s comes for someone behind" % P.PU_NAMES.get(e[3], str(e[3])))
+
 func _count_events(evs: Array) -> void:
 	for e in evs:
 		var k: int = e[0]
@@ -1431,10 +1452,10 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			_say("🏰 [HOST] kicked seat %d '%s': back to watching" % [i, who])
 			return [true, "%s is back to watching." % who]
 		"power":
-			sim.power_arrows = int(d.get("n", 0)) != 0
+			sim.powerups = int(d.get("n", 0)) != 0
 			seats_dirty = true
-			_say("🏰 [HOST] power arrows %s" % ("ON" if sim.power_arrows else "OFF"))
-			return [true, "Power arrows %s, from the next shot." % ("ON" if sim.power_arrows else "OFF")]
+			_say("🏰 [HOST] power-ups %s" % ("ON" if sim.powerups else "OFF"))
+			return [true, "Power-ups %s, from now." % ("ON" if sim.powerups else "OFF")]
 		"start":
 			if phase != P.PH_LOBBY:
 				return [false, "A match is already on."]
@@ -1517,7 +1538,7 @@ func _host_state() -> Dictionary:
 		"arena_now": sim.level.id, "arena_now_name": sim.level.name, "arenas": arenas,
 		"bots_wanted": bots_wanted, "bots_now": _bots_now(), "max_bots": MAX_BOTS,
 		"bot_level": sim.bot_level, "bot_level_name": SimScript.BrainScript.NAMES[sim.bot_level], "levels": levels,
-		"power_arrows": sim.power_arrows,
+		"power_arrows": sim.powerups, "powerups": sim.powerups,   # p4.9: the host page's switch is the power-ups
 		"people": _people(), "watchers": watching.size(), "lan": _lan_ips(), "page_port": 8443, "game_port": port,
 		"seats": seat_list, "watching": watching,
 		"tick": {"mean_ms": last_rec.get("tick_mean_ms", 0.0), "max_ms": last_rec.get("tick_max_ms", 0.0),
