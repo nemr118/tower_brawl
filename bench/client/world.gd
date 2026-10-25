@@ -13,6 +13,7 @@ const FX = preload("res://client/fx.gd")
 const F3D = preload("res://client/fighter3d.gd")
 const PowersView = preload("res://client/powers_view.gd")
 const ThemeView = preload("res://client/theme_view.gd")
+const EdgesView = preload("res://client/edges_view.gd")
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
 	Color("a85ae8"), Color("f08a2c"), Color("35d6d0"), Color("f06aa8")]
 const FIGHTER_TEX := [preload("res://assets/fighter_p0.png"), preload("res://assets/fighter_p1.png"),
@@ -129,6 +130,7 @@ var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while th
 var pview                        # p4.9: the power-ups (client/powers_view.gd), every look
 var theme_view                   # p4.9: an arena's holiday look (client/theme_view.gd: THE HAUNTED HOUSE)
 var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
+var edges                        # p4.11: the arena's edges, easy to read (client/edges_view.gd)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -370,6 +372,10 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	threats.add_child(pview)
 	pview.setup(self, glow, add_mat, TEAM)
 	theme_view.setup(threats)
+	edges = EdgesView.new()
+	threats.add_child(edges)
+	threats.move_child(edges, 0)    # first in the threats layer: under the pumpkins and the fighters
+	edges.build(level)
 	fx.prewarm(Vector2(960, 1200))
 
 # p4.3: your seat and the phase, from the game client before each render (the
@@ -473,10 +479,12 @@ func _apply_theme() -> void:
 	var hw: bool = level.theme == "halloween"
 	dark_base = Color(0.42, 0.32, 0.55) if hw else Color(0.36, 0.36, 0.5)
 	dark.color = dark_base
-	bg_far.modulate = Color(0.78, 0.6, 1.0) if hw else Color.WHITE
-	bg_mid.modulate = Color(0.7, 0.55, 0.95, 0.9) if hw else Color(1, 1, 1, 0.9)
+	# p4.11: the backdrop a step dimmer and cooler, the blocks a step brighter: the play
+	# space stands out from what is only scenery (the user: too little contrast)
+	bg_far.modulate = Color(0.62, 0.48, 0.85) if hw else Color(0.66, 0.7, 0.86)
+	bg_mid.modulate = Color(0.56, 0.44, 0.78, 0.9) if hw else Color(0.62, 0.66, 0.82, 0.9)
 	for layer in [tiles_plain, tiles_lit]:
-		layer.modulate = Color(0.86, 0.78, 1.0) if hw else Color.WHITE
+		layer.modulate = Color(0.98, 0.9, 1.1) if hw else Color(1.12, 1.12, 1.16)
 	var fx_on: bool = parts.get("particles", false)
 	for tr in torches:
 		tr[0].visible = not hw
@@ -484,6 +492,8 @@ func _apply_theme() -> void:
 		tr[2].emitting = fx_on and not hw
 		tr[1].color = Color(1.0, 0.5, 0.15) if hw else Color(1.0, 0.62, 0.3)
 	theme_view.set_theme(level.theme, level.torches)
+	if edges != null:
+		edges.build(level)
 
 func _fill_tiles(layer: TileMapLayer) -> void:
 	for cy in level.ROWS:
