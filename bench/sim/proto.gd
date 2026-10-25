@@ -174,6 +174,8 @@ const E_PIN := 27        # p4.10: an arrow pins a body to a wall: x, y the arrow
 const E_GHOST := 28      # p4.11: a person's ghost rises from the body: a = fighter
 const E_BOO := 29        # a ghost BOOs: a = the ghost, b = the one it shoved (255: the dash starts)
 const E_GHOST_POP := 30  # an arrow pops a ghost (gone 3 s): a = the ghost, b = the shooter
+const E_FURNACE := 40    # THE BOILER ROOM (sim/boiler.gd): a furnace blasts fire: x, y its mouth; a = which one; b = its direction
+const E_STEAM := 41      # a pressure pipe vents steam: x, y its valve; a = which one; b = its direction
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)
@@ -183,5 +185,5 @@ const F2_AWAY := 4
 
 # the death causes, for the log lines
 const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
-	8: "a ghost cat", 9: "spikes"}
+	8: "a ghost cat", 9: "spikes", 10: "a furnace"}
 const WALLS_DEADLY_BIT := 0x8000

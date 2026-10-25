@@ -277,6 +277,8 @@ static func _play(sim, f, m: Mind) -> int:
 	# p4.10: a power-up's warning near: out of there first, even in the middle of a
 	# move or in the air (a wall that way: jump); flying bots steer away in _fly_move
 	var flee := _strike_flee(sim, f) if not f.fly else 0
+	if flee == 0 and sim.hazards != null and f.state == P.F_NORMAL:
+		flee = sim.hazards.flee(sim, f)    # THE BOILER ROOM: a furnace or a steam pipe about to go off
 	if flee != 0:
 		m.player = null
 		m.plan_t = 0

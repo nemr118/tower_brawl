@@ -14,6 +14,7 @@ const F3D = preload("res://client/fighter3d.gd")
 const PowersView = preload("res://client/powers_view.gd")
 const ThemeView = preload("res://client/theme_view.gd")
 const EdgesView = preload("res://client/edges_view.gd")
+const BoilerView = preload("res://client/boiler_view.gd")
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
 	Color("a85ae8"), Color("f08a2c"), Color("35d6d0"), Color("f06aa8")]
 const FIGHTER_TEX := [preload("res://assets/fighter_p0.png"), preload("res://assets/fighter_p1.png"),
@@ -131,6 +132,7 @@ var pview                        # p4.9: the power-ups (client/powers_view.gd), 
 var theme_view                   # p4.9: an arena's holiday look (client/theme_view.gd: THE HAUNTED HOUSE)
 var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
 var edges                        # p4.11: the arena's shapes stand out (client/edges_view.gd: halo behind, light on top)
+var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd), theme "nightmare"
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -377,6 +379,10 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	move_child(edges, tiles_plain.get_index())
 	edges.setup(glow, add_mat)
 	edges.build(level)
+	boiler = BoilerView.new()
+	add_child(boiler)
+	move_child(boiler, edges.get_index())   # behind the tiles (it may add parts to other layers in setup)
+	boiler.setup(self)
 	fx.prewarm(Vector2(960, 1200))
 
 # p4.3: your seat and the phase, from the game client before each render (the
@@ -417,6 +423,7 @@ func on_event(e: Array) -> void:
 		return     # an INVISIBLE fighter leaves no dust, sparks or pops for the others
 	fx.on_event(e)
 	pview.on_event(e)
+	boiler.on_event(e)
 
 # p4.8 (the deathcam): the camera's zoom (1: the whole arena) and where it looks.
 func set_view_zoom(z: float, at: Vector2) -> void:
@@ -495,6 +502,8 @@ func _apply_theme() -> void:
 	theme_view.set_theme(level.theme, level.torches)
 	if edges != null:
 		edges.build(level)
+	if boiler != null:
+		boiler.set_theme(level)
 
 func _fill_tiles(layer: TileMapLayer) -> void:
 	for cy in level.ROWS:
@@ -642,6 +651,7 @@ func render(s: Dictionary, delta: float) -> void:
 	if tier == 4:
 		f3d.update(fl)
 	pview.show_view(s, delta, me)
+	boiler.show_view(s, delta)
 	if replaying:
 		pview.blind = false
 	var pw: Dictionary = s.get("powers", {})

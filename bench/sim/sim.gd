@@ -32,6 +32,7 @@ extends RefCounted
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
 const BrainScript = preload("res://sim/brain.gd")
+const BoilerScript = preload("res://sim/boiler.gd")
 
 const S := 4.5
 const RUN_MAX := 1.5 * S            # Player.cs MAX_RUN
@@ -295,6 +296,7 @@ var walls_melt_t := -1          # ticks into the melt once the round is decided 
 var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
 var ghosts := true              # p4.11: a person's ghost rises after its death (the game; the benchmark has no people)
+var hazards = null              # THE BOILER ROOM's moving parts (sim/boiler.gd) on an arena whose theme is "nightmare"
 var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
                                 # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
@@ -331,6 +333,7 @@ func _init(n_fighters: int = 8, cap: int = 24, seed_value: int = 7) -> void:
 func set_arena(n: int) -> void:
 	if level.id != n:
 		level = LevelScript.new(n)
+		hazards = BoilerScript.new(level) if level.theme == "nightmare" else null
 
 static func wrap_d(a: float, b: float, size: float) -> float:
 	var d := b - a
@@ -361,6 +364,8 @@ func step() -> void:
 	_tinks()
 	_pickups()
 	_update_powers()
+	if hazards != null and not predicting and not frozen:
+		hazards.step(self)
 	_update_zones()
 	_update_walls()
 	_enforce_cap()
@@ -416,6 +421,8 @@ func reset_powers() -> void:
 	keep.clear()
 
 func _reset_powers_round() -> void:
+	if hazards != null:
+		hazards.reset()
 	orbs.clear()
 	cats.clear()
 	rain_owner = -1
@@ -1938,6 +1945,9 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(f.gx))
 		buf.put_16(int(f.gy))
 		buf.put_u8((1 if f.popped_t > 0 else 0) | (2 if f.boo_t > 0 else 0) | (4 if f.boo_cd == 0 else 0))
+	buf.put_u8(1 if hazards != null else 0)   # THE BOILER ROOM's state (sim/boiler.gd write)
+	if hazards != null:
+		hazards.write(buf)
 
 # The snapshot's fighter flags (proto.gd): 1 facing right, 2 on the ground, 4 at a
 # wall (p4.10: a dead one, pinned to a wall), 8 burning, 16 poisoned, 32 rolling or

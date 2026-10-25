@@ -12,6 +12,7 @@
 extends RefCounted
 
 const P = preload("res://sim/proto.gd")
+const BoilerScript = preload("res://sim/boiler.gd")
 const DELAY_TICKS := 3.0       # the draw delay's floor: 50 ms (a steady phone)
 const DELAY_MAX := 8.0         # its ceiling: 133 ms (the benchmark's Pixel needed about 100)
 const GAP_KEEP := 150          # the snapshot gaps the draw delay looks at: the last 5 s
@@ -401,6 +402,8 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 		if b.get_available_bytes() > 0:      # p4.11 the ghosts
 			for i in b.get_u8():
 				ghosts.append({"seat": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()), "flags": b.get_u8()})
+		if b.get_available_bytes() > 0 and b.get_u8() == 1:   # THE BOILER ROOM's state
+			s["hazards"] = BoilerScript.read(b)
 	s["powers"] = powers
 	s["ghosts"] = ghosts
 	s["orbs"] = orbs
@@ -533,7 +536,8 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 		ghosts.append(gd)
 	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"], "arena": b.get("arena", 0),
 		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false),
-		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {}), "ghosts": ghosts}
+		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {}), "ghosts": ghosts,
+		"hazards": b.get("hazards", {})}
 
 # The network numbers since the last call, for a bench card.
 func take_window() -> Dictionary:
