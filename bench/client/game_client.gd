@@ -46,6 +46,7 @@ const SLOW_MS := 33.4          # a frame slower than 30 fps counts as slow (p4.6
 const SLOW_SHARE := 0.25       # more than this share of slow frames in STEP_S: one step down (p4.6; it was 5%)
 const STEP_S := 5.0            # (p4.6; it was 3 s: a few hitches from explosions stepped a phone down)
 const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
+const PROXY_S := 4.0   # p4.13: this long with no connection through the page's own address: try the game server's port
 const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb_up": [KEY_W, KEY_UP],
 	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT]}
 
@@ -67,6 +68,8 @@ var seats_msg := {}
 var phase := -1
 var retry_t := 0.0
 var stuck_t := 0.0
+var direct_url := ""     # p4.13: the game server's own address (wss://host:8091), the second try
+var ever_open := false   # the socket has opened at least once on server_url
 var version_bad := false
 var auto_join := false
 var auto_start := false
@@ -171,7 +174,16 @@ func _ready() -> void:
 	server_url = str(opts.get("server", ""))
 	if server_url == "":
 		if OS.has_feature("web"):
-			server_url = "wss://%s:%d" % [str(JavaScriptBridge.eval("window.location.hostname", true)), P.PORT]
+			# p4.13: first through the page's own address (serve_game.py passes /v2ws on to the
+			# game server), so the certificate the player accepted for the page is the only
+			# one (an iPhone game on the Home Screen has no address bar for a second); the
+			# game server's own port if that does not answer
+			var host := str(JavaScriptBridge.eval("window.location.hostname", true))
+			var port := str(JavaScriptBridge.eval("window.location.port", true))
+			direct_url = "wss://%s:%d" % [host, P.PORT]
+			server_url = direct_url
+			if str(JavaScriptBridge.eval("window.location.protocol", true)) == "https:" and port != "":
+				server_url = "wss://%s:%s/v2ws" % [host, port]
 		else:
 			server_url = "wss://127.0.0.1:%d" % P.PORT
 	pred = Predict.new()
@@ -302,6 +314,13 @@ func _process(delta: float) -> void:
 	var connected: bool = net.state == WebSocketPeer.STATE_OPEN
 	_reports(delta, connected)
 	stuck_t = 0.0 if connected else stuck_t + delta
+	if connected:
+		ever_open = true
+	elif not ever_open and direct_url != "" and server_url != direct_url and stuck_t >= PROXY_S:
+		print("🎮 [Client] no answer through %s: trying %s" % [server_url, direct_url])
+		server_url = direct_url      # an older page server, or none: the game server's own port
+		stuck_t = 0.0
+		net.open(server_url, my_name, token)
 	# a phone's browser drops a wss to a certificate it has not accepted, and never asks:
 	# the page's own port (8443) was accepted, the game server's (8091) must be too
 	var stuck_url := ""

@@ -98,6 +98,8 @@ mv "$OUT/index.pck" "$OUT/index_$NEW.pck"
 sed -i "s/\"executable\":\"index\"/\"executable\":\"index\",\"mainPack\":\"index_$NEW.pck\"/" "$OUT/index.html"
 sed -i "s/\"index\.pck\"/\"index_$NEW.pck\"/g" "$OUT/index.html"
 [[ "$(grep -c mainPack "$OUT/index.html")" == "1" ]] || { echo "✗ mainPack injection failed in $OUT/index.html" >&2; exit 1; }
+# p4.13: the Home Screen icon and manifest (an iPhone added to the Home Screen opens the game full screen)
+cp bench/web/pwa/manifest.json bench/web/pwa/icon-180.png bench/web/pwa/icon-512.png "$OUT/"
 
 ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
 ip=${ip:-127.0.0.1}

@@ -1856,6 +1856,12 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
             if not self.parse_request():
                 return
             
+            # The new game's websocket through this page's own port (v0.2.0-p4.13): see v2_proxy
+            if self.headers.get("Upgrade", "").lower() == "websocket" and self.path.startswith("/v2ws"):
+                self.close_connection = True
+                v2_proxy(self.connection, self.requestline, self.headers)
+                return
+
             # Hijack WebSocket
             if self.headers.get("Upgrade", "").lower() == "websocket":
                 key = self.headers.get("Sec-WebSocket-Key", "")
@@ -1891,6 +1897,61 @@ class GameHTTPHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
     def log_message(self, fmt, *args):
         pass
+
+# v0.2.0-p4.13: the new game's websocket also comes through this page's own port, at
+# /v2ws. Why: a phone must accept our home-made certificate once per address. The page
+# (8443) was accepted, but the game server (8091) is a second address, and an iPhone game
+# opened from the Home Screen (full screen, no address bar) has no way to accept that one.
+# Through here it is the same address, so one "accept" covers both. This copies the
+# bytes both ways between the phone and the game server (wss on this machine); the
+# websocket handshake itself passes straight through. One thread per player, which
+# reads whichever side has data (select): the two encrypted sockets are each used by
+# this one thread only.
+V2_GAME_PORT = 8091
+
+def v2_proxy(client, requestline, headers):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE        # our own game server on this machine, home-made certificate
+    try:
+        raw = socket.create_connection(("127.0.0.1", V2_GAME_PORT), timeout=5)
+        # send each small game message at once (no waiting to bundle them: that added ~40 ms)
+        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        up = ctx.wrap_socket(raw, server_hostname="127.0.0.1")
+        up.settimeout(None)
+        parts = requestline.split(" ")
+        if len(parts) == 3:
+            parts[1] = "/"                      # the game server takes its websocket at /
+        lines = [" ".join(parts)] + [f"{k}: {v}" for k, v in headers.items()]
+        up.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+    except Exception as e:
+        logger.info(f"[NET] v2 proxy: the game server does not answer ({e})")
+        try:
+            client.close()
+        except Exception:
+            pass
+        return
+    client.settimeout(None)
+    socks = [client, up]
+    try:
+        while True:
+            ready = [s for s in socks if isinstance(s, ssl.SSLSocket) and s.pending() > 0]
+            if not ready:
+                ready, _, _ = select.select(socks, [], [], 60.0)
+            for s in ready:
+                data = s.recv(65536)
+                if not data:
+                    return
+                (up if s is client else client).sendall(data)
+    except Exception:
+        pass
+    finally:
+        for s in socks:
+            try:
+                s.close()
+            except Exception:
+                pass
 
 def start_http():
     socketserver.ThreadingTCPServer.allow_reuse_address = True

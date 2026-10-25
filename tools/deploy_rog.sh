@@ -22,9 +22,22 @@ D="nemr@$HOST:tower_brawl"
 rsync -az -e "$R" --exclude __pycache__ tools/ "$D/tools/"
 rsync -az -e "$R" --delete --exclude untracked --exclude .godot/exported --exclude .godot/editor bench/ "$D/bench/"
 rsync -az -e "$R" --delete build/web/v2/ "$D/build/web/v2/"
-$R "nemr@$HOST" 'bash -s' <<'REMOTE'
+# p4.13: the page server (serve_game.py: the pages, the old game, and the new game's
+# websocket at /v2ws) goes too when it changed; then it restarts (the pages blink for a moment)
+PAGES_NEW=0
+if [ "$($R "nemr@$HOST" 'md5sum < tower_brawl/serve_game.py' 2>/dev/null)" != "$(md5sum < serve_game.py)" ]; then
+  rsync -az -e "$R" serve_game.py "$D/serve_game.py"
+  PAGES_NEW=1
+fi
+$R "nemr@$HOST" "PAGES_NEW=$PAGES_NEW bash -s" <<'REMOTE'
 set -e
 T=/home/nemr/tower_brawl
+if [ "$PAGES_NEW" = 1 ]; then
+  systemctl --user stop towerbrawl 2>/dev/null || true
+  systemctl --user reset-failed towerbrawl 2>/dev/null || true
+  systemd-run --user --unit=towerbrawl --description="Tower Brawl pages + old game (https 8443)" -p WorkingDirectory=$T -p Restart=always -p RestartSec=3 /usr/bin/python3 $T/serve_game.py
+  echo "the page server restarted (new serve_game.py)"
+fi
 systemctl --user stop towerbrawl-v2 2>/dev/null || true
 systemctl --user reset-failed towerbrawl-v2 2>/dev/null || true
 systemd-run --user --unit=towerbrawl-v2 --description="Tower Brawl v2 game server (wss 8091, host port 8092)" -p WorkingDirectory=$T -p Restart=always -p RestartSec=3 $T/bin/godot --headless --path $T/bench res://server/game_server.tscn -- --port 8091 --cert $T/cert.pem --key $T/key.pem --out $T/bench_results --quiet --admin-port 8092
