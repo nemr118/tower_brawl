@@ -70,6 +70,9 @@ const VARIANTS := {
 }
 const GRID_LIGHTS := 24
 const SMOKE_R0 := 230.0          # p4.9: the smoke loop was made for this reach (sim SMOKE_R before p4.9)
+# p4.9: the events whose a is a fighter and whose effects would give away an INVISIBLE one
+const HIDE_FX := [P.E_JUMP, P.E_LAND, P.E_DODGE, P.E_WALLJUMP, P.E_LEDGE, P.E_SHOOT, P.E_DRYFIRE, P.E_PICKUP,
+	P.E_CATCH, P.E_HURT, P.E_PU_GET]
 const FIRE_W0 := 150.0           # and the ground fire loop for this width (sim FIRE_WIDTH)
 
 var level
@@ -125,6 +128,7 @@ var aim_pointer := Line2D.new()
 var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while the shot is armed
 var pview                        # p4.9: the power-ups (client/powers_view.gd), every look
 var theme_view                   # p4.9: an arena's holiday look (client/theme_view.gd: THE HAUNTED HOUSE)
+var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -402,6 +406,8 @@ func _render_ring(fl: Array, delta: float) -> void:
 
 # p4.9: a snapshot event, for the effects (fx.gd) and the power-ups (powers_view.gd).
 func on_event(e: Array) -> void:
+	if HIDE_FX.has(e[0]) and e[3] != me and (int(pview.powers.get(e[3], {}).get("bits", 0)) & P.PW_INVIS) != 0:
+		return     # an INVISIBLE fighter leaves no dust, sparks or pops for the others
 	fx.on_event(e)
 	pview.on_event(e)
 
@@ -625,6 +631,8 @@ func render(s: Dictionary, delta: float) -> void:
 	if tier == 4:
 		f3d.update(fl)
 	pview.show_view(s, delta, me)
+	if replaying:
+		pview.blind = false
 	var pw: Dictionary = s.get("powers", {})
 	# The game: slot = seat, so a fighter keeps its colour whatever seats are
 	# taken. The benchmark's copies (T5, T7) repeat the seats, so they go by index.

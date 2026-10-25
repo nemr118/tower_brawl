@@ -246,11 +246,13 @@ func _process(delta: float) -> void:
 			for e in shot[1]:
 				world.on_event(e)
 			world.set_me(deathcam.winner, phase)
+			world.replaying = true
 			world.set_view_zoom(deathcam.zoom, deathcam.focus)
 			world.render(shot[0], delta)
 		else:
 			world.set_view_zoom(1.0, Vector2(960, 540))
 	else:
+		world.replaying = false
 		for e in evs:
 			world.on_event(e)
 			if e[0] == P.E_PU_GET and e[3] == my_seat:
