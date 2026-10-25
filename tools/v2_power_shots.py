@@ -32,6 +32,7 @@ ap.add_argument("--look", default="", help="the page's look: low, normal or high
 ap.add_argument("--port", type=int, default=9338)
 ap.add_argument("--size", default="1280x720", help="the page's size (smaller pictures come faster)")
 ap.add_argument("--bolt-s", type=float, default=0.0, help="hold each lightning bolt this long (a test knob of the page)")
+ap.add_argument("--lobby-shot", action="store_true", help="also a picture of the lobby before the match starts: <out>_lobby.png")
 a = ap.parse_args()
 
 
@@ -100,6 +101,11 @@ try:
         except Exception:
             pass
     cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('fs-gate'); if(g){g.click(); g.remove();} return 'ok'})()")
+    if a.lobby_shot:
+        drain(1.0)
+        r = cmd("Page.captureScreenshot", format="png")
+        with open(f"{a.out}_lobby.png", "wb") as f:
+            f.write(base64.b64decode(r["data"]))
     host("/start", {})
     t0 = time.time()
     while time.time() - t0 < 60:

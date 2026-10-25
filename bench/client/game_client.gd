@@ -596,7 +596,7 @@ func _on_arena() -> void:
 func _on_bots(n: int) -> void:
 	net.send({"kind": "bots", "n": n})
 
-# The lobby's POWER button (p4.5): the power arrows on or off for everyone.
+# The lobby's POWER-UPS button (p4.9; p4.5's power arrows before): the orbs on or off for everyone.
 func _on_power() -> void:
 	net.send({"kind": "power", "n": 0 if int(seats_msg.get("power", 0)) != 0 else 1})
 

@@ -711,7 +711,7 @@ func _brain_arrow_copy() -> void:
 			elif copy[0] == Brain.FLY_NONE:
 				flying += 1
 	_check("the bot brain's copy of an arrow sticks where the real arrow sticks (sim/brain.gd fly)",
-		shots == 210 and same_tick == stuck and stuck + flying == shots and worst <= 2.0,
+		shots == 70 * LevelScript.count() and same_tick == stuck and stuck + flying == shots and worst <= 2.0,   # 70 a layout (p4.9: 4 layouts)
 		"%d shots on %d arenas: %d stuck, the copy on the same tick for %d, the worst %.2f px apart; %d still flying after 400 ticks, both" % [
 			shots, LevelScript.count(), stuck, same_tick, worst, flying])
 

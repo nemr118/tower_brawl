@@ -194,6 +194,7 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 	bot_level_btn.disabled = not seated or not in_lobby
 	var pick := int(m.get("arena", P.ARENA_MIX))
 	arena_btn.text = "ARENA: %s" % ("MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick))
+	arena_btn.add_theme_font_size_override("font_size", 18 if arena_btn.text.length() > 18 else 24)   # p4.9: THE HAUNTED HOUSE fits
 	arena_btn.disabled = not seated or not in_lobby
 	power_btn.text = "POWER-UPS: %s" % ("ON" if int(m.get("power", 0)) != 0 else "OFF")
 	power_btn.disabled = not seated or not in_lobby
