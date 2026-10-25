@@ -17,8 +17,9 @@ import sys
 import time
 from collections import Counter, defaultdict
 
-CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "poison", 6: "the walls"}
-ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES"}
+CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "poison", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes"}
+BIG = {"GHOST CATS", "RAIN", "INVISIBLE", "FREEZE", "SPIKED SHIELD", "SUPER SPEED"}   # p4.9's BIG power-ups
+ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE"}
 
 
 def when(t):
@@ -120,6 +121,16 @@ def main():
             look_at.append(f"{len(long)} rounds ran past 55 s")
     else:
         print("  no rounds")
+    # p4.9 the power-ups: what was taken, by whom, the BIG ones (for the people behind)
+    powers = by["power"]
+    if powers:
+        kinds = Counter(d.get("power", "?") for d in powers)
+        takers = Counter(d.get("name", "?") for d in powers)
+        bigs = [d for d in powers if d.get("power") in BIG]
+        print(f"\nPOWER-UPS\n  {len(powers)} taken: " + ", ".join(f"{k} {v}" for k, v in kinds.most_common()))
+        print("  by: " + ", ".join(f"{k} {v}" for k, v in takers.most_common(8)))
+        if bigs:
+            print("  BIG ones: " + ", ".join(f"{d.get('name', '?')} {d.get('power')}" for d in bigs[:12]))
     people = Counter()
     wins = Counter()
     for r in rounds:
