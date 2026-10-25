@@ -2,10 +2,12 @@
 # Seats 0 and 1 count as people (the brain plays them too), so FLYING and the BIG
 # power-ups (people only, behind the leader) get taken as well. Prints what dropped,
 # what was taken by whom, the deaths by cause (lightning, ghost cats, spikes...), and
-# checks the rules: orbs warn then strike, the bolt kills only near the orb, a bot
-# never takes FLYING or a BIG one, a BIG one only goes to a person behind the leader,
-# kept power-ups come back next round, a shield takes an arrow, the whole fighter
-# (write_fighter_state) reads back the same. Exit 1 on a failed check.
+# checks the rules: orbs warn then strike, the bolt kills only near the orb, a BIG one
+# only goes to someone behind the leader (p4.10: bots too), only the arrow kind comes
+# back next round, a shield takes an arrow, no living body is ever inside a block (the
+# flying bots), the whole fighter (write_fighter_state) reads back the same; p4.10: a
+# killing arrow stays in the body and carries it, a wall pins it, taking the arrow lets
+# it fall. Exit 1 on a failed check.
 #   godot --headless --path bench --script res://tools/power_probe.gd -- --matches=6 --arena=1
 extends SceneTree
 
@@ -37,6 +39,10 @@ func _init() -> void:
 	var takes := {}
 	var big_takes := 0
 	var rounds := 0
+	var inside := 0
+	var fly_ticks := 0
+	var bot_fly := 0
+	var bot_big := 0
 	var t0 := Time.get_ticks_msec()
 	for mi in matches:
 		var points := [0, 0, 0, 0, 0, 0, 0, 0]
@@ -50,10 +56,9 @@ func _init() -> void:
 			rounds += 1
 			for f in sim.fighters:
 				f.points = points[f.id]
-				# kept power-ups came back (the round before set them)
-				if sim.keep.has(f.id):
-					var k: Array = sim.keep[f.id]
-					_check(f.pw_kind == k[0] and f.inf == k[2] and f.big == k[4], "seat %d's kept power-ups came back" % f.id)
+				# only the arrow kind came back (p4.10: the rest last one round)
+				_check(f.pw_kind == int(sim.keep.get(f.id, 0)) and not f.inf and not f.fly and not f.big and f.shield == 0,
+					"seat %d starts the round with only its arrow kind" % f.id)
 			var top := 0
 			for v in points:
 				top = maxi(top, v)
@@ -65,6 +70,12 @@ func _init() -> void:
 					if not f.bot and f.state != P.F_DEAD:
 						BrainScript.think(sim, f)   # the "people" are played by the brain too
 				sim.step()
+				for f in sim.fighters:
+					if f.state != P.F_DEAD:
+						if sim.box_hits_solid(f.x, f.y, SimScript.BODY_W, SimScript.BODY_H):
+							inside += 1
+						if f.fly and f.bot:
+							fly_ticks += 1
 				for e in sim.take_events():
 					counts[e[0]] = counts.get(e[0], 0) + 1
 					if e[0] == P.E_DEATH:
@@ -72,11 +83,13 @@ func _init() -> void:
 					elif e[0] == P.E_PU_GET:
 						var who = sim.fighter(e[3])
 						takes[e[4]] = takes.get(e[4], 0) + 1
-						if e[4] == P.PU_FLY:
-							_check(not who.bot, "a bot took FLYING")
+						if e[4] == P.PU_FLY and who.bot:
+							bot_fly += 1
 						if e[4] >= P.PU_CATS:
 							big_takes += 1
-							_check(not who.bot and who.points < top, "a BIG one went to seat %d (bot %s, %d points, top %d)" % [e[3], who.bot, who.points, top])
+							if who.bot:
+								bot_big += 1
+							_check(who.points < top, "a BIG one went to seat %d (%d points, top %d)" % [e[3], who.points, top])
 					elif e[0] == P.E_STRIKE:
 						for f in sim.fighters:
 							if f.state != P.F_DEAD:
@@ -95,7 +108,7 @@ func _init() -> void:
 				buf.seek(0)
 				var g := SimScript.Fighter.new()
 				sim.read_fighter_state(buf, g)
-				for k in ["pw_kind", "shield", "inf", "fly", "big", "freeze_t", "slow_t", "speed_t", "invis_t", "umbrella_t", "spikes_t", "spike_up", "spike_regen", "vdir"]:
+				for k in ["pw_kind", "shield", "inf", "fly", "big", "freeze_t", "slow_t", "speed_t", "invis_t", "umbrella_t", "spikes_t", "spike_up", "spike_regen", "vdir", "pinned", "carry_t"]:
 					_check(g.get(k) == f.get(k), "the whole fighter's %s read back %s, not %s" % [k, g.get(k), f.get(k)])
 	# a shield takes one arrow, then the next one kills
 	var s2 = SimScript.new(0, 24, 3)
@@ -120,6 +133,63 @@ func _init() -> void:
 			_check(b.state != P.F_DEAD and b.shield == 0, "the shield took the first arrow")
 		else:
 			_check(b.state == P.F_DEAD, "the second arrow killed")
+	# p4.10 deaths: a killing arrow stays in the body and carries it (open air); a body
+	# carried into a wall hangs there on the arrow, which sticks in the wall; taking that
+	# arrow lets the body fall
+	var s4 = SimScript.new(0, 24, 9)
+	s4.respawn = false
+	s4.set_arena(0)
+	s4.start_round([{"id": 0, "bot": false}, {"id": 1, "bot": false}, {"id": 2, "bot": false}])
+	s4.frozen = false
+	var v1 = s4.fighters[1]
+	v1.x = 900
+	v1.y = 220
+	var a1 := SimScript.Arrow.new()
+	a1.x = v1.x - 2.0
+	a1.y = v1.y + 25.0
+	a1.vx = 16.0
+	a1.owner = 0
+	a1.t = 20
+	s4.arrows.append(a1)
+	s4._arrow_hit_fighters(a1)
+	var x0: int = v1.x
+	for tick in 12:
+		s4.step()
+	var carried: int = v1.x - x0
+	_check(v1.state == P.F_DEAD and a1.state == P.S_BODY and a1.body == 1, "the killing arrow stays in the body")
+	_check(carried > 60 and carried < 200, "the arrow carries the body on a bit (it moved %d px in 12 ticks)" % carried)
+	_check(absf(SimScript.wrap_d(v1.x + a1.bx, a1.x, 1920)) < 1.0, "the arrow rides with the body")
+	var v2 = s4.fighters[2]
+	v2.x = 75
+	v2.y = 200
+	var a2 := SimScript.Arrow.new()
+	a2.x = v2.x + 34.0
+	a2.y = v2.y + 25.0
+	a2.vx = -16.0
+	a2.owner = 0
+	a2.t = 20
+	s4.arrows.append(a2)
+	s4._arrow_hit_fighters(a2)
+	var pinned_ev := 0
+	for tick in 60:
+		s4.step()
+		for e in s4.take_events():
+			if e[0] == P.E_PIN:
+				pinned_ev += 1
+	var hang_y: int = v2.y
+	for tick in 60:
+		s4.step()
+	_check(v2.pinned and pinned_ev == 1 and a2.state == P.S_STUCK and a2.pins == 2 and v2.y == hang_y, "a wall pins the body: it hangs there, the arrow in the wall")
+	var taker = s4.fighters[0]
+	taker.x = int(a2.x) - 18
+	taker.y = int(a2.y) - 31
+	taker.state = P.F_NORMAL
+	for tick in 3:
+		s4._pickups()
+	for tick in 30:
+		s4.step()
+	_check(a2.dead and not v2.pinned and v2.y > hang_y, "taking the pinning arrow lets the body fall")
+	print("🧪 [PowerProbe] deaths: carried %d px in 12 ticks; pinned on the wall at y %d; it fell to y %d once the arrow was taken" % [carried, hang_y, v2.y])
 	# ghost cats: one hunts a fighter standing still (it dies, cause 8), one meets a
 	# fighter dodging (the cat is caught: E_CAT_POOF with b = 1, nobody dies)
 	var s3 = SimScript.new(0, 24, 5)
@@ -151,9 +221,11 @@ func _init() -> void:
 	for k in counts:
 		names.append("%d:%d" % [k, counts[k]])
 	print("🧪 [PowerProbe] %d matches, %d rounds on arena %d in %d ms" % [matches, rounds, arena, Time.get_ticks_msec() - t0])
-	print("🧪 [PowerProbe] warnings %d, strikes %d, taken %d (BIG %d), faded %d, shields popped %d, cats gone %d, freezes %d" % [
+	print("🧪 [PowerProbe] warnings %d, strikes %d, taken %d (BIG %d), faded %d, shields popped %d, cats gone %d, freezes %d, pins %d" % [
 		counts.get(P.E_PU_WARN, 0), counts.get(P.E_STRIKE, 0), counts.get(P.E_PU_GET, 0), big_takes, counts.get(P.E_PU_GONE, 0),
-		counts.get(P.E_SHIELD_POP, 0), counts.get(P.E_CAT_POOF, 0), counts.get(P.E_FREEZE, 0)])
+		counts.get(P.E_SHIELD_POP, 0), counts.get(P.E_CAT_POOF, 0), counts.get(P.E_FREEZE, 0), counts.get(P.E_PIN, 0)])
+	print("🧪 [PowerProbe] bots took FLYING %d times (flew %d ticks) and BIG ones %d times; living bodies inside a block: %d ticks" % [bot_fly, fly_ticks, bot_big, inside])
+	_check(inside == 0, "no living body is ever inside a block (%d ticks)" % inside)
 	var tl := []
 	for k in takes:
 		tl.append("%s %d" % [P.PU_SHORT.get(k, str(k)), takes[k]])

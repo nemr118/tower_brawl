@@ -58,7 +58,7 @@ def decode_snapshot(data):
     arrows = []
     for _ in range(na):
         aid, ks = struct.unpack_from("<HB", data, off)
-        if (ks >> 4) & 3 == S_STUCK:   # stuck: s16 x, s16 y, u8 angle (p4.9: 0x40 marks a BIG arrow)
+        if (ks >> 4) & 3 in (S_STUCK, 3):   # stuck or (p4.10) in a body: s16 x, s16 y, u8 angle (p4.9: 0x40 marks a BIG arrow)
             x, y, ang = struct.unpack_from("<hhB", data, off + 3)
             arrows.append({"state": (ks >> 4) & 3, "x": x, "y": y, "ang": ang * math.tau / 256.0})
             off += 8

@@ -89,7 +89,7 @@ const WALLS_GONE := -0.1            # the share before they come and after they 
 # pull back to 15% in 3 s, then close all the way (105%) in 11 s, then go in 4 s.
 const WALLS_STEPS := [[540, -0.1, 0.33, 0], [180, 0.33, 0.15, 0], [660, 0.15, 1.05, 1], [240, 1.05, -0.1, 2]]
 const WALLS_KEEP_AWAY := 240        # a bot keeps this far from a wall's edge
-const SMOKE_R := 288.0              # p4.9: 25% bigger (was 230): standing in it, you cannot see anyone
+const SMOKE_R := 257.0              # p4.10: 25% more area than p4.8's 230 (p4.9 had 25% more width); standing in it, you see nobody
 const SMOKE_TICKS := 480
 const HURT_TICKS := 18
 const LEDGE_HOP := 3.0 * S
@@ -133,8 +133,17 @@ const CAT_SPEED := 4.0              # a ghost cat starts this fast, speeds up by
 const CAT_MAX := 7.2
 const CAT_ACCEL := 0.05
 const CAT_R := 26.0
-const BIG_FX := 1.75                # BIG ARROWS: a blast, a fire or a cloud this much wider (3 times the area)
+const BIG_FX := 1.7320508           # BIG ARROWS: a blast (bombs too), a fire or a cloud this much wider: 3 times the area
 const BIG_REACH := 22.0             # and the arrow meets a fighter this much farther out (it is drawn 3 times as big)
+# p4.10 deaths (the user: the killing arrow embeds in the body, carries it a bit, and a
+# wall it meets pins the body there): the body takes CARRY of the arrow's speed and falls
+# at CARRY_G of gravity for CARRY_TICKS; meeting a wall then, still PIN_MIN px a tick
+# sideways, the arrow sticks in the wall and the body hangs on it.
+const CARRY := 0.7
+const CARRY_DRAG := 0.96            # and slows by this a tick (it goes about 170 px, then falls on)
+const CARRY_G := 0.3
+const CARRY_TICKS := 22
+const PIN_MIN := 3.0
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -197,6 +206,8 @@ class Fighter:
 	var spikes_t: int = 0       # SPIKED SHIELD ticks left
 	var spike_up: bool = false  # the spiked shield is up
 	var spike_regen: int = 0    # ticks until it is back after an arrow
+	var pinned: bool = false    # p4.10: dead, pinned to a wall by the arrow that killed it
+	var carry_t: int = 0        # p4.10: dead, still carried by the arrow that killed it
 
 class Arrow:
 	var id: int = 0
@@ -213,6 +224,10 @@ class Arrow:
 	var fuse: int = -1
 	var dead: bool = false
 	var big: bool = false       # p4.9 BIG ARROWS
+	var body: int = -1          # p4.10 S_BODY: the fighter it is in, at (bx, by) from its top-left
+	var bx: float = 0.0
+	var by: float = 0.0
+	var pins: int = -1          # p4.10: stuck in a wall, pinning this fighter's body (taking it lets the body fall)
 
 class Orb:
 	var serial: int = 0         # a number of its own (the brain remembers what it decided about it)
@@ -271,7 +286,7 @@ var pu_last := 0                # the last regular kind (never twice in a row)
 var pu_last_big := 0
 var pu_last_x := -9999.0        # the last drop's spot (the next one lands away from it)
 var big_round := false          # a BIG one came this round (one a round)
-var keep := {}                  # seat -> [pw_kind, shield, inf, fly, big]: the match's power-ups, back each round
+var keep := {}                  # seat -> its arrow kind: kept for the match, back each round (p4.10: the rest last one round)
 var rain_owner := -1
 var rain_t := 0
 var spots: Array = []           # where an orb may land: feet spots on floors and ledges (for spots_level)
@@ -588,6 +603,14 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 	f.jump_buf = 0
 	f.hold_jump = 0
 	f.rolling = false
+	f.pinned = false
+	f.carry_t = 0
+	for a in arrows:              # p4.10: an arrow in the old body (or pinning it) lets go
+		if a.body == f.id and a.state == P.S_BODY:
+			a.state = P.S_FALL
+			a.body = -1
+		if a.pins == f.id:
+			a.pins = -1
 	_event(P.E_SPAWN, spot.x, spot.y, f.id, 0)
 
 func _kill(f: Fighter, killer: int, cause: int) -> void:
@@ -610,17 +633,30 @@ func _update_fighter(f: Fighter) -> void:
 	if f.state == P.F_DEAD:
 		f.dead_t -= 1
 		f.state_t += 1
-		f.on_ground = _on_ground(f)
-		if f.on_ground:
-			f.vx = move_toward(f.vx, 0.0, FRICTION * 2.0)
+		if f.pinned:              # p4.10: it hangs on the wall from the arrow that killed it
+			f.vx = 0.0
+			f.vy = 0.0
 		else:
-			f.vy = move_toward(f.vy, MAX_FALL * 1.4, GRAVITY)
-		if _move_h(f, f.vx):
-			f.vx = -f.vx * 0.3
-		if _move_v(f, f.vy):
-			f.vy = -f.vy * 0.3 if f.vy > 6.0 else 0.0
-		f.x = posmod(f.x, W)
-		f.y = posmod(f.y, H)
+			f.on_ground = _on_ground(f)
+			if f.carry_t > 0:     # p4.10: the arrow still carries it: it falls slowly
+				f.carry_t -= 1
+				f.vx *= CARRY_DRAG
+				f.vy = move_toward(f.vy, MAX_FALL * 1.4, GRAVITY * CARRY_G)
+			elif f.on_ground:
+				f.vx = move_toward(f.vx, 0.0, FRICTION * 2.0)
+			else:
+				f.vy = move_toward(f.vy, MAX_FALL * 1.4, GRAVITY)
+			var vx_was := f.vx
+			if _move_h(f, f.vx):
+				if f.carry_t > 0 and absf(vx_was) >= PIN_MIN:
+					_pin(f, 1 if vx_was > 0.0 else -1)
+				else:
+					f.vx = -f.vx * 0.3
+			if not f.pinned and _move_v(f, f.vy):
+				f.carry_t = 0     # a floor or a ceiling ends the carry
+				f.vy = -f.vy * 0.3 if f.vy > 6.0 else 0.0
+			f.x = posmod(f.x, W)
+			f.y = posmod(f.y, H)
 		if f.dead_t <= 0 and respawn:
 			_respawn(f)
 		return
@@ -763,6 +799,32 @@ func _update_fighter(f: Fighter) -> void:
 	f.x = posmod(f.x, W)
 	f.y = posmod(f.y, H)
 	_fighter_zones(f)
+
+# p4.10: a carried body meets a wall: it hangs there, and the arrow in it sticks in
+# the wall, pointing in (a living fighter can take that arrow: the body falls then).
+# Without the arrow (the client's copy has none) the body hangs all the same.
+func _pin(f: Fighter, dir: int) -> void:
+	f.pinned = true
+	f.carry_t = 0
+	f.vx = 0.0
+	f.vy = 0.0
+	f.facing = -dir
+	var wx := float(f.x + BODY_W + 3 if dir > 0 else f.x - 3)
+	var wy := float(f.y + MID_Y)
+	for i in range(arrows.size() - 1, -1, -1):
+		var a: Arrow = arrows[i]
+		if a.dead or a.state != P.S_BODY or a.body != f.id:
+			continue
+		wy = float(f.y) + a.by
+		a.state = P.S_STUCK
+		a.stuck_t = 0
+		a.body = -1
+		a.pins = f.id
+		a.x = fposmod(wx, W)
+		a.y = fposmod(wy, H)
+		a.ang = 0.0 if dir > 0 else PI
+		break
+	_event(P.E_PIN, int(fposmod(wx, W)), int(fposmod(wy, H)), f.id, 1 if dir > 0 else 0)
 
 # p4.9: the power-ups' clocks, one tick (a living fighter's).
 func _power_timers(f: Fighter) -> void:
@@ -955,6 +1017,16 @@ func _update_arrow(a: Arrow) -> void:
 	if a.dead:
 		return
 	a.t += 1
+	if a.state == P.S_BODY:       # p4.10: it rides in the body it killed
+		var bf := fighter(a.body)
+		if bf == null:
+			a.state = P.S_FALL
+			a.body = -1
+			return
+		a.x = fposmod(bf.x + a.bx, W)
+		a.y = fposmod(bf.y + a.by, H)
+		a.stuck_t += 1
+		return
 	if a.state == P.S_STUCK:
 		a.stuck_t += 1
 		if a.fuse > 0:
@@ -1049,9 +1121,16 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			if a.kind == P.A_FIRE:
 				_add_zone(P.Z_FIRE, a.x, f.y + BODY_H, 90.0 * k, FIRE_TICKS / 2)
 				_event(P.E_IGNITE, int(a.x), f.y + BODY_H, 1, 0)
-			a.state = P.S_FALL
-			a.vx *= -0.15
-			a.vy = -8.0
+			# p4.10: the arrow stays in the body and carries it on (a wall pins it: _pin)
+			f.vx = a.vx * CARRY
+			f.vy = a.vy * CARRY - 2.0
+			f.carry_t = CARRY_TICKS
+			a.state = P.S_BODY
+			a.body = f.id
+			a.bx = clampf(wrap_d(f.x, a.x, W), 6.0, BODY_W - 6.0)
+			a.by = clampf(wrap_d(f.y, a.y, H), 12.0, BODY_H - 16.0)
+			a.vx = 0.0
+			a.vy = 0.0
 		return true
 	return false
 
@@ -1064,8 +1143,6 @@ func _block(f: Fighter, a: Arrow) -> void:
 		f.spike_regen = SPIKE_REGEN
 	else:
 		f.shield = 0
-		if keep.has(f.id):
-			keep[f.id][1] = 0
 	a.state = P.S_FALL
 	a.vx *= -0.3
 	a.vy = -7.0
@@ -1090,7 +1167,7 @@ func _explode(x: float, y: float, owner: int, k: float = 1.0) -> void:
 		elif fd2 <= r2 * 3.2:
 			_hurt(f, dx / fd * 14.0, -9.0)
 	for a in arrows:
-		if a.dead:
+		if a.dead or a.state == P.S_BODY or a.pins >= 0:
 			continue
 		var dx := wrap_d(x, a.x, W)
 		var dy := wrap_d(y, a.y, H)
@@ -1131,11 +1208,15 @@ func _pickups() -> void:
 		var cx := float(f.x + HALF_W)
 		var cy := float(f.y + MID_Y)
 		for a in arrows:
-			if a.dead or a.state != P.S_STUCK or a.stuck_t < PICKUP_DELAY or a.fuse > 0:
+			if a.dead or (a.state != P.S_STUCK and a.state != P.S_BODY) or a.stuck_t < PICKUP_DELAY or a.fuse > 0:
 				continue
 			if absf(wrap_d(cx, a.x, W)) < 50.0 and absf(wrap_d(cy, a.y, H)) < 68.0:
 				a.dead = true
 				f.arrows += 1
+				if a.pins >= 0:       # p4.10: the arrow pinned a body: it falls now
+					var pf := fighter(a.pins)
+					if pf != null:
+						pf.pinned = false
 				_event(P.E_PICKUP, int(a.x), int(a.y), f.id, a.kind)
 				if f.arrows >= MAX_QUIVER:
 					break
@@ -1143,12 +1224,12 @@ func _pickups() -> void:
 func _enforce_cap() -> void:
 	var stuck := 0
 	for a in arrows:
-		if not a.dead and a.state == P.S_STUCK and a.fuse < 0:
+		if not a.dead and a.state == P.S_STUCK and a.fuse < 0 and a.pins < 0:
 			stuck += 1
 	if stuck <= arrow_cap:
 		return
 	for a in arrows:
-		if not a.dead and a.state == P.S_STUCK and a.fuse < 0:
+		if not a.dead and a.state == P.S_STUCK and a.fuse < 0 and a.pins < 0:
 			a.dead = true
 			stuck -= 1
 			if stuck <= arrow_cap:
@@ -1222,13 +1303,11 @@ func _orb_taker(o: Orb) -> Fighter:
 			return f
 	return null
 
-# A BIG orb: a person behind the leader only. FLYING: people only (a bot walks
-# its routes). The rest: anyone.
+# A BIG orb: anyone behind the leader (p4.10: bots too). The rest: anyone (p4.10:
+# bots fly too, brain.gd's flying).
 func may_take(f: Fighter, o: Orb) -> bool:
 	if o.big:
-		return not f.bot and f.points < top_points()
-	if o.kind == P.PU_FLY:
-		return not f.bot
+		return f.points < top_points()
 	return true
 
 # The most points anyone in the round has (the BIG rule).
@@ -1275,20 +1354,14 @@ func _give(f: Fighter, kind: int) -> void:
 		f.spike_regen = 0
 	elif kind == P.PU_SPEED:
 		f.speed_t = SPEED_TICKS
-	if kind <= P.PU_BIG:
-		keep[f.id] = [f.pw_kind, f.shield, f.inf, f.fly, f.big]
+	if kind >= P.PU_FIRE and kind <= P.PU_SMOKE:
+		keep[f.id] = kind
 
-# A new round's fighter gets its seat's kept power-ups back (a bot never flies:
-# a person's seat played by the brain for a while skips FLYING, the seat keeps it).
+# A new round's fighter gets its seat's arrow kind back (p4.10: SHIELD, INFINITE,
+# FLYING and BIG ARROWS last one round).
 func _give_kept(f: Fighter) -> void:
-	if not keep.has(f.id):
-		return
-	var k: Array = keep[f.id]
-	f.pw_kind = k[0]
-	f.shield = k[1]
-	f.inf = k[2]
-	f.fly = k[3] and not f.bot
-	f.big = k[4]
+	if keep.has(f.id):
+		f.pw_kind = int(keep[f.id])
 
 # GHOST CATS: CATS_N cats leave f, each after one of the nearest enemies (more cats
 # than enemies: some share one).
@@ -1370,11 +1443,14 @@ func _drop() -> void:
 		pu_wait = PU_GAP
 		return
 	var top := top_points()
-	var low: Fighter = null
-	for f in fighters:
-		if f.state != P.F_DEAD and not f.bot and f.points < top:
-			if low == null or f.points < low.points or (f.points == low.points and rng.randf() < 0.5):
-				low = f
+	var low: Fighter = null          # the person furthest behind; with none behind, anyone furthest behind
+	for pass_i in 2:
+		for f in fighters:
+			if f.state != P.F_DEAD and (f.bot == (pass_i == 1)) and f.points < top:
+				if low == null or f.points < low.points or (f.points == low.points and rng.randf() < 0.5):
+					low = f
+		if low != null:
+			break
 	var o := Orb.new()
 	_orb_serial += 1
 	o.serial = _orb_serial
@@ -1396,20 +1472,15 @@ func _drop() -> void:
 	orbs.append(o)
 	_event(P.E_PU_WARN, int(o.x), int(o.y), o.kind, 1 if o.big else 0)
 
-# A regular kind by REGULAR_W, never the last one; FLYING only with a person alive
-# to take it.
+# A regular kind by REGULAR_W, never the last one.
 func _pick_regular() -> int:
-	var person := false
-	for f in fighters:
-		if f.state != P.F_DEAD and not f.bot:
-			person = true
 	var total := 0
 	for k in REGULAR_W:
-		if k != pu_last and (k != P.PU_FLY or person):
+		if k != pu_last:
 			total += REGULAR_W[k]
 	var r := rng.randi() % maxi(1, total)
 	for k in REGULAR_W:
-		if k == pu_last or (k == P.PU_FLY and not person):
+		if k == pu_last:
 			continue
 		r -= REGULAR_W[k]
 		if r < 0:
@@ -1512,6 +1583,43 @@ func gallery() -> void:
 			cats.resize(2)
 	for c in cats:
 		c.t = -600              # they take their time (the pictures)
+
+# A test knob (the server's --pin-demo): seat 7 is shot into the nearest wall to its
+# left (pinned there), seat 6 is shot in the open (the arrow carries it), for pictures.
+func pin_demo() -> void:
+	var f7 := fighter(7)
+	if f7 != null:
+		var y := 200
+		var x := 62
+		f7.x = x
+		f7.y = y
+		var a := Arrow.new()
+		a.id = _next_arrow_id
+		_next_arrow_id += 1
+		a.x = x + 34.0
+		a.y = y + 25.0
+		a.vx = -16.0
+		a.owner = 0
+		a.t = 20
+		a.ang = PI
+		arrows.append(a)
+		_arrow_hit_fighters(a)
+	var f6 := fighter(6)
+	if f6 != null:
+		f6.x = 900
+		f6.y = 200
+		var b := Arrow.new()
+		b.id = _next_arrow_id
+		_next_arrow_id += 1
+		b.x = 898.0
+		b.y = 225.0
+		b.vx = 16.0
+		b.vy = -3.0
+		b.owner = 0
+		b.t = 20
+		b.ang = atan2(-3.0, 16.0)
+		arrows.append(b)
+		_arrow_hit_fighters(b)
 
 # The quarter seconds left of f's BIG power-up (the longest that runs), for the page.
 static func big_left(f: Fighter) -> int:
@@ -1676,7 +1784,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 			continue
 		buf.put_u16(a.id)
 		buf.put_u8(a.kind | (a.state << 4) | (0x40 if a.big else 0))
-		if a.state == P.S_STUCK:
+		if a.state == P.S_STUCK or a.state == P.S_BODY:
 			buf.put_16(int(a.x))
 			buf.put_16(int(a.y))
 			buf.put_u8(int(fposmod(a.ang, TAU) / TAU * 256.0) & 255)
@@ -1731,10 +1839,11 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 	buf.put_u8(mini(255, ceili(rain_t / 15.0)))
 
 # The snapshot's fighter flags (proto.gd): 1 facing right, 2 on the ground, 4 at a
-# wall, 8 burning, 16 poisoned, 32 rolling or pulling up, 64 wall jump, 128 in smoke.
+# wall (p4.10: a dead one, pinned to a wall), 8 burning, 16 poisoned, 32 rolling or
+# pulling up, 64 wall jump, 128 in smoke.
 func fighter_flags(f: Fighter) -> int:
 	var pulling: bool = f.state == P.F_LEDGE and f.ledge_t <= 8
-	return (1 if f.facing > 0 else 0) | (2 if f.on_ground else 0) | (4 if f.wall != 0 else 0) \
+	return (1 if f.facing > 0 else 0) | (2 if f.on_ground else 0) | (4 if (f.pinned if f.state == P.F_DEAD else f.wall != 0) else 0) \
 		| (8 if f.burn_t > 0 else 0) | (16 if f.miasma_t > 0 else 0) \
 		| (32 if (f.state == P.F_DODGE and f.rolling) or pulling else 0) | (64 if f.wj_t > 0 else 0) | (128 if f.in_smoke else 0)
 
@@ -1788,6 +1897,8 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u16(mini(f.umbrella_t, 65535))
 	buf.put_u16(mini(f.spikes_t, 65535))
 	buf.put_u16(mini(f.spike_regen, 65535))
+	buf.put_u8(1 if f.pinned else 0)   # p4.10
+	buf.put_u8(f.carry_t)
 
 func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.x = buf.get_16()
@@ -1842,3 +1953,5 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.umbrella_t = buf.get_u16()
 	f.spikes_t = buf.get_u16()
 	f.spike_regen = buf.get_u16()
+	f.pinned = buf.get_u8() != 0
+	f.carry_t = buf.get_u8()

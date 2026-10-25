@@ -737,6 +737,8 @@ func _frame(f: Dictionary, slot: Array, i: int) -> int:
 	if f["state"] != P.F_DEAD:
 		slot[5] = -1
 	if f["state"] == P.F_DEAD:
+		if (flags & 4) != 0:
+			return 22          # p4.10: pinned to a wall by the arrow: it hangs in its hit pose
 		if not ground or st < 4:
 			return 22 if st < 6 else (23 if st < 14 else 24)
 		if slot[5] < 0:

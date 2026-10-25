@@ -228,7 +228,7 @@ func on_event(e: Array) -> void:
 		_burst("debris", pos)
 		_burst("spark", pos, KIND_COLOR[e[3] % 5])
 	elif type == P.E_EXPLODE:
-		var k := 1.75 if e[4] == 1 else 1.0   # p4.9: a BIG arrow's blast (sim BIG_FX)
+		var k := 1.732 if e[4] == 1 else 1.0  # p4.9: a BIG arrow's blast (sim BIG_FX: 3 times the area)
 		flash(pos, 5.0 * k, Color(1, 0.9, 0.6), 0.16, true)   # p4.6: a blast shows on LOW too
 		ring(pos, 230.0 * k, Color(1, 0.75, 0.35), 0.35)
 		ring(pos, 150.0 * k, Color(1, 1, 0.9), 0.2)
@@ -287,6 +287,12 @@ func on_event(e: Array) -> void:
 		shake = maxf(shake, 3.0)
 	elif type == P.E_DRYFIRE:
 		_burst("hurt_spark", pos, Color(0.7, 0.7, 0.7))
+	elif type == P.E_PIN:       # p4.10: an arrow pins a body to the wall: a thunk
+		_burst("debris", pos)
+		_burst("spark", pos)
+		flash(pos, 3.0, Color(1, 0.95, 0.8), 0.15, true)
+		ring(pos, 70.0, Color(1, 1, 1), 0.2)
+		shake = maxf(shake, 7.0)
 
 func _process(delta: float) -> void:
 	shake = maxf(0.0, shake - delta * 60.0)

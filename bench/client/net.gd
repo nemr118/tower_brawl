@@ -346,7 +346,7 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 		var ks := b.get_u8()
 		var st := (ks >> 4) & 3
 		var big := (ks & 0x40) != 0     # p4.9 BIG ARROWS
-		if st == P.S_STUCK:
+		if st == P.S_STUCK or st == P.S_BODY:   # p4.10: an arrow in a body goes like a stuck one
 			arrows[id] = {"kind": ks & 15, "state": st, "x": float(b.get_16()), "y": float(b.get_16()),
 				"ang": b.get_u8() * TAU / 256.0, "big": big}
 		else:

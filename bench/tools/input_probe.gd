@@ -641,7 +641,8 @@ func _arrows_in_the_present() -> void:
 			continue
 		var flown: Dictionary = present.arrows_at(snaps[old], server.tick, null, -1, [], [], 0.0)
 		for id in flown:
-			if pos.has(id) and int(snaps[old]["arrows"].get(id, {}).get("state", P.S_STUCK)) != P.S_STUCK:
+			var st0 := int(snaps[old]["arrows"].get(id, {}).get("state", P.S_STUCK))
+			if pos.has(id) and (st0 == P.S_FLY or st0 == P.S_FALL):   # in the air (p4.10: not one in a body)
 				var e := Vector2(SimScript.wrap_d(pos[id].x, flown[id]["x"], 1920.0), SimScript.wrap_d(pos[id].y, flown[id]["y"], 1080.0)).length()
 				errs.append(e)
 		snaps.erase(old)

@@ -13,6 +13,7 @@
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --no-powerups: no power-up orbs (p4.9; the lobby's POWER-UPS switch starts ON).
 # --pu-gallery: a test knob: every round starts with every power-up's look (sim.gallery).
+# --pin-demo: a test knob: at FIGHT seat 7 is pinned to a wall, seat 6 carried (sim.pin_demo).
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
@@ -196,6 +197,7 @@ var stats := {}                  # "name" or "bot:name" -> the player's numbers 
 var stats_since := 0.0
 var stats_path := ""
 var pu_gallery := false          # --pu-gallery (a test knob: sim.gallery each round)
+var pin_demo := false            # --pin-demo (a test knob: sim.pin_demo at each FIGHT)
 var last_rec := {}               # the last report line (the host page shows its tick numbers)
 
 func _ready() -> void:
@@ -224,6 +226,7 @@ func _ready() -> void:
 	sim.power_arrows = o.has("power-arrows")
 	sim.powerups = not o.has("no-powerups")
 	pu_gallery = o.has("pu-gallery")
+	pin_demo = o.has("pin-demo")
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):
@@ -727,6 +730,8 @@ func _match_tick() -> void:
 			sim.frozen = false
 			phase = P.PH_PLAY
 			phase_t = 0
+			if pin_demo:
+				sim.pin_demo()
 			_say("🏰 [ROUND] %d FIGHT" % round_no)
 	elif phase == P.PH_PLAY:
 		phase_t += 1

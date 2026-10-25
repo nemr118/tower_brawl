@@ -62,7 +62,8 @@ const NEAR_TARGET := 260.0      # on its target's floor it stops this far from i
 const HUNT := [0.0, 0.3, 0.5, 0.8]    # by level: the chance a new plan hunts the target (else it roams)
 const MODE_TICKS := [120, 240]  # a plan (hunt or roam) lasts 2 to 4 s
 const IDLE_TICKS := 150         # not 90 px from where it was for 2.5 s with no shot: it lowers the bow and roams
-const SEEK := [0.0, 0.35, 0.55, 0.75]   # p4.9: by level, the chance it goes for a power-up orb (rolled once an orb)
+const SEEK := [0.0, 0.7, 0.9, 1.0]     # by level, the chance it goes for a power-up orb (rolled once an orb; p4.10: the user wants bots after them)
+const WAIT_OFF := 170.0                # p4.10: it waits this far beside a warning (sim STRIKE_R 80 + _strike_flee's 60, and a margin)
 # the 8 ways, from right going clockwise (y grows down): the dodge into an arrow
 const WAYS8 := [P.B_RIGHT, P.B_DOWN | P.B_RIGHT, P.B_DOWN, P.B_DOWN | P.B_LEFT, P.B_LEFT, P.B_UP | P.B_LEFT,
 	P.B_UP, P.B_UP | P.B_RIGHT]
@@ -112,6 +113,8 @@ class Mind:
 	var fetch := -1             # the arrow it goes to fetch (its id), or -1
 	var orb := -1               # p4.9: the power-up orb it goes for (its serial), or -1
 	var orbs_seen := {}         # an orb's serial -> true: go for it; false: leave it
+	var fly_goal := Vector2.ZERO # p4.10 FLYING: where it roams to (none: pick one)
+	var fly_t := 0              # ticks until it picks another roam point
 
 # One tick of a bot seat: the buttons for this tick, pressed like a person's.
 static func think(sim, f) -> void:
@@ -193,12 +196,23 @@ static func _old(sim, f, m: Mind) -> int:
 # OLD's walking: toward the target (or an arrow with an empty quiver), jumps at
 # walls and when the target is above, drops when it is below, the middle when the
 # purple walls come, leans into walls when falling.
-static func _old_move(sim, f, m: Mind, tgt) -> void:
+static func _old_move(sim, f, m: Mind, tgt, point = null) -> void:
 	var rng: RandomNumberGenerator = sim.rng
 	f.think_t -= 1
+	if point != null:
+		f.think_t = mini(f.think_t, 8)   # p4.10: after an orb it looks often
 	if f.think_t <= 0:
 		f.think_t = rng.randi_range(10, 36)
-		if tgt != null and rng.randf() < 0.75:
+		if point != null:   # p4.10: a power-up orb (or the spot to wait for one): its floor spot
+			var px := SimScript.wrap_d(f.x + SimScript.HALF_W, point.x, W)
+			var py := SimScript.wrap_d(f.y + SimScript.BODY_H, point.y, H)
+			m.move = (1 if px > 0.0 else -1) if absf(px) > 12.0 else 0
+			if py < -60.0 and rng.randf() < 0.8:
+				_jump(m, rng.randi_range(10, 16))
+			if py > 90.0 and rng.randf() < 0.6:
+				m.down = 12
+				_jump(m, 1)
+		elif tgt != null and rng.randf() < 0.75:
 			var dx := SimScript.wrap_d(f.x, tgt.x, W)
 			var dy := SimScript.wrap_d(f.y, tgt.y, H)
 			if f.arrows == 0:
@@ -260,13 +274,31 @@ static func _play(sim, f, m: Mind) -> int:
 		f.shoot_cd -= 1
 	if m.only_dodge:
 		return _dodge(sim, f, m)
+	# p4.10: a power-up's warning near: out of there first, even in the middle of a
+	# move or in the air (a wall that way: jump); flying bots steer away in _fly_move
+	var flee := _strike_flee(sim, f) if not f.fly else 0
+	if flee != 0:
+		m.player = null
+		m.plan_t = 0
+		m.drawing = false
+		var fb := P.B_RIGHT if flee > 0 else P.B_LEFT
+		if f.on_ground and (m.prev & P.B_JUMP) == 0 and sim.box_hits_solid(f.x + flee * 12, f.y, SimScript.BODY_W, SimScript.BODY_H):
+			fb |= P.B_JUMP
+		return fb
 	var tgt = nearest_enemy(sim, f, PEOPLE[f.level])
 	var rm = Routes.map_for(sim.level)
+	# p4.10: flying, or sped up or slowed: the routes (walked at normal speed) do not fit,
+	# so it steers by sight
+	var by_sight: bool = rm == null or f.fly or SimScript.speed_mult(f) != 1.0
 	var walk := 0
-	if rm != null:
-		walk = _route_move(sim, f, m, rm, tgt)
+	if by_sight:
+		m.player = null
+		if f.fly:
+			_fly_move(sim, f, m, tgt)
+		else:
+			_old_move(sim, f, m, tgt, _orb_point(sim, f, m))
 	else:
-		_old_move(sim, f, m, tgt)
+		walk = _route_move(sim, f, m, rm, tgt)
 	var dodge := _dodge(sim, f, m)
 	if dodge != 0:
 		m.player = null     # the dodge breaks a move: it plans again once it stands
@@ -299,12 +331,8 @@ static func _play(sim, f, m: Mind) -> int:
 				m.draw_need = sim.rng.randi_range(d[0], d[1])
 				m.jump = 0
 				m.jump_wait = false
-	if rm == null:
+	if by_sight:
 		return _buttons(m)
-	var flee := _strike_flee(sim, f) if m.player == null else 0
-	if flee != 0:
-		m.drawing = false   # the bow comes down (B_CANCEL, think): it gets out of the way first
-		return (walk & ~(P.B_LEFT | P.B_RIGHT | P.B_SHOOT)) | (P.B_RIGHT if flee > 0 else P.B_LEFT)
 	if m.drawing:
 		return (walk & (P.B_LEFT | P.B_RIGHT)) | P.B_SHOOT   # no jump or drop while the bow is drawn
 	return walk
@@ -547,7 +575,7 @@ static func _fetch_goal(sim, f, m: Mind, rm, here: int) -> bool:
 # goal is its floor, at its x. Returns true with a goal.
 static func _orb_goal(sim, f, m: Mind, rm, here: int) -> bool:
 	for o in sim.orbs:
-		if o.state != P.ORB_LIVE or not sim.may_take(f, o):
+		if not sim.may_take(f, o):
 			continue
 		if not m.orbs_seen.has(o.serial):
 			m.orbs_seen[o.serial] = sim.rng.randf() < SEEK[f.level]
@@ -564,9 +592,73 @@ static func _orb_goal(sim, f, m: Mind, rm, here: int) -> bool:
 			continue
 		m.goal_s = s
 		m.goal_x = o.x
+		if o.state == P.ORB_WARN:   # p4.10: it waits beside the warning (out of _strike_flee's reach), then dashes in
+			var side := -1.0 if SimScript.wrap_d(o.x, f.x + SimScript.HALF_W, W) < 0.0 else 1.0
+			m.goal_x = fposmod(o.x + side * WAIT_OFF, W)
 		m.orb = o.serial
 		return true
 	return false
+
+# p4.10: the floor spot (feet) of an orb it goes for, by the level's roll for that orb
+# (a warning: a spot beside it, out of the bolt's reach), or null.
+static func _orb_point(sim, f, m: Mind):
+	for o in sim.orbs:
+		if not sim.may_take(f, o):
+			continue
+		if not m.orbs_seen.has(o.serial):
+			m.orbs_seen[o.serial] = sim.rng.randf() < SEEK[f.level]
+		if not m.orbs_seen[o.serial]:
+			continue
+		var spot := Vector2(o.x, o.y + SimScript.ORB_UP)
+		if o.state == P.ORB_WARN:
+			var side := -1.0 if SimScript.wrap_d(o.x, f.x + SimScript.HALF_W, W) < 0.0 else 1.0
+			spot.x = fposmod(o.x + side * WAIT_OFF, W)
+		return spot
+	return null
+
+# p4.10 FLYING bots: no routes (they are made for walking), it steers straight at a
+# point by sight: a power-up orb (or a spot by its warning), else beside its target at
+# about its height (to shoot it), else somewhere to roam. A wall ahead: over it (or
+# under it); a warning near: away from it; the purple walls: toward the middle.
+static func _fly_move(sim, f, m: Mind, tgt) -> void:
+	var c := Vector2(f.x + SimScript.HALF_W, f.y + SimScript.MID_Y)
+	var goal = _orb_point(sim, f, m)
+	if goal != null:
+		goal = goal - Vector2(0.0, SimScript.BODY_H - SimScript.MID_Y)
+	elif tgt != null:
+		var side := -1.0 if SimScript.wrap_d(tgt.x, f.x, W) < 0.0 else 1.0
+		goal = Vector2(tgt.x + SimScript.HALF_W + side * 220.0, tgt.y + SimScript.MID_Y - 40.0)
+	else:
+		m.fly_t -= 1
+		if m.fly_t <= 0 or m.fly_goal == Vector2.ZERO:
+			m.fly_t = 180
+			m.fly_goal = Vector2(sim.rng.randf_range(200.0, 1720.0), sim.rng.randf_range(150.0, 900.0))
+		goal = m.fly_goal
+	for o in sim.orbs:
+		if o.state == P.ORB_WARN:
+			var away := c - Vector2(o.x, o.y)
+			if away.length() < SimScript.STRIKE_R + 70.0:
+				goal = c + away.normalized() * 220.0
+	if sim.walls_share > 0.0:
+		var reach: float = sim.walls_width() + SimScript.WALLS_KEEP_AWAY
+		goal.x = clampf(goal.x, reach, W - reach)
+	var dx := SimScript.wrap_d(c.x, goal.x, W)
+	var dy := SimScript.wrap_d(c.y, goal.y, H)
+	m.move = (1 if dx > 0.0 else -1) if absf(dx) > 18.0 else 0
+	var up := dy < -18.0
+	var down := dy > 18.0
+	if m.move != 0 and sim.box_hits_solid(f.x + m.move * 8, f.y, SimScript.BODY_W, SimScript.BODY_H):
+		if not sim.box_hits_solid(f.x, f.y - 8, SimScript.BODY_W, SimScript.BODY_H):
+			up = true
+			down = false
+		elif not sim.box_hits_solid(f.x, f.y + 8, SimScript.BODY_W, SimScript.BODY_H):
+			down = true
+			up = false
+		else:
+			m.move = -m.move
+	m.jump = 2 if up else 0
+	m.jump_wait = false
+	m.down = 2 if down else 0
 
 static func _orb_by_serial(sim, serial: int):
 	for o in sim.orbs:
@@ -575,9 +667,9 @@ static func _orb_by_serial(sim, serial: int):
 	return null
 
 # p4.9: an orb's lightning builds up near: step away from it (1 right, -1 left, 0:
-# no need). EASY notices only half of them.
+# no need). EASY notices only half of them. p4.10: in the air too.
 static func _strike_flee(sim, f) -> int:
-	if f.level == OLD or not f.on_ground or f.state != P.F_NORMAL:
+	if f.level == OLD or f.state != P.F_NORMAL:
 		return 0
 	var r: float = SimScript.STRIKE_R + 60.0
 	for o in sim.orbs:

@@ -75,6 +75,7 @@ func arrows_at(snap: Dictionary, tick: int, me, my_seat: int, shown: Array, own_
 		ages[a.id] = a.t
 	for id in stuck:
 		out[id] = stuck[id]
+	_ride_bodies(out, snap, shown)
 	for a in own_arrows:   # shot after the snapshot's tick: not in it yet
 		var shot_at: int = tick - a.t
 		if shot_at > s:
@@ -130,6 +131,33 @@ func _rebuild(snap: Dictionary, me, my_seat: int) -> void:
 		stops.append(o)
 		stop_v.append(Vector2i(int(f["vx"]), int(f["vy"])))
 	sim.fighters = stops
+
+# p4.10: an arrow in a body rides on that body as the page draws it (the snapshot's
+# fighters are newer than the ones drawn): the dead fighter nearest the arrow in the
+# snapshot is its body, and the arrow keeps its place on it.
+func _ride_bodies(out: Dictionary, snap: Dictionary, shown: Array) -> void:
+	for id in out.keys():
+		var d: Dictionary = out[id]
+		if int(d["state"]) != P.S_BODY:
+			continue
+		var best = null
+		var bd := 90.0
+		for fs in snap["fighters"]:
+			if int(fs["state"]) != P.F_DEAD:
+				continue
+			var dd := Vector2(SimScript.wrap_d(fs["x"] + 18.0, d["x"], 1920.0), SimScript.wrap_d(fs["y"] + 31.0, d["y"], 1080.0)).length()
+			if dd < bd:
+				bd = dd
+				best = fs
+		if best == null:
+			continue
+		for fd in shown:
+			if int(fd["id"]) == int(best["id"]):
+				var nd: Dictionary = d.duplicate()
+				nd["x"] = fposmod(fd["x"] + SimScript.wrap_d(best["x"], d["x"], 1920.0), 1920.0)
+				nd["y"] = fposmod(fd["y"] + SimScript.wrap_d(best["y"], d["y"], 1080.0), 1080.0)
+				out[id] = nd
+				break
 
 # Someone else's arrow seen for the first time, still young (ages: id -> ticks):
 # it starts at its shooter's bow as the page draws them, and slides to where it is.

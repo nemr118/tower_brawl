@@ -15,7 +15,7 @@
 #             seconds left
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
-#   arrow     u16 id, u8 kind | state << 4 | 0x40 a BIG arrow (p4.9), then stuck: s16 x, s16 y, u8 angle (256 steps);
+#   arrow     u16 id, u8 kind | state << 4 | 0x40 a BIG arrow (p4.9), then stuck or in a body (p4.10): s16 x, s16 y, u8 angle (256 steps);
 #             in the air (P2: the client flies it on to its own tick): f32 x, f32 y,
 #             f32 vx, f32 vy (px per tick), u8 age (ticks, at most 255), u8 owner (seat)
 #   input     (u8 T_INPUT, u32 tick, u8 buttons, u16 aim in 0.1 degree steps) x4 (the last 4 ticks).
@@ -37,7 +37,7 @@ extends RefCounted
 
 # The game's version. tools/v2_build.sh bumps the last number on every build and
 # names the pck after it; the server turns away a client with another version.
-const VERSION := "v0.2.0-p4.9"
+const VERSION := "v0.2.0-p4.10"
 
 const PORT := 8091
 const T_SNAP := 1
@@ -85,6 +85,7 @@ const A_SMOKE := 4        # a thick smoke cloud: no damage, bots cannot see thro
 const S_FLY := 0
 const S_FALL := 1
 const S_STUCK := 2
+const S_BODY := 3         # p4.10: in the body it killed (carried with it; it pins the body to a wall it meets)
 
 # zones left on the ground
 const Z_FIRE := 1
@@ -94,14 +95,15 @@ const Z_SMOKE := 3
 # p4.9 power-ups (the user, 2026-10-24: the power arrows' randomness made them hard to
 # use; orbs dropped by lightning instead). The kinds an orb holds: 1..4 are the arrow
 # kinds (a fighter's shots take that kind for the rest of the match), then the other
-# regular ones, then the BIG ones (only for a person behind the leader, this round).
+# regular ones (p4.10: one round), then the BIG ones (for whoever is behind the leader,
+# p4.10 bots too; they land near the person furthest behind; this round).
 const PU_FIRE := 1
 const PU_BOMB := 2
 const PU_POISON := 3
 const PU_SMOKE := 4
-const PU_SHIELD := 5       # takes one arrow (not a stomp)
+const PU_SHIELD := 5       # takes one arrow (not a stomp); p4.10: SHIELD, INF, FLY and BIG last one round
 const PU_INF := 6          # the quiver never empties
-const PU_FLY := 7          # the stick floats you any way (people only: the bots walk their routes)
+const PU_FLY := 7          # the stick floats you any way (p4.10: bots fly too)
 const PU_BIG := 8          # arrows 3 times as big, their blast, fire and clouds 3 times the area
 const PU_CATS := 9         # BIG: 3 ghost cats hunt the nearest enemies (the user's daughter's idea)
 const PU_RAIN := 10        # BIG: everyone else runs slower for 8 s; your umbrella stops stomps
@@ -118,8 +120,8 @@ const PU_SHORT := {1: "FIRE", 2: "BOMB", 3: "POISON", 4: "SMOKE", 5: "SHIELD", 6
 const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	2: "every arrow you shoot blows up, all match", 3: "every arrow you shoot leaves a poison cloud, all match",
 	4: "every arrow leaves smoke: whoever stands in it cannot see anyone, all match",
-	5: "the next arrow that hits you bounces off (stomps still count)", 6: "your arrows never run out, all match",
-	7: "move the stick any way to float around, all match", 8: "your arrows and their blasts are huge, all match",
+	5: "the next arrow that hits you bounces off this round (stomps still count)", 6: "your arrows never run out, this round",
+	7: "move the stick any way to float around, this round", 8: "your arrows and their blasts are huge, this round",
 	9: "three ghost cats hunt the nearest players (dodge one to stop it)", 10: "everyone else is slow in the rain; your umbrella stops stomps",
 	11: "you blink out of sight: 3 seconds gone, 1 second seen", 12: "everyone else is frozen solid for a moment",
 	13: "arrows bounce off (it comes back), and spikes on top kill anyone who stomps you", 14: "you run super fast"}
@@ -167,6 +169,7 @@ const E_PU_GONE := 23    # an orb nobody took fades: a = kind
 const E_SHIELD_POP := 24 # a = fighter: its shield took an arrow; b = the arrow's kind
 const E_CAT_POOF := 25   # a ghost cat is gone: a = owner; b = 1 caught by a dodge
 const E_FREEZE := 26     # a = the fighter who froze everyone else
+const E_PIN := 27        # p4.10: an arrow pins a body to a wall: x, y the arrow in the wall; a = fighter, b = 1 the wall on the right
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)
