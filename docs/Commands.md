@@ -21,7 +21,7 @@ godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws:
 tools/deploy_rog.sh   # the ROG as server
 tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>   # a night's logs
 ```
-Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `dress=castle`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
+Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
 
 ## The old game: editor and server
 ```bash
