@@ -41,7 +41,7 @@ extends RefCounted
 
 # The game's version. tools/v2_build.sh bumps the last number on every build and
 # names the pck after it; the server turns away a client with another version.
-const VERSION := "v0.2.0-p4.11"
+const VERSION := "v0.2.0-p4.12"
 
 const PORT := 8091
 const T_SNAP := 1
