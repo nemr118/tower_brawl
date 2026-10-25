@@ -291,7 +291,7 @@ static func _play(sim, f, m: Mind) -> int:
 	var rm = Routes.map_for(sim.level)
 	# p4.10: flying, or sped up or slowed: the routes (walked at normal speed) do not fit,
 	# so it steers by sight
-	var by_sight: bool = rm == null or f.fly or SimScript.speed_mult(f) != 1.0
+	var by_sight: bool = rm == null or f.fly or SimScript.speed_mult(f) != 1.0 or f.trick != 0   # p4.12: a trick too
 	var walk := 0
 	if by_sight:
 		m.player = null
@@ -307,6 +307,18 @@ static func _play(sim, f, m: Mind) -> int:
 		m.plan_t = 0
 		m.drawing = false   # a drawn bow comes down on the dodge tick (B_CANCEL, think): no shot
 		return dodge
+	if f.mask:   # p4.12 GHOSTFACE: no bow; close in and swing the knife (press shoot, let go the next tick)
+		m.drawing = false
+		var slash := 0
+		if (m.prev & P.B_SHOOT) != 0:
+			m.want_shot = true      # the let-go is meant: the slash
+		elif tgt != null and f.knife_cd == 0 and f.down_t == 0 and absf(SimScript.wrap_d(f.x, tgt.x, W)) < SimScript.KNIFE_REACH + 24.0 \
+				and absf(SimScript.wrap_d(f.y, tgt.y, H)) < 50.0:
+			m.aim = aim_steps(0.0 if SimScript.wrap_d(f.x, tgt.x, W) >= 0.0 else PI)
+			slash = P.B_SHOOT
+		if by_sight:
+			return _buttons(m) | slash
+		return (walk & ~P.B_SHOOT) | slash
 	if m.drawing and m.draw_t > 1 and not f.aiming:
 		m.drawing = false   # the bow never came up (knocked out of it): it comes down (B_CANCEL), try again later
 	elif m.drawing:
@@ -416,7 +428,7 @@ static func _route_move(sim, f, m: Mind, rm, tgt) -> int:
 		m.orb = -1
 		m.plan_t = 0            # p4.9: someone took the orb (or it faded): plan again
 	if here == m.goal_s or m.edge.is_empty():
-		var near: bool = m.hunting and m.fetch < 0 and m.orb < 0 and f.arrows > 0 and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
+		var near: bool = m.hunting and m.fetch < 0 and m.orb < 0 and f.arrows > 0 and not f.mask and m.force_goal < 0 and tgt != null and here == _surface_under(rm, tgt)
 		var b := _toward(f, m.goal_x, NEAR_TARGET if near else 0.0)
 		if f.arrows == 0 and m.fetch < 0 and tgt != null and here == _surface_under(rm, tgt) and b != 0 \
 				and absf(SimScript.wrap_d(f.x, tgt.x, W)) < 90.0 and (m.prev & P.B_JUMP) == 0:
@@ -525,7 +537,7 @@ static func _goal(sim, f, m: Mind, rm, tgt, here: int) -> void:
 	m.orb = -1
 	if _orb_goal(sim, f, m, rm, here):
 		return
-	if f.arrows < 2:
+	if f.arrows < 2 and not f.mask:
 		var got := _fetch_goal(sim, f, m, rm, here)
 		if got:
 			return
@@ -856,7 +868,7 @@ static func _pick_shot(sim, f) -> Array:
 	if f.in_smoke:
 		return []          # p4.9: inside smoke it sees nobody
 	for o in sim.fighters:
-		if o == f or o.state == P.F_DEAD or SimScript.invisible(o):
+		if o == f or o.state == P.F_DEAD or SimScript.hidden(o):
 			continue
 		var dx := SimScript.wrap_d(f.x, o.x, W)
 		var dy := SimScript.wrap_d(f.y, o.y, H)
@@ -984,7 +996,7 @@ static func nearest_enemy(sim, f, people_w := 1.0):
 	if f.in_smoke:
 		return null
 	for o in sim.fighters:
-		if o == f or o.state == P.F_DEAD or SimScript.invisible(o):
+		if o == f or o.state == P.F_DEAD or SimScript.hidden(o):
 			continue
 		var dx := SimScript.wrap_d(f.x, o.x, W)
 		var dy := SimScript.wrap_d(f.y, o.y, H)

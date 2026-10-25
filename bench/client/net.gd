@@ -392,7 +392,11 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 	if b.get_available_bytes() > 0 and b.get_u8() == P.PW_TAG:
 		for i in b.get_u8():
 			var seat := b.get_u8()
-			powers[seat] = {"bits": b.get_u16(), "kind": b.get_u8(), "left": b.get_u8() / 4.0}
+			var bits := b.get_u16()
+			var kb := b.get_u8()
+			var left := b.get_u8() / 4.0
+			var mk := b.get_u8()    # p4.12 GHOSTFACE: 1 it is, 2 down, 4 swinging, 8 the knife up
+			powers[seat] = {"bits": bits, "kind": kb & 0x7F, "swarm": (kb & 0x80) != 0, "left": left, "mask": mk}
 		for i in b.get_u8():
 			orbs.append({"state": b.get_u8(), "kind": b.get_u8(), "big": b.get_u8() != 0, "x": float(b.get_16()),
 				"y": float(b.get_16()), "prog": b.get_u8() / 255.0, "for": b.get_u8()})
@@ -402,6 +406,12 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 		if b.get_available_bytes() > 0:      # p4.11 the ghosts
 			for i in b.get_u8():
 				ghosts.append({"seat": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()), "flags": b.get_u8()})
+		if b.get_available_bytes() > 0 and b.get_u8() == 1:   # p4.12 the black cat
+			s["pet"] = {"x": float(b.get_16()), "y": float(b.get_16()), "dir": b.get_8(), "gone": b.get_u8()}
+		if b.get_available_bytes() > 0:                        # a bat swarm
+			var ph := b.get_u8()
+			if ph != 255:
+				s["bats"] = {"phase": ph, "x": float(b.get_16()), "y": float(b.get_16()), "dir": b.get_8()}
 		if b.get_available_bytes() > 0 and b.get_u8() == 1:   # THE BOILER ROOM's state
 			s["hazards"] = BoilerScript.read(b)
 	s["powers"] = powers
@@ -537,7 +547,15 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"], "arena": b.get("arena", 0),
 		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false),
 		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {}), "ghosts": ghosts,
-		"hazards": b.get("hazards", {})}
+		"hazards": b.get("hazards", {}), "pet": _glide(a.get("pet", {}), b.get("pet", {}), t), "bats": _glide(a.get("bats", {}), b.get("bats", {}), t)}
+
+# p4.12: the black cat or a bat swarm between two snapshots (by x; a jump stays a jump).
+func _glide(da: Dictionary, db: Dictionary, t: float) -> Dictionary:
+	if db.is_empty() or da.is_empty() or absf(da["x"] - db["x"]) > 300.0:
+		return db
+	var d := db.duplicate()
+	d["x"] = lerpf(da["x"], db["x"], t)
+	return d
 
 # The network numbers since the last call, for a bench card.
 func take_window() -> Dictionary:

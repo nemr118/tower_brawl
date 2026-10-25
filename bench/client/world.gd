@@ -37,7 +37,7 @@ const SH_MIASMA := preload("res://shaders/miasma.gdshader")
 const SH_WALLS := preload("res://shaders/walls.gdshader")
 const SH_POST := preload("res://shaders/post.gdshader")
 const SH_WISP := preload("res://shaders/wisp.gdshader")
-const TRAIL := {0: "trail_plain", 1: "trail_fire", 2: "trail_fuse", 3: "trail_miasma", 4: "trail_smoke"}
+const TRAIL := {0: "trail_plain", 1: "trail_fire", 2: "trail_fuse", 3: "trail_miasma", 4: "trail_smoke", 5: "trail_fuse", 6: "trail_fire"}
 # fog layers: density, ground, scale, wind, tint, pixel
 const FOG_LAYERS := [
 	[0.5, 0.35, 1.0, Vector2(0.010, 0.002), Color(0.40, 0.50, 0.66, 0.65), 6.0],
@@ -419,7 +419,7 @@ func _render_ring(fl: Array, delta: float) -> void:
 
 # p4.9: a snapshot event, for the effects (fx.gd) and the power-ups (powers_view.gd).
 func on_event(e: Array) -> void:
-	if HIDE_FX.has(e[0]) and e[3] != me and (int(pview.powers.get(e[3], {}).get("bits", 0)) & P.PW_INVIS) != 0:
+	if HIDE_FX.has(e[0]) and e[3] != me and (int(pview.powers.get(e[3], {}).get("bits", 0)) & (P.PW_INVIS | P.PW_BATS)) != 0:
 		return     # an INVISIBLE fighter leaves no dust, sparks or pops for the others
 	fx.on_event(e)
 	pview.on_event(e)
@@ -684,7 +684,7 @@ func render(s: Dictionary, delta: float) -> void:
 		# p4.9: someone INVISIBLE is out of sight (your own fighter: faint), and standing in
 		# smoke you see nobody else; FREEZE tints the frozen blue, RAIN the slowed a little
 		var bits: int = int(pw.get(i, {}).get("bits", 0))
-		if i != me and f["state"] != P.F_DEAD and ((bits & P.PW_INVIS) != 0 or pview.blind):
+		if i != me and f["state"] != P.F_DEAD and ((bits & (P.PW_INVIS | P.PW_BATS)) != 0 or pview.blind):
 			spr.visible = false
 			fg.visible = false
 			continue
@@ -699,8 +699,13 @@ func render(s: Dictionary, delta: float) -> void:
 			tint = Color(0.8, 0.88, 1.0)
 		elif (bits & P.PW_SPEED) != 0:
 			tint = Color(1.0, 1.0, 0.8)
-		tint.a = 0.35 if (bits & P.PW_INVIS) != 0 else 1.0
+		tint.a = 0.35 if (bits & (P.PW_INVIS | P.PW_BATS)) != 0 else 1.0
+		if (bits & P.PW_PUMPKIN) != 0 and f["state"] != P.F_DEAD:
+			tint.a = 0.0     # p4.12 the pumpkin trick: powers_view draws a pumpkin there instead
+		if (int(pw.get(i, {}).get("mask", 0)) & 1) != 0:
+			tint.a = 0.0     # p4.12 GHOSTFACE: powers_view draws it (client/ghostface.gd), dead or alive
 		spr.modulate = tint
+		spr.scale = Vector2.ONE * (0.55 if (bits & P.PW_TINY) != 0 else 1.0)   # the tiny trick
 		spr.flip_h = (f["flags"] & 1) == 0
 		var frame := _frame(f, slot, i)
 		spr.region_rect = Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128)
@@ -932,15 +937,26 @@ func _render_arrows(al: Dictionary) -> void:
 		var e: Array = arrows.get(id, [])
 		if e.is_empty():
 			var spr := Sprite2D.new()
-			spr.texture = ARROWS
+			var kind := int(a["kind"])
+			spr.texture = ARROWS if kind != P.A_SEED else null
 			spr.region_enabled = true
-			spr.region_rect = Rect2(0, a["kind"] * 8, 32, 8)
+			spr.region_rect = Rect2(0, (P.A_BOMB if kind == P.A_PUMPKIN else kind) * 8, 32, 8)
 			spr.offset = Vector2(-12, 0)
+			if kind == P.A_PUMPKIN or kind == P.A_SEED:   # p4.12: a pumpkin on the tip, or a glowing seed
+				var head := Polygon2D.new()
+				var r := 7.0 if kind == P.A_PUMPKIN else 4.0
+				var poly := PackedVector2Array()
+				for q in 10:
+					poly.append(Vector2(cos(TAU * q / 10.0) * r * 1.2, sin(TAU * q / 10.0) * r))
+				head.polygon = poly
+				head.color = Color(1.0, 0.55, 0.1) if kind == P.A_PUMPKIN else Color(1.0, 0.85, 0.35)
+				head.position = Vector2(6, 0) if kind == P.A_PUMPKIN else Vector2.ZERO
+				spr.add_child(head)
 			var g := Sprite2D.new()   # p4.5: a glow along the arrow while it flies, every look
 			g.texture = HALO
 			g.material = add_mat
 			g.scale = Vector2(1.1, 0.45)
-			g.modulate = Color(FX.KIND_COLOR[int(a["kind"]) % 5], 0.55)
+			g.modulate = Color(FX.KIND_COLOR[int(a["kind"]) % FX.KIND_COLOR.size()], 0.55)
 			spr.add_child(g)
 			threats.add_child(spr)
 			e = [spr, null, "", null]
@@ -965,7 +981,7 @@ func _render_arrows(al: Dictionary) -> void:
 			e[3] = _take_light(Color(1, 0.6, 0.2), 1.2, 1.4)
 			lit += 1
 		elif e[3] == null and flying and lit < int(parts["arrow_lights"]):
-			e[3] = _take_light(Color(FX.KIND_COLOR[int(a["kind"]) % 5]).lerp(Color(1, 0.9, 0.7), 0.5), 0.9, 1.0)
+			e[3] = _take_light(Color(FX.KIND_COLOR[int(a["kind"]) % FX.KIND_COLOR.size()]).lerp(Color(1, 0.9, 0.7), 0.5), 0.9, 1.0)
 			lit += 1
 		if e[3] != null:
 			e[3].position = spr.position

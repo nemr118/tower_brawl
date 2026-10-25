@@ -85,14 +85,14 @@ func _init() -> void:
 						takes[e[4]] = takes.get(e[4], 0) + 1
 						if e[4] == P.PU_FLY and who.bot:
 							bot_fly += 1
-						if e[4] >= P.PU_CATS:
+						if P.is_big(e[4]):
 							big_takes += 1
 							if who.bot:
 								bot_big += 1
 							_check(who.points < top, "a BIG one went to seat %d (%d points, top %d)" % [e[3], who.points, top])
 					elif e[0] == P.E_STRIKE:
 						for f in sim.fighters:
-							if f.state != P.F_DEAD:
+							if f.state != P.F_DEAD and not f.mask:   # p4.12: GHOSTFACE is knocked down, not out
 								var dx := SimScript.wrap_d(e[1], f.x + SimScript.HALF_W, 1920)
 								var dy := SimScript.wrap_d(e[2], f.y + SimScript.MID_Y, 1080)
 								_check(dx * dx + dy * dy > SimScript.STRIKE_R * SimScript.STRIKE_R, "someone near the bolt lived")
@@ -108,7 +108,8 @@ func _init() -> void:
 				buf.seek(0)
 				var g := SimScript.Fighter.new()
 				sim.read_fighter_state(buf, g)
-				for k in ["pw_kind", "shield", "inf", "fly", "big", "freeze_t", "slow_t", "speed_t", "invis_t", "umbrella_t", "spikes_t", "spike_up", "spike_regen", "vdir", "pinned", "carry_t"]:
+				for k in ["pw_kind", "shield", "inf", "fly", "big", "freeze_t", "slow_t", "speed_t", "invis_t", "umbrella_t", "spikes_t", "spike_up", "spike_regen", "vdir", "pinned", "carry_t",
+						"trick", "trick_t", "mask", "down_t", "knife_t", "knife_cd", "knife_hit"]:
 					_check(g.get(k) == f.get(k), "the whole fighter's %s read back %s, not %s" % [k, g.get(k), f.get(k)])
 	# a shield takes one arrow, then the next one kills
 	var s2 = SimScript.new(0, 24, 3)
@@ -195,7 +196,9 @@ func _init() -> void:
 	var s5 = SimScript.new(0, 24, 4)
 	s5.respawn = false
 	s5.set_arena(1)
-	s5.start_round([{"id": 0, "bot": false}, {"id": 1, "bot": true}, {"id": 2, "bot": true}])
+	# (the one to shove is a person standing still: a bot's walk depends on the sim's dice,
+	# which p4.12's black cat and bats now also use)
+	s5.start_round([{"id": 0, "bot": false}, {"id": 1, "bot": false}, {"id": 2, "bot": true}])
 	s5.frozen = false
 	var pg = s5.fighters[0]
 	var tg = s5.fighters[1]

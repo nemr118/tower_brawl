@@ -14,7 +14,8 @@ const ONE_SHOT := {"dust_jump": 8, "dust_land": 8, "wall_dust": 4, "dodge_ring":
 	"flame_burst": 6, "blast_sparks": 4, "blast_fire": 4, "blast_smoke": 4, "blast_debris": 4,
 	"miasma_burst": 4, "catch_star": 4, "pickup": 6, "death_burst": 6, "soul": 6, "spawn_beam": 6,
 	"smoke_burst": 4, "hurt_spark": 6, "ledge_dust": 4}
-const KIND_COLOR := [Color(0.85, 0.95, 1.0), Color(1.0, 0.6, 0.15), Color(1.0, 0.35, 0.25), Color(0.75, 0.35, 1.0), Color(0.78, 0.8, 0.84)]
+const KIND_COLOR := [Color(0.85, 0.95, 1.0), Color(1.0, 0.6, 0.15), Color(1.0, 0.35, 0.25), Color(0.75, 0.35, 1.0), Color(0.78, 0.8, 0.84),
+	Color(1.0, 0.55, 0.1), Color(1.0, 0.82, 0.3)]   # p4.12: 5 a pumpkin, 6 its seed
 
 var cpu := false
 var mult := 1.0
@@ -221,16 +222,18 @@ func on_event(e: Array) -> void:
 		_burst("dodge_ring", pos, c)
 		flash(pos, 2.5, c, 0.12)
 	elif type == P.E_SHOOT:
-		var kc: Color = KIND_COLOR[e[4] % 5]
+		var kc: Color = KIND_COLOR[e[4] % KIND_COLOR.size()]
 		_burst("spark", pos, kc)
 		flash(pos, 1.2, kc, 0.08)
 	elif type == P.E_STICK:
 		_burst("debris", pos)
-		_burst("spark", pos, KIND_COLOR[e[3] % 5])
+		_burst("spark", pos, KIND_COLOR[e[3] % KIND_COLOR.size()])
 	elif type == P.E_EXPLODE:
-		var k := 1.732 if e[4] == 1 else 1.0  # p4.9: a BIG arrow's blast (sim BIG_FX: 3 times the area)
+		# b: 1 a BIG arrow's (sim BIG_FX: 3 times the area), 2 a pumpkin's, 4 a seed's (p4.12)
+		var k := (1.732 if (e[4] & 1) != 0 else 1.0) * (0.75 if (e[4] & 2) != 0 else 1.0) * (0.5 if (e[4] & 4) != 0 else 1.0)
+		var tint := Color(1.0, 0.6, 0.15) if (e[4] & 6) != 0 else Color(1, 0.75, 0.35)
 		flash(pos, 5.0 * k, Color(1, 0.9, 0.6), 0.16, true)   # p4.6: a blast shows on LOW too
-		ring(pos, 230.0 * k, Color(1, 0.75, 0.35), 0.35)
+		ring(pos, 230.0 * k, tint, 0.35)
 		ring(pos, 150.0 * k, Color(1, 1, 0.9), 0.2)
 		_burst("blast_fire", pos)
 		_burst("blast_sparks", pos)

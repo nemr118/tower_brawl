@@ -12,11 +12,14 @@ extends Node2D
 
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
+const GhostfaceScript = preload("res://client/ghostface.gd")
 const COLORS := {P.PU_FIRE: Color(1.0, 0.55, 0.15), P.PU_BOMB: Color(1.0, 0.32, 0.25), P.PU_POISON: Color(0.72, 0.4, 1.0),
 	P.PU_SMOKE: Color(0.8, 0.82, 0.88), P.PU_SHIELD: Color(0.35, 0.85, 1.0), P.PU_INF: Color(1.0, 0.85, 0.3),
 	P.PU_FLY: Color(0.95, 0.97, 1.0), P.PU_BIG: Color(0.5, 1.0, 0.45), P.PU_CATS: Color(0.55, 1.0, 0.6),
 	P.PU_RAIN: Color(0.45, 0.65, 1.0), P.PU_INVIS: Color(0.85, 0.85, 1.0), P.PU_FREEZE: Color(0.6, 0.9, 1.0),
-	P.PU_SPIKES: Color(1.0, 0.72, 0.3), P.PU_SPEED: Color(1.0, 0.95, 0.35)}
+	P.PU_SPIKES: Color(1.0, 0.72, 0.3), P.PU_SPEED: Color(1.0, 0.95, 0.35),
+	P.PU_TRICK: Color(0.85, 0.5, 1.0), P.PU_PUMPKIN: Color(1.0, 0.55, 0.1), P.PU_BATS: Color(0.62, 0.45, 0.85),
+	P.PU_MASK: Color(0.96, 0.96, 1.0)}
 const GOLD := Color(1.0, 0.82, 0.25)
 const BOLT_COL := Color(0.62, 0.78, 1.0)
 const ZAP_S := 1.8                 # the electricity runs through a body this long
@@ -43,6 +46,10 @@ var arcs := {}                     # key -> [PackedVector2Array]: the warnings' 
 var blind := false                 # your fighter stands in smoke: the others are out of sight
 var bolt_s := 0.4                  # a bolt shows this long (a test knob: the page's bolt_s= holds it for pictures)
 var names: Array = []              # the seats' names (the game client sets them), for a BIG warning's "for"
+var knife_at := {}                 # p4.12 GHOSTFACE: seat -> when (t) it last swung the knife
+var down_at := {}                  # seat -> when it was knocked down
+var up_at := {}                    # seat -> when it got back up
+var hearts: Array = []             # [pos, secs left]: hearts rising from a petted cat
 
 class _Glow extends Node2D:
 	var pv
@@ -89,6 +96,9 @@ func show_view(s: Dictionary, delta: float, my_seat: int) -> void:
 	for p in pops:
 		p[3] -= delta
 	pops = pops.filter(func(p): return p[3] > 0.0)
+	for h in hearts:
+		h[1] -= delta
+	hearts = hearts.filter(func(h): return h[1] > 0.0)
 	for r in rings:
 		r[4] -= delta
 	rings = rings.filter(func(r): return r[4] > 0.0)
@@ -172,12 +182,12 @@ func on_event(e: Array) -> void:
 	elif type == P.E_PU_GET:
 		var k: int = e[4]
 		var col: Color = COLORS.get(k, Color.WHITE)
-		pops.append([pos + Vector2(0, -24), P.PU_NAMES.get(k, "") + "!", col, 2.4, 2.4, k >= P.PU_CATS, P.PU_HELP.get(k, "")])
-		rings.append([pos + Vector2(0, 30), 110.0 if k >= P.PU_CATS else 80.0, col, 0.4, 0.4])
+		_pop(pos + Vector2(0, -36), P.PU_SHORT.get(k, ""), col, 1.6, P.is_big(k) or k == P.PU_MASK, k)
+		rings.append([pos + Vector2(0, 30), 110.0 if P.is_big(k) or k == P.PU_MASK else 80.0, col, 0.4, 0.4])
 		world.fx.flash(pos + Vector2(0, 30), 4.0, col, 0.25, true)
 	elif type == P.E_SHIELD_POP:
 		rings.append([pos, 70.0, Color(0.45, 0.9, 1.0), 0.3, 0.3])
-		pops.append([pos + Vector2(0, -26), "BLOCKED!", Color(0.55, 0.95, 1.0), 0.9, 0.9, false, ""])
+		_pop(pos + Vector2(0, -26), "BLOCK", Color(0.55, 0.95, 1.0), 0.9, false, P.PU_SHIELD)
 		world.fx.flash(pos, 3.5, Color(0.5, 0.9, 1.0), 0.2, true)
 	elif type == P.E_FREEZE:
 		flash = 0.8
@@ -186,21 +196,44 @@ func on_event(e: Array) -> void:
 	elif type == P.E_CAT_POOF:
 		rings.append([pos, 60.0, Color(0.6, 1.0, 0.65), 0.3, 0.3])
 		if e[4] == 1:
-			pops.append([pos + Vector2(0, -20), "CAUGHT!", Color(0.7, 1.0, 0.7), 0.9, 0.9, false, ""])
+			_pop(pos + Vector2(0, -20), "CATCH!", Color(0.7, 1.0, 0.7), 0.9)
 	elif type == P.E_PU_GONE:
 		rings.append([pos, 46.0, Color(1, 1, 1, 0.7), 0.3, 0.3])
+	elif type == P.E_KNIFE:      # p4.12 GHOSTFACE swings
+		knife_at[int(e[3])] = t
+	elif type == P.E_MASK_DOWN:
+		down_at[int(e[3])] = t     # (its ring and a target mark say: hit it now)
+		rings.append([pos, 70.0, Color(1.0, 0.32, 0.28), 0.35, 0.35])
+		world.fx.shake = maxf(world.fx.shake, 5.0)
+	elif type == P.E_MASK_UP:
+		up_at[int(e[3])] = t
+		rings.append([pos + Vector2(0, 28), 56.0, Color(0.85, 0.85, 0.95), 0.3, 0.3])   # a puff as it gets up
+	elif type == P.E_TRICK:      # p4.12 TRICK OR TREAT
+		if e[4] == 4:
+			return               # GHOSTFACE: its own pop (E_PU_GET) says so
+		_pop(pos + Vector2(0, -40), "TREAT" if e[4] == 0 else "TRICK!", COLORS[P.PU_TRICK], 1.3, e[4] > 0, P.PU_TRICK)
+		rings.append([pos + Vector2(0, 30), 90.0, COLORS[P.PU_TRICK], 0.4, 0.4])
+	elif type == P.E_CAT_COME:   # the black cat shows up (its own PET ME tag says the rest)
+		rings.append([pos + Vector2(0, -14), 60.0, Color(0.75, 0.6, 1.0), 0.4, 0.4])
+	elif type == P.E_PET:        # someone petted it
+		_pop(pos + Vector2(0, -10), "PURR", Color(1.0, 0.6, 0.8), 1.3, false, P.PU_SHIELD)
+		hearts.append([pos, 1.2])
+		rings.append([pos, 70.0, Color(1.0, 0.6, 0.8), 0.4, 0.4])
+	elif type == P.E_BATS:       # a swarm screeches at the edge it comes in from
+		var at := Vector2(clampf(pos.x, 120.0, 1800.0), pos.y)
+		_pop(at, "", Color(0.8, 0.65, 1.0), 1.3, true, P.PU_BATS)
 	elif type == P.E_GHOST:      # p4.11: a ghost rises from its body
 		rings.append([pos, 60.0, Color(0.85, 0.9, 1.0, 0.8), 0.5, 0.5])
 	elif type == P.E_BOO:
 		if e[4] == 255:          # the dash starts: a whoosh
 			rings.append([pos, 40.0, Color(0.9, 0.95, 1.0, 0.7), 0.25, 0.25])
 		else:                    # it shoved someone: BOO!
-			pops.append([pos + Vector2(0, -30), "BOO!", Color(0.92, 0.96, 1.0), 1.0, 1.0, true, ""])
+			_pop(pos + Vector2(0, -30), "BOO!", Color(0.92, 0.96, 1.0), 1.0, true)
 			rings.append([pos, 80.0, Color(0.9, 0.95, 1.0, 0.9), 0.3, 0.3])
 			world.fx.shake = maxf(world.fx.shake, 5.0)
 	elif type == P.E_GHOST_POP:  # an arrow popped a ghost
 		rings.append([pos, 55.0, Color(0.8, 0.85, 1.0, 0.9), 0.3, 0.3])
-		pops.append([pos + Vector2(0, -20), "POP!", Color(0.8, 0.85, 1.0), 0.8, 0.8, false, ""])
+		_pop(pos + Vector2(0, -20), "POP!", Color(0.8, 0.85, 1.0), 0.8)
 
 # ------------------------------------------------------------------ the main layer (never darkened)
 func _draw() -> void:
@@ -213,37 +246,84 @@ func _draw() -> void:
 			_draw_warning(o)
 		else:
 			_draw_orb(o)
+	for seat in fighters:   # p4.12 GHOSTFACE, in place of its archer (dead ones too: it lies there)
+		if not powers.has(seat) or (int(powers[seat].get("mask", 0)) & 1) == 0:
+			continue
+		var gf: Dictionary = fighters[seat]
+		var hid: bool = gf["state"] != P.F_DEAD and (int(powers[seat]["bits"]) & (P.PW_INVIS | P.PW_BATS)) != 0
+		if seat != me and gf["state"] != P.F_DEAD and (hid or blind):
+			continue
+		var gtc: Color = team[seat % team.size()] if team.size() > 0 else Color.WHITE
+		GhostfaceScript.draw(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0), down_at.get(seat, -9.0), up_at.get(seat, -9.0))
+		if (int(powers[seat]["mask"]) & 2) != 0 and gf["state"] != P.F_DEAD:   # down: a ring counts its 2 seconds
+			var rc := Vector2(gf["x"] + 18.0, gf["y"] + 40.0)
+			var left := clampf(1.0 - (t - down_at.get(seat, t)) / (SimScript.MASK_DOWN / 60.0), 0.0, 1.0)
+			draw_arc(rc, 38.0, -PI * 0.5, -PI * 0.5 + TAU * left, 40, Color(1.0, 0.28, 0.22, 0.9), 4.0, true)
+			if seat != me:   # a target mark on it: hit it now
+				var tm := Color(1.0, 0.4, 0.35, 0.55 + 0.4 * sin(t * 12.0))
+				draw_arc(rc, 16.0, 0.0, TAU, 20, tm, 2.0, true)
+				for q in 4:
+					var dv := Vector2.from_angle(q * PI * 0.5 + t * 1.5)
+					draw_line(rc + dv * 10.0, rc + dv * 24.0, tm, 2.5, true)
 	for seat in fighters:
 		var f: Dictionary = fighters[seat]
 		if f["state"] == P.F_DEAD or not powers.has(seat):
 			continue
 		var bits: int = powers[seat]["bits"]
-		if seat != me and ((bits & P.PW_INVIS) != 0 or blind):
+		if powers[seat].get("swarm", false):
+			_draw_circling_bats(f, seat)   # BAT SWARM: its bats show where it hides
+		if seat != me and ((bits & (P.PW_INVIS | P.PW_BATS)) != 0 or blind):
 			continue
-		_draw_kit(f, powers[seat], 0.35 if (bits & P.PW_INVIS) != 0 else 1.0)
+		_draw_kit(f, powers[seat], 0.35 if (bits & (P.PW_INVIS | P.PW_BATS)) != 0 else 1.0)
 	for c in view.get("cats", []):
 		_draw_cat(c)
 	for g in view.get("ghosts", []):
 		_draw_ghost(g)
+	if not view.get("pet", {}).is_empty():
+		_draw_pet(view["pet"])
+	if not view.get("bats", {}).is_empty():
+		_draw_swarm(view["bats"])
 	for r in rings:
 		var k: float = 1.0 - r[4] / r[3]
 		var col: Color = r[2]
 		col.a *= 1.0 - k
 		draw_arc(r[0], r[1] * (0.2 + 0.8 * k), 0.0, TAU, 40, col, 5.0 * (1.0 - k) + 2.0)
+	for h in hearts:   # a petted cat: three little hearts float up
+		var hk: float = h[1] / 1.2
+		for i in 3:
+			_heart(h[0] + Vector2((i - 1) * 16.0 + sin(t * 5.0 + i) * 4.0, -20.0 - (1.0 - hk) * (50.0 + i * 12.0)), 5.0, Color(1.0, 0.45, 0.7, hk))
 	for p in pops:
 		var k: float = p[3] / p[4]
-		var size := 40 if p[5] else 30
-		var at: Vector2 = p[0] + Vector2(0, -70.0 * (1.0 - k))
+		var at: Vector2 = p[0] + Vector2(0, -46.0 * (1.0 - k))
+		var a := clampf(k * 2.5, 0.0, 1.0)
 		var col: Color = p[2]
-		col.a = clampf(k * 2.0, 0.0, 1.0)
-		_text_c(at, p[1], size, col)
-		if p[6] != "":
-			_text_c(at + Vector2(0, 26), p[6], 18, Color(1, 1, 1, col.a))
+		var kind: int = p[7] if p.size() > 7 else -1
+		if kind >= 0:   # a badge with the picture, and one small word under it
+			var r := (17.0 if p[5] else 14.0) * (1.0 + 0.35 * clampf((k - 0.85) / 0.15, 0.0, 1.0))
+			draw_circle(at, r + 3.0, Color(0.03, 0.03, 0.07, 0.75 * a))
+			draw_circle(at, r, Color(col.darkened(0.2), a))
+			draw_arc(at, r, 0.0, TAU, 24, Color(GOLD if p[5] else PV_WHITE, a), 2.0)
+			draw_icon(self, at, kind, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
+			if p[1] != "":
+				_text_c(at + Vector2(0, r + 18.0), p[1], 17 if p[5] else 15, Color(col.lerp(Color.WHITE, 0.4), a))
+		else:
+			_text_c(at, p[1], 22 if p[5] else 18, Color(col, a))
 	if blind:
 		draw_rect(Rect2(0, 0, 1920, 1080), Color(0.5, 0.52, 0.58, 0.32))
 		var mine: Dictionary = fighters.get(me, {})
-		if not mine.is_empty():
-			_text_c(Vector2(mine["x"] + 18.0, mine["y"] - 30.0), "IN THE SMOKE: YOU CAN'T SEE ANYONE", 22, Color(1, 1, 1, 0.9))
+		if not mine.is_empty():   # in the smoke: a closed eye over your head (you can't see anyone)
+			var ec := Vector2(mine["x"] + 18.0, mine["y"] - 22.0)
+			draw_circle(ec, 15.0, Color(0.03, 0.03, 0.07, 0.7))
+			draw_arc(ec + Vector2(0, -4), 9.0, 0.35, PI - 0.35, 10, Color(1, 1, 1, 0.9), 2.5, true)
+			for i in 3:
+				var lx := -5.0 + i * 5.0
+				draw_line(ec + Vector2(lx, 4.0), ec + Vector2(lx * 1.3, 8.0), Color(1, 1, 1, 0.9), 2.0, true)
+
+# A pop over someone (p4.12): a badge with a power-up's picture and one small word, rising
+# and fading (the user: "graphics or small stylized text that disrupts the game as little
+# as possible"); with no picture (kind -1), the small word alone.
+func _pop(pos: Vector2, word: String, col: Color, secs: float, big := false, kind := -1) -> void:
+	pops.append([pos, word, col, secs, secs, big, "", kind])
 
 func _draw_warning(o: Dictionary) -> void:
 	var c := Vector2(o["x"], o["y"])
@@ -258,27 +338,23 @@ func _draw_warning(o: Dictionary) -> void:
 	draw_arc(c, R * (1.0 + 2.2 * (1.0 - prog)), 0.0, TAU, 48, Color(0.75, 0.88, 1.0, 0.25 + 0.6 * prog), 4.0)
 	# the count to the bolt, big in the middle of the danger (3, 2, 1): stand back, then grab it
 	var secs := ceili((1.0 - prog) * SimScript.PU_WARN / 60.0)
-	_text_c(c + Vector2(0, 16), str(maxi(1, secs)), 46, Color(1.0, 1.0, 1.0, 0.55 + 0.4 * prog))
+	_text_c(c + Vector2(0, 14), str(maxi(1, secs)), 38, Color(1.0, 1.0, 1.0, 0.55 + 0.4 * prog))
 	var pulse := 0.5 + 0.5 * sin(t * (10.0 + 20.0 * prog))
 	draw_set_transform(feet, 0.0, Vector2(1.0, 0.28))
 	draw_arc(Vector2.ZERO, R * 0.9, 0.0, TAU, 32, Color(0.85, 0.93, 1.0, 0.4 + 0.5 * pulse), 5.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	# what it will drop, over it: its picture, its name, and whom a BIG one is for
+	# what it will drop, over it: its picture (p4.12: no name), and whom a BIG one is for
 	var a := 0.55 + 0.45 * prog
-	var ic := c + Vector2(0, -R - 92.0)
+	var ic := c + Vector2(0, -R - 34.0)
 	draw_circle(ic, 24.0, Color(0.05, 0.05, 0.1, 0.8 * a))
 	draw_circle(ic, 20.0, Color(col.darkened(0.25), a))
 	draw_arc(ic, 20.0, 0.0, TAU, 24, Color(PV_WHITE if not big else GOLD, a), 3.0)
 	draw_icon(self, ic, int(o["kind"]), 13.0, Color(0.08, 0.06, 0.12, a), t)
-	var label: String = P.PU_NAMES.get(int(o["kind"]), "")
-	if big:
-		label = "BIG: " + label
+	if big:   # a gold ring, and the name of the one it is for, small
+		draw_arc(ic, 28.0, 0.0, TAU, 28, Color(GOLD, a * (0.6 + 0.4 * pulse)), 3.0)
 		var who := int(o.get("for", 255))
-		var line := "for anyone behind the leader"
 		if who >= 0 and who < names.size() and str(names[who]) != "":
-			line = "for %s (or anyone behind)" % names[who]
-		_text_c(c + Vector2(0, -R - 14.0), line, 20, Color(GOLD, a))
-	_text_c(c + Vector2(0, -R - 40.0), label, 30 if big else 26, Color(col.lerp(Color.WHITE, 0.3), a))
+			_text_c(ic + Vector2(0, -38.0), "for " + str(names[who]), 16, Color(GOLD, a))
 
 func _draw_orb(o: Dictionary) -> void:
 	var big: bool = o["big"]
@@ -297,8 +373,6 @@ func _draw_orb(o: Dictionary) -> void:
 		for i in 8:
 			var a0 := t * 1.5 + i * TAU / 8.0
 			draw_arc(c, r + 12.0, a0, a0 + 0.45, 6, Color(GOLD, a), 5.0)
-		_text_c(c + Vector2(0, -r - 22.0), "BIG", 26, Color(GOLD, a))
-	_text_c(c + Vector2(0, r + 30.0), P.PU_SHORT.get(int(o["kind"]), ""), 22, Color(col.lerp(Color.WHITE, 0.4), a))
 
 # A picture of each power-up (the web font has no symbols), moving so it reads at a
 # glance: the flame flickers, the bomb's fuse sparks, poison bubbles, smoke drifts,
@@ -377,6 +451,27 @@ static func draw_icon(ci: CanvasItem, c: Vector2, kind: int, s: float, col: Colo
 		for i in 3:
 			var a := i * PI / 3.0 + tt * 0.8
 			ci.draw_line(c - Vector2.from_angle(a) * s * 0.85, c + Vector2.from_angle(a) * s * 0.85, col, 4.0)
+	elif kind == P.PU_MASK:       # GHOSTFACE: the hood and the mask
+		GhostfaceScript.icon(ci, c, s, col.a, tt)
+	elif kind == P.PU_TRICK:      # a wrapped candy that wiggles
+		var w := sin(tt * 6.0) * 0.15
+		ci.draw_set_transform(c, w, Vector2.ONE)
+		ci.draw_circle(Vector2.ZERO, s * 0.45, col)
+		for side in [-1.0, 1.0]:
+			ci.draw_colored_polygon(PackedVector2Array([Vector2(side * s * 0.4, 0), Vector2(side * s * 0.95, -s * 0.35), Vector2(side * s * 0.95, s * 0.35)]), col)
+		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	elif kind == P.PU_PUMPKIN:    # a jack-o'-lantern whose face flickers
+		ci.draw_circle(c + Vector2(0, s * 0.1), s * 0.7, col)
+		ci.draw_line(c + Vector2(0, -s * 0.55), c + Vector2(s * 0.15, -s * 0.85), col, 3.0)
+		if int(tt * 6.0) % 3 != 0:
+			ci.draw_circle(c + Vector2(-s * 0.25, 0), s * 0.12, Color(1.0, 0.95, 0.5, col.a))
+			ci.draw_circle(c + Vector2(s * 0.25, 0), s * 0.12, Color(1.0, 0.95, 0.5, col.a))
+	elif kind == P.PU_BATS:       # a bat flapping
+		var fl := sin(tt * 12.0) * s * 0.3
+		for side in [-1.0, 1.0]:
+			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(side * s * 0.15, 0), c + Vector2(side * s, -s * 0.3 - fl), c + Vector2(side * s * 0.7, s * 0.2 - fl * 0.4),
+				c + Vector2(side * s * 0.4, s * 0.05)]), col)
+		ci.draw_circle(c, s * 0.25, col)
 	elif kind == P.PU_SPEED:
 		var j := Vector2(sin(tt * 30.0), 0) * s * 0.06
 		ci.draw_colored_polygon(PackedVector2Array([c + j + Vector2(s * 0.2, -s * 0.9), c + j + Vector2(-s * 0.5, s * 0.1), c + j + Vector2(0, s * 0.1),
@@ -436,10 +531,24 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 			var k := fmod(t * 1.3 + i * 0.5, 1.0)
 			var p := top + Vector2(-12.0 + i * 24.0, 6.0 + 30.0 * k)
 			draw_circle(p, 4.0, Color(0.55, 0.75, 1.0, (1.0 - k) * a))
+	if (bits & P.PW_PUMPKIN) != 0:      # p4.12 the pumpkin trick: a hopping jack-o'-lantern instead of the body
+		var pc := c + Vector2(0, 6)
+		draw_circle(pc, 30.0, Color(0.6, 0.28, 0.05, a))
+		draw_circle(pc, 26.0, Color(1.0, 0.55, 0.1, a))
+		draw_line(pc + Vector2(0, -26), pc + Vector2(5, -38), Color(0.25, 0.5, 0.15, a), 5.0)
+		var lit := Color(1.0, 0.92, 0.4, a)
+		draw_colored_polygon(PackedVector2Array([pc + Vector2(-16, -6), pc + Vector2(-6, -6), pc + Vector2(-11, -15)]), lit)
+		draw_colored_polygon(PackedVector2Array([pc + Vector2(6, -6), pc + Vector2(16, -6), pc + Vector2(11, -15)]), lit)
+		draw_colored_polygon(PackedVector2Array([pc + Vector2(-18, 4), pc + Vector2(-9, 10), pc + Vector2(0, 5), pc + Vector2(9, 10), pc + Vector2(18, 4),
+			pc + Vector2(10, 16), pc + Vector2(-10, 16)]), lit)
+	if (bits & P.PW_BACKWARDS) != 0:    # a swirl over the head
+		draw_arc(top + Vector2(0, -22), 10.0, t * 8.0, t * 8.0 + 4.5, 12, Color(0.85, 0.5, 1.0, a), 3.0)
+		_text_c(top + Vector2(0, -36), "?!", 22, Color(0.9, 0.7, 1.0, a))
 	# badges over the head for what has no look of its own: the arrow kind, INFINITE, BIG
 	var badges: Array = []
-	if int(pw["kind"]) > 0:
-		badges.append(int(pw["kind"]))
+	var pkind := int(pw["kind"])
+	if pkind > 0:
+		badges.append(pkind if pkind <= P.PU_SMOKE else (P.PU_PUMPKIN if pkind == P.A_PUMPKIN else P.PU_FIRE))
 	if (bits & P.PW_INF) != 0:
 		badges.append(P.PU_INF)
 	if (bits & P.PW_BIG) != 0:
@@ -451,6 +560,104 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 		draw_circle(bc, 12.0, Color(0.05, 0.05, 0.1, 0.8 * a))
 		draw_circle(bc, 10.0, Color(col.darkened(0.2), a))
 		draw_icon(self, bc, badges[i], 6.5, Color(0.08, 0.06, 0.12, a), t)
+
+# p4.12 the black cat: walking its floor (legs, a curled tail, green eyes), PET ME over it;
+# running off when petted (it fades).
+func _draw_pet(pd: Dictionary) -> void:
+	var feet := Vector2(pd["x"], pd["y"])
+	var dir := float(pd["dir"])
+	var gone := int(pd.get("gone", 0))
+	var a := clampf(gone / 40.0, 0.0, 1.0) if gone > 0 else 1.0
+	var body := Color(0.06, 0.05, 0.08, a)
+	var rim := Color(0.78, 0.66, 1.0, 0.95 * a)
+	var c := feet + Vector2(0, -15)
+	draw_circle(c + Vector2(0, 4), 30.0, Color(0.6, 0.45, 0.9, 0.1 * a))   # a soft light round it: a black cat on a dark night
+	draw_circle(c + Vector2(0, 4), 20.0, Color(0.7, 0.55, 1.0, 0.1 * a))
+	var step := sin(t * 12.0) * 3.0
+	for k in 4:   # legs
+		var lx := (k - 1.5) * 7.0
+		draw_line(c + Vector2(lx, 4), c + Vector2(lx + (step if k % 2 == 0 else -step), 15), rim, 4.5)
+		draw_line(c + Vector2(lx, 4), c + Vector2(lx + (step if k % 2 == 0 else -step), 15), body, 3.0)
+	var pts := PackedVector2Array()
+	for i in 14:
+		var ang := TAU * i / 14.0
+		pts.append(c + Vector2(cos(ang) * 18.0, sin(ang) * 9.0))
+	draw_colored_polygon(pts, body)
+	pts.append(pts[0])
+	draw_polyline(pts, rim, 2.0, true)
+	var head := c + Vector2(dir * 17.0, -8.0)
+	for side in [-1.0, 1.0]:   # the ears (behind the head's rim)
+		var ear := PackedVector2Array([head + Vector2(side * 8.0 - 1.0, -3.0), head + Vector2(side * 6.5, -15.0), head + Vector2(side * 1.0, -7.0)])
+		draw_colored_polygon(ear, body)
+		ear.append(ear[0])
+		draw_polyline(ear, rim, 1.6, true)
+	draw_circle(head, 9.0, body)
+	draw_arc(head, 9.0, 0.0, TAU, 16, rim, 2.0, true)
+	for side in [-1.0, 1.0]:
+		draw_circle(head + Vector2(dir * 2.5 + side * 3.4, -1.0), 2.2, Color(0.55, 1.0, 0.35, a))
+	var tail := PackedVector2Array()
+	for i in 7:
+		tail.append(c + Vector2(-dir * (16.0 + i * 2.6), -2.0 - i * 4.4 + sin(t * 4.0 + i * 0.6) * 2.5))
+	draw_polyline(tail, rim, 6.0, true)
+	draw_polyline(tail, body, 4.0, true)
+	if gone == 0:
+		var bob := sin(t * 3.0) * 3.0
+		_heart(c + Vector2(0, -34 + bob), 7.0, Color(1.0, 0.45, 0.7, 0.9))
+		_text_c(c + Vector2(0, -46 + bob), "PET ME", 14, Color(1.0, 0.85, 0.95, 0.9))
+
+func _heart(c: Vector2, s: float, col: Color) -> void:
+	draw_circle(c + Vector2(-s * 0.5, 0), s * 0.55, col)
+	draw_circle(c + Vector2(s * 0.5, 0), s * 0.55, col)
+	draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 1.05, s * 0.15), c + Vector2(s * 1.05, s * 0.15), c + Vector2(0, s * 1.2)]), col)
+
+func _bat(p: Vector2, s: float, ph: float, col: Color) -> void:
+	var flap := sin(ph) * 8.0 * s
+	var rim := Color(0.62, 0.48, 0.85, col.a * 0.9)   # a lit edge, so a black bat shows on the night sky
+	for side in [-1.0, 1.0]:
+		var wing := PackedVector2Array([p + Vector2(side * 3.0, 0) * s, p + Vector2(side * 18.0 * s, -5.0 * s - flap),
+			p + Vector2(side * 15.0 * s, 0.5 * s - flap * 0.7), p + Vector2(side * 13.0 * s, 3.0 * s - flap * 0.4),
+			p + Vector2(side * 10.0 * s, 1.5 * s - flap * 0.2), p + Vector2(side * 7.0 * s, 1.0 * s)])
+		draw_colored_polygon(wing, col)
+		wing.append(wing[0])
+		draw_polyline(wing, rim, 1.2, true)
+	draw_circle(p, 4.0 * s, col)
+	draw_arc(p, 4.0 * s, PI * 1.1, PI * 1.9, 6, rim, 1.2, true)
+	for side in [-1.0, 1.0]:   # little ears
+		draw_colored_polygon(PackedVector2Array([p + Vector2(side * 1.0, -3.0) * s, p + Vector2(side * 2.6, -6.5) * s, p + Vector2(side * 3.4, -2.0) * s]), col)
+	draw_circle(p + Vector2(-1.6, -0.8) * s, 1.0 * s, Color(1.0, 0.25, 0.2, col.a))
+	draw_circle(p + Vector2(1.6, -0.8) * s, 1.0 * s, Color(1.0, 0.25, 0.2, col.a))
+
+# A bat swarm: screeching (zigzags and a dim band at the edge it comes in from), then a
+# cloud of bats sweeping across in its band.
+func _draw_swarm(bd: Dictionary) -> void:
+	var y: float = bd["y"]
+	var dir := float(bd["dir"])
+	var h: float = SimScript.BATS_H
+	if int(bd["phase"]) == 0:
+		var ex := 40.0 if dir > 0 else 1880.0
+		draw_rect(Rect2(0, y - h * 0.5, 1920, h), Color(0.35, 0.2, 0.5, 0.08 + 0.06 * sin(t * 20.0)))
+		for k in 3:
+			var zx := ex + dir * k * 26.0
+			draw_polyline(PackedVector2Array([Vector2(zx, y - 30), Vector2(zx + dir * 10, y - 10), Vector2(zx, y + 10), Vector2(zx + dir * 10, y + 30)]),
+				Color(0.85, 0.7, 1.0, 0.8), 3.0)
+		return
+	var cx: float = bd["x"]
+	var w: float = SimScript.BATS_W
+	for k in 7:   # a dark cloud of wings: soft blobs, darker in the middle
+		var bx := cx + (k - 3) * w * 0.14 + sin(t * 2.0 + k) * 10.0
+		draw_circle(Vector2(bx, y + sin(t * 3.0 + k * 1.7) * 12.0), h * (0.42 if k % 3 == 0 else 0.34), Color(0.06, 0.02, 0.1, 0.16))
+	for i in 64:
+		var hx := fposmod(i * 97.0 + t * 30.0 * (1.0 + (i % 3) * 0.3), w) - w * 0.5
+		var hy := fposmod(i * 53.0, h) - h * 0.5 + sin(t * 5.0 + i) * 10.0
+		_bat(Vector2(cx + hx, y + hy), 1.15 + (i % 4) * 0.18, t * 16.0 + i, Color(0.04, 0.02, 0.07, 0.97))
+
+# BAT SWARM: bats circling the fighter (seen by everyone: they show where it hides).
+func _draw_circling_bats(f: Dictionary, seat: int) -> void:
+	var c := Vector2(f["x"] + 18.0, f["y"] + 31.0)
+	for i in 10:
+		var ang := t * 3.0 + i * TAU / 10.0 + seat
+		var p := c + Vector2(cos(ang) * (50.0 + 8.0 * sin(t * 4.0 + i)), sin(ang) * 40.0)
+		_bat(p, 1.05, t * 18.0 + i, Color(0.04, 0.02, 0.07, 0.95))
 
 # A ghost cat (the user's daughter's idea): a pale glowing cat with big green eyes
 # and a wavy ghost's tail instead of legs, outlined so it shows on the dark arena,

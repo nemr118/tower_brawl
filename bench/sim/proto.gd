@@ -13,7 +13,10 @@
 #             u8 progress 0..255, u8 the seat a BIG one came for), u8 cats, cat x (u8 owner,
 #             u8 target, s16 x, s16 y), u8 the rain's owner (NO_ONE: no rain), u8 its quarter
 #             seconds left, u8 ghosts, ghost x (p4.11: u8 seat, s16 x, s16 y, u8 flags: 1 popped,
-#             2 dashing, 4 ready to BOO)
+#             2 dashing, 4 ready to BOO), (p4.12) u8 the black cat is here, then s16 x, s16 y,
+#             s8 dir, u8 leaving (p4.12: each power-up row has one more byte: 1 GHOSTFACE, 2 down,
+#             4 swinging, 8 the knife up); u8 a bat swarm's phase (255: none; 0 screeching, 1 sweeping),
+#             then s16 x, s16 y, s8 dir; then u8 1 with THE BOILER ROOM's state (sim/boiler.gd)
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
 #   arrow     u16 id, u8 kind | state << 4 | 0x40 a BIG arrow (p4.9), then stuck or in a body (p4.10): s16 x, s16 y, u8 angle (256 steps);
@@ -83,6 +86,8 @@ const A_FIRE := 1
 const A_BOMB := 2
 const A_MIASMA := 3
 const A_SMOKE := 4        # a thick smoke cloud: no damage, bots cannot see through it
+const A_PUMPKIN := 5      # p4.12 PUMPKIN BOMBS: a smaller blast, then 5 seeds fly out and pop
+const A_SEED := 6         # a pumpkin's seed: it pops in a small blast on a wall, a fighter, or after a moment
 const S_FLY := 0
 const S_FALL := 1
 const S_STUCK := 2
@@ -112,11 +117,18 @@ const PU_INVIS := 11       # BIG: invisible 3 s, seen 1 s, for 12 s
 const PU_FREEZE := 12      # BIG: everyone else frozen for 2.5 s
 const PU_SPIKES := 13      # BIG: a shield that comes back 3 s after each arrow, spikes kill a stomper, 20 s
 const PU_SPEED := 14       # BIG: run 1.6 times as fast for 10 s
+const PU_TRICK := 15       # p4.12 TRICK OR TREAT: a treat (a random power-up) or a silly trick (pumpkin, backwards, tiny)
+const PU_PUMPKIN := 16     # PUMPKIN BOMBS (BOMB ARROWS' Halloween twin, on THE HAUNTED HOUSE): an arrow kind, all match
+const PU_BATS := 17        # BIG: a bat swarm circles you 8 s, knocks arrows away and hides you
+const PU_MASK := 18        # GHOSTFACE, from TRICK OR TREAT (the user's daughter's favourite): no bow this round,
+                           # a knife swing instead; a hit knocks you down 2 s, a hit while down is the end
 const PU_NAMES := {1: "FIRE ARROWS", 2: "BOMB ARROWS", 3: "POISON ARROWS", 4: "SMOKE ARROWS", 5: "SHIELD",
 	6: "INFINITE ARROWS", 7: "FLYING", 8: "BIG ARROWS", 9: "GHOST CATS", 10: "RAIN", 11: "INVISIBLE",
-	12: "FREEZE", 13: "SPIKED SHIELD", 14: "SUPER SPEED"}
+	12: "FREEZE", 13: "SPIKED SHIELD", 14: "SUPER SPEED", 15: "TRICK OR TREAT", 16: "PUMPKIN BOMBS", 17: "BAT SWARM",
+	18: "GHOSTFACE"}
 const PU_SHORT := {1: "FIRE", 2: "BOMB", 3: "POISON", 4: "SMOKE", 5: "SHIELD", 6: "INFINITE", 7: "FLY", 8: "BIG",
-	9: "CATS", 10: "RAIN", 11: "INVISIBLE", 12: "FREEZE", 13: "SPIKES", 14: "SPEED"}
+	9: "CATS", 10: "RAIN", 11: "INVISIBLE", 12: "FREEZE", 13: "SPIKES", 14: "SPEED", 15: "TRICK?", 16: "PUMPKIN", 17: "BATS",
+	18: "GHOSTFACE"}
 # what each one does, in a line (the page says it when you take one)
 const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	2: "every arrow you shoot blows up, all match", 3: "every arrow you shoot leaves a poison cloud, all match",
@@ -125,7 +137,10 @@ const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	7: "move the stick any way to float around, this round", 8: "your arrows and their blasts are huge, this round",
 	9: "three ghost cats hunt the nearest players (dodge one to stop it)", 10: "everyone else is slow in the rain; your umbrella stops stomps",
 	11: "you blink out of sight: 3 seconds gone, 1 second seen", 12: "everyone else is frozen solid for a moment",
-	13: "arrows bounce off (it comes back), and spikes on top kill anyone who stomps you", 14: "you run super fast"}
+	13: "arrows bounce off (it comes back), and spikes on top kill anyone who stomps you", 14: "you run super fast",
+	15: "a treat (a power-up) or a silly trick", 16: "every arrow is a pumpkin: it bursts into seeds that pop, all match",
+	17: "bats circle you: they knock arrows away and hide you",
+	18: "no bow this round: let go of shoot to swing your knife; a hit knocks you down 2 seconds, a hit while you're down ends you"}
 const ORB_WARN := 0        # an orb's states: the lightning builds up over its spot
 const ORB_LIVE := 1        # it struck: the orb waits to be taken
 const PW_TAG := 0xB5       # the snapshot's power-up part starts with this byte
@@ -142,6 +157,10 @@ const PW_UMBRELLA := 256
 const PW_SPIKES := 512
 const PW_SPIKE_UP := 1024  # the spiked shield is up (not waiting to come back)
 const PW_SPEED := 2048
+const PW_PUMPKIN := 4096   # p4.12 tricks: a hopping pumpkin,
+const PW_BACKWARDS := 8192 # left and right swapped,
+const PW_TINY := 16384     # tiny (only the look)
+const PW_BATS := 32768     # hidden in bats (a swarm sweeping by, or BAT SWARM)
 
 # events: [type, x, y, a, b]
 const E_JUMP := 1        # a = fighter
@@ -174,6 +193,19 @@ const E_PIN := 27        # p4.10: an arrow pins a body to a wall: x, y the arrow
 const E_GHOST := 28      # p4.11: a person's ghost rises from the body: a = fighter
 const E_BOO := 29        # a ghost BOOs: a = the ghost, b = the one it shoved (255: the dash starts)
 const E_GHOST_POP := 30  # an arrow pops a ghost (gone 3 s): a = the ghost, b = the shooter
+const E_PET := 31        # p4.12: someone pets the black cat (a SHIELD): a = fighter
+const E_CAT_COME := 32   # the black cat shows up: x, y its feet
+const E_TRICK := 33      # TRICK OR TREAT: a = fighter, b = 0 a treat (its power-up follows), 1 pumpkin, 2 backwards, 3 tiny
+const E_BATS := 34       # a bat swarm screeches before it sweeps in: x, y where it comes in; a = 1 it flies right, 0 left
+# p4.12: two or three words beside the name on your own screen (the user: "graphics or
+# small stylized text that disrupts the game as little as possible").
+const PU_TIP := {1: "burning arrows", 2: "boom arrows", 3: "poison arrows", 4: "smoke arrows", 5: "blocks one hit",
+	6: "endless arrows", 7: "fly with the stick", 8: "huge arrows", 9: "cats hunt them", 10: "they slow down",
+	11: "you're hidden", 12: "they freeze", 13: "spikes up", 14: "run fast", 15: "", 16: "seed bombs",
+	17: "bats guard you", 18: "knife: let go to swing"}
+const E_KNIFE := 35      # GHOSTFACE swings the knife: a = fighter, b = 1 to the right
+const E_MASK_DOWN := 36  # GHOSTFACE is knocked down (2 s): a = fighter
+const E_MASK_UP := 37    # and gets back up: a = fighter
 const E_FURNACE := 40    # THE BOILER ROOM (sim/boiler.gd): a furnace blasts fire: x, y its mouth; a = which one; b = its direction
 const E_STEAM := 41      # a pressure pipe vents steam: x, y its valve; a = which one; b = its direction
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
@@ -185,5 +217,9 @@ const F2_AWAY := 4
 
 # the death causes, for the log lines
 const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
-	8: "a ghost cat", 9: "spikes", 10: "a furnace"}
+	8: "a ghost cat", 9: "spikes", 10: "a furnace", 11: "a knife"}
 const WALLS_DEADLY_BIT := 0x8000
+
+# p4.12: a BIG power-up (the numbers after SUPER SPEED are regular ones again, but BAT SWARM).
+static func is_big(k: int) -> bool:
+	return (k >= PU_CATS and k <= PU_SPEED) or k == PU_BATS

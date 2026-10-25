@@ -114,8 +114,8 @@ const ORB_R := 30.0
 const ORB_UP := 34                  # the orb's middle sits this far above its floor spot
 const BIG_CHANCE := 0.3             # a drop is BIG this often with a person 1 point behind the leader (+0.15 a point more)
 const REGULAR_W := {P.PU_FIRE: 13, P.PU_BOMB: 13, P.PU_POISON: 12, P.PU_SMOKE: 12, P.PU_SHIELD: 14,
-	P.PU_INF: 12, P.PU_FLY: 11, P.PU_BIG: 13}
-const BIG_KINDS := [P.PU_CATS, P.PU_RAIN, P.PU_INVIS, P.PU_FREEZE, P.PU_SPIKES, P.PU_SPEED]
+	P.PU_INF: 12, P.PU_FLY: 11, P.PU_BIG: 13, P.PU_TRICK: 14}
+const BIG_KINDS := [P.PU_CATS, P.PU_RAIN, P.PU_INVIS, P.PU_FREEZE, P.PU_SPIKES, P.PU_SPEED, P.PU_BATS]
 const FLY_MAX := 1.4 * S            # FLYING: the stick floats the fighter this fast, any way
 const FLY_ACCEL := 0.12 * S
 const SLOW_MULT := 0.55             # RAIN: everyone else runs at this share of their speed
@@ -158,6 +158,54 @@ const BOO_TICKS := 10
 const BOO_CD := 150
 const BOO_R := 42.0
 const GHOST_POP := 180
+# p4.12 the black cat (the research's "a cat that shields whoever pets it"; the user: "let's
+# not have it happen too much"): a round's chance PET_CHANCE (THE HAUNTED HOUSE: PET_CHANCE_HW),
+# it shows up PET_AT ticks into the round, walks its floor PET_LIFE ticks; whoever touches it
+# first gets a SHIELD, and it runs off.
+const PET_CHANCE := 0.25
+const PET_CHANCE_HW := 0.4
+const PET_AT := [360, 720]
+const PET_LIFE := 600
+const PET_SPEED := 1.6
+# TRICK OR TREAT: a treat TREAT of the time (a random power-up, a BIG one 1 time in 6), else
+# a trick for TRICK_TICKS[trick]: 1 PUMPKIN (a hopping pumpkin every PUMPKIN_HOP ticks, no
+# shots), 2 BACKWARDS (left and right swapped), 3 TINY (only the look).
+const TREAT := 0.65
+const TRICK_TICKS := [0, 180, 180, 360]
+const PUMPKIN_HOP := 24
+# PUMPKIN BOMBS: a blast PUMPKIN_FX of a bomb's, then SEEDS seeds fly out and pop in SEED_FX
+# blasts (on a wall, on a fighter, or after SEED_TICKS).
+const PUMPKIN_FX := 0.75
+const SEEDS := 5
+const SEED_FX := 0.5
+const SEED_TICKS := 34
+# Bats (the user picked both): on THE HAUNTED HOUSE a swarm sweeps across BATS_FIRST after
+# FIGHT, then every BATS_EVERY, after BATS_WARN of screeching: a band BATS_W x BATS_H flying
+# BATS_SPEED; an arrow flying into it drops, whoever is inside is hidden. BAT SWARM (BIG):
+# bats circle the fighter BAT_SWARM_TICKS, knock away arrows within BAT_SWARM_R, hide it.
+const BATS_FIRST := 1200
+const BATS_EVERY := [1200, 1800]
+const BATS_WARN := 60
+const BATS_SPEED := 12.0
+const BATS_W := 520.0
+const BATS_H := 170.0
+const BAT_SWARM_TICKS := 480
+const BAT_SWARM_R := 85.0
+# GHOSTFACE (the user's daughter's favourite, from TRICK OR TREAT MASK_CHANCE of the time):
+# no bow this round; letting go of shoot swings a knife down in front, KNIFE_TICKS long
+# (the way it aims; a let-go inside the phone's ring: the way it faces), landing at tick
+# KNIFE_HIT_AT on fighters within KNIFE_REACH (a dodge or a shield is safe), then KNIFE_CD.
+# Any hit (an arrow, a stomp, a blast, fire...) knocks it down MASK_DOWN, then it gets up;
+# a hit while it is down is the end (after MASK_GRACE, so one hit never counts twice).
+# Only the closing walls kill it standing.
+const MASK_CHANCE := 0.3
+const KNIFE_TICKS := 14
+const KNIFE_HIT_AT := 6
+const KNIFE_CD := 34
+const KNIFE_REACH := 66.0
+const MASK_DOWN := 120
+const MASK_GRACE := 15
+const TRICK_W_HW := 22         # TRICK OR TREAT's weight on THE HAUNTED HOUSE (REGULAR_W's elsewhere)
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -230,6 +278,15 @@ class Fighter:
 	var boo_t: int = 0          # a BOO dash's ticks left
 	var boo_cd: int = 0         # ticks until it can BOO again
 	var popped_t: int = 0       # an arrow popped the ghost: gone this long
+	var trick: int = 0          # p4.12 TRICK OR TREAT's trick (1 pumpkin, 2 backwards, 3 tiny), for trick_t
+	var trick_t: int = 0
+	var batted: int = 0         # inside a bat swarm (hidden) a little longer
+	var bats_t: int = 0         # BAT SWARM ticks left
+	var mask: bool = false      # GHOSTFACE, this round: a knife, no bow
+	var down_t: int = 0         # knocked down (GHOSTFACE) this many more ticks
+	var knife_t: int = 0        # a slash's ticks left
+	var knife_cd: int = 0       # ticks until it can slash again
+	var knife_hit: bool = false # this slash landed already
 	var carry_t: int = 0        # p4.10: dead, still carried by the arrow that killed it
 
 class Arrow:
@@ -297,6 +354,11 @@ var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
 var ghosts := true              # p4.11: a person's ghost rises after its death (the game; the benchmark has no people)
 var hazards = null              # THE BOILER ROOM's moving parts (sim/boiler.gd) on an arena whose theme is "nightmare"
+var pet := {}                   # p4.12 the black cat: {x, y (its feet), dir, t, gone (ticks running off)}
+var pet_at := -1                # the play tick it shows up this round (-1: not this round)
+var bats := {}                  # a bat swarm: {phase (0 screeching, 1 sweeping), t, x (its middle), y, dir}
+var bats_at := -1               # the play tick the next swarm screeches (-1: none on this arena)
+var bats_hold := false          # a test knob (hw_gallery): the swarm stays where it is
 var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
                                 # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
@@ -423,6 +485,10 @@ func reset_powers() -> void:
 func _reset_powers_round() -> void:
 	if hazards != null:
 		hazards.reset()
+	pet = {}
+	pet_at = rng.randi_range(PET_AT[0], PET_AT[1]) if rng.randf() < (PET_CHANCE_HW if level.theme == "halloween" else PET_CHANCE) else -1
+	bats = {}
+	bats_at = BATS_FIRST if level.theme == "halloween" else -1
 	orbs.clear()
 	cats.clear()
 	rain_owner = -1
@@ -463,6 +529,10 @@ func last_alive() -> Fighter:
 # the stick points. p4.4: a let-go shoot always fires (the user: about half the
 # shots never left the bow): a jump, a ledge grab or a dodge no longer drops it.
 func apply_input(f: Fighter, buttons: int, aim: int) -> void:
+	if f.trick == 2:      # p4.12 BACKWARDS: left and right swapped
+		buttons = (buttons & ~(P.B_LEFT | P.B_RIGHT)) | (P.B_LEFT if buttons & P.B_RIGHT else 0) | (P.B_RIGHT if buttons & P.B_LEFT else 0)
+	elif f.trick == 1:    # a PUMPKIN: no bow
+		buttons &= ~(P.B_SHOOT | P.B_CANCEL)
 	var prev := f.buttons
 	f.buttons = buttons
 	f.aim = fposmod(aim * TAU / 3600.0, TAU)
@@ -494,7 +564,15 @@ func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 		if not (prev & P.B_JUMP):
 			f.want_jump = true
 			f.jump_buf = JUMP_BUFFER
-	if buttons & P.B_SHOOT:
+	if f.mask:   # p4.12 GHOSTFACE: no bow (no stop to aim); the knife comes up while shoot is held, a let-go swings it
+		f.aiming = false
+		if buttons & P.B_SHOOT:
+			f.drawn = true
+		elif f.drawn:
+			f.drawn = false
+			if f.state == P.F_NORMAL:
+				_knife(f, f.aim, (buttons & P.B_CANCEL) != 0)
+	elif buttons & P.B_SHOOT:
 		f.drawn = true
 		if not f.aiming and f.state == P.F_NORMAL:
 			f.aiming = true
@@ -596,7 +674,7 @@ func _hurt(f: Fighter, vx: float, vy: float) -> void:
 		return
 	f.state = P.F_HURT
 	f.state_t = 0
-	f.dodge_t = HURT_TICKS
+	f.dodge_t = maxi(HURT_TICKS, f.down_t)   # GHOSTFACE down stays down its whole time
 	f.aiming = false
 	f.vx = vx
 	f.vy = vy
@@ -657,6 +735,14 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 func _kill(f: Fighter, killer: int, cause: int) -> void:
 	if f.state == P.F_DEAD or predicting:
 		return
+	if f.mask and cause != 6:   # GHOSTFACE: a hit knocks it down; a hit while it is down is the end
+		if f.down_t <= 0:
+			_collapse(f)
+			return
+		if f.down_t > MASK_DOWN - MASK_GRACE:
+			return        # the same hit (a blast, the fire it fell in) does not count twice
+	f.down_t = 0
+	f.knife_t = 0
 	f.state = P.F_DEAD
 	f.state_t = 0
 	f.dead_t = RESPAWN_TICKS
@@ -770,10 +856,13 @@ func _update_fighter(f: Fighter) -> void:
 		_fly(f)
 	else:
 		var mult := speed_mult(f)
+		if f.trick == 1 and f.on_ground and f.state_t % PUMPKIN_HOP == 0:
+			f.want_jump = true    # p4.12 a PUMPKIN hops by itself
 		var accel := (RUN_ACCEL if f.on_ground else AIR_ACCEL) * mult
 		var stand_aim := f.aiming and f.on_ground   # aiming on the ground: you stand still
 		if f.move_dir != 0 and not stand_aim:
-			f.facing = f.move_dir
+			if f.knife_t <= 0:      # p4.12: GHOSTFACE keeps facing its swing
+				f.facing = f.move_dir
 			f.vx = move_toward(f.vx, RUN_MAX * mult * f.move_dir, accel)
 		else:
 			f.vx = move_toward(f.vx, 0.0, FRICTION if f.on_ground else AIR_FRICTION)
@@ -934,6 +1023,20 @@ func _power_timers(f: Fighter) -> void:
 		f.invis_t -= 1
 	if f.umbrella_t > 0:
 		f.umbrella_t -= 1
+	if f.trick_t > 0:
+		f.trick_t -= 1
+		if f.trick_t == 0:
+			f.trick = 0
+	if f.batted > 0:
+		f.batted -= 1
+	if f.mask:
+		_knife_tick(f)
+		if f.down_t > 0:
+			f.down_t -= 1
+			if f.down_t == 0:
+				_event(P.E_MASK_UP, f.x + HALF_W, f.y + MID_Y, f.id, 0)
+	if f.bats_t > 0:
+		f.bats_t -= 1
 	if f.spikes_t > 0:
 		f.spikes_t -= 1
 		if f.spike_regen > 0:
@@ -958,7 +1061,7 @@ static func invisible(f: Fighter) -> bool:
 func _fly(f: Fighter) -> void:
 	var mult := speed_mult(f)
 	var mx: int = 0 if (f.aiming and f.on_ground) else f.move_dir
-	if mx != 0:
+	if mx != 0 and f.knife_t <= 0:
 		f.facing = mx
 	if f.aiming:
 		f.facing = 1 if cos(f.aim) >= 0.0 else -1
@@ -1038,6 +1141,9 @@ func _aim_help(f: Fighter, ang: float) -> float:
 
 # A let-go shot: an arrow (the aim help on the angle), or a dry fire with an empty quiver.
 func _fire(f: Fighter, ang: float) -> void:
+	if f.mask:
+		_knife(f, ang, false)    # GHOSTFACE: a knife, no bow
+		return
 	if f.arrows > 0 or f.inf:
 		var kind: int = f.pw_kind if f.pw_kind > 0 else (_pick_kind() if power_arrows else P.A_NORMAL)
 		_shoot(f, _aim_help(f, ang), kind)
@@ -1129,7 +1235,14 @@ func _update_arrow(a: Arrow) -> void:
 			a.fuse -= 1
 			if a.fuse == 0:
 				a.dead = true
-				_explode(a.x, a.y, a.owner, BIG_FX if a.big else 1.0)
+				if a.kind == P.A_PUMPKIN:
+					_pumpkin(a)
+				else:
+					_explode(a.x, a.y, a.owner, BIG_FX if a.big else 1.0)
+		return
+	if a.kind == P.A_SEED and a.t >= SEED_TICKS:   # p4.12: a pumpkin's seed pops by itself
+		a.dead = true
+		_explode(a.x, a.y, a.owner, SEED_FX * (BIG_FX if a.big else 1.0), (1 if a.big else 0) | 4)
 		return
 	if a.state == P.S_FALL:
 		a.vy = minf(a.vy + ARROW_GRAVITY, ARROW_MAX_FALL)
@@ -1157,6 +1270,10 @@ func _update_arrow(a: Arrow) -> void:
 		_arrow_pops_ghosts(a)
 
 func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
+	if a.kind == P.A_SEED:        # p4.12: a seed pops on a wall
+		a.dead = true
+		_explode(a.x, a.y, a.owner, SEED_FX * (BIG_FX if a.big else 1.0), (1 if a.big else 0) | 4)
+		return
 	var was_flying := a.state == P.S_FLY
 	a.state = P.S_STUCK
 	a.stuck_t = 0
@@ -1172,7 +1289,7 @@ func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 		else:
 			_add_zone(P.Z_FIRE, a.x, a.y + 20.0, 60.0 * k, FIRE_TICKS / 2)
 		_event(P.E_IGNITE, int(a.x), int(surface_y if floor_hit else a.y), 1 if floor_hit else 0, 0)
-	elif a.kind == P.A_BOMB:
+	elif a.kind == P.A_BOMB or a.kind == P.A_PUMPKIN:
 		a.fuse = BOMB_FUSE
 	elif a.kind == P.A_MIASMA:
 		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
@@ -1192,6 +1309,11 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			continue
 		if predicting:
 			return true   # the client's copy: the arrow waits here for the server's word (a catch or a hit)
+		if a.kind == P.A_SEED:   # p4.12: a seed pops on a fighter (a dodge is safe from it)
+			a.dead = true
+			if f.state != P.F_DODGE:
+				_explode(a.x, a.y, a.owner, SEED_FX * (BIG_FX if a.big else 1.0), (1 if a.big else 0) | 4)
+			return true
 		if f.state == P.F_DODGE:
 			a.dead = true
 			f.arrows = mini(MAX_QUIVER, f.arrows + 1)
@@ -1203,6 +1325,11 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			return true
 		var k := BIG_FX if a.big else 1.0
 		_kill(f, a.owner, 1)
+		if f.state != P.F_DEAD:   # GHOSTFACE knocked down, not out: the arrow drops off
+			a.state = P.S_FALL
+			a.vx *= -0.2
+			a.vy = -6.0
+			return true
 		f.vx = a.vx * 0.45
 		f.vy = -7.0 + a.vy * 0.3
 		if a.kind == P.A_SMOKE:
@@ -1211,6 +1338,9 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 		if a.kind == P.A_BOMB:
 			a.dead = true
 			_explode(a.x, a.y, a.owner, k)
+		elif a.kind == P.A_PUMPKIN:
+			a.dead = true
+			_pumpkin(a)
 		elif a.kind == P.A_MIASMA:
 			a.dead = true
 			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
@@ -1232,6 +1362,38 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 		return true
 	return false
 
+# p4.12 PUMPKIN BOMBS: a smaller blast, then SEEDS seeds fly out in a fan; each pops in a
+# small blast (on a wall, a fighter, or after SEED_TICKS). Stuck in a wall or a floor, the
+# fan starts a little out of it and goes away from it (and up); burst on a fighter, it
+# goes up.
+func _pumpkin(a: Arrow) -> void:
+	var k := BIG_FX if a.big else 1.0
+	_explode(a.x, a.y, a.owner, PUMPKIN_FX * k, (1 if a.big else 0) | 2)
+	var mid := -PI * 0.5
+	var from := Vector2(a.x, a.y - 6.0)
+	if a.state == P.S_STUCK:
+		var back := Vector2.from_angle(a.ang + PI)
+		mid = PI * 0.5 if back.y > 0.7 else (back + Vector2(0.0, -1.0)).angle()   # a ceiling: down; else away and up
+		from = Vector2(a.x, a.y) + back * 18.0
+		if level.cell_at(fposmod(from.x, W), fposmod(from.y, H)) == 1:
+			from = Vector2(a.x, a.y) + back * 32.0
+	for i in SEEDS:
+		var sd := Arrow.new()
+		sd.id = _next_arrow_id
+		_next_arrow_id = (_next_arrow_id % 65535) + 1
+		sd.kind = P.A_SEED
+		sd.owner = a.owner
+		sd.big = a.big
+		sd.state = P.S_FLY
+		var ang := mid + 0.8 * (float(i) / float(SEEDS - 1) * 2.0 - 1.0) + rng.randf_range(-0.1, 0.1)
+		var sp := rng.randf_range(8.0, 12.0)
+		sd.x = fposmod(from.x, W)
+		sd.y = fposmod(from.y, H)
+		sd.vx = cos(ang) * sp
+		sd.vy = sin(ang) * sp
+		sd.ang = ang
+		arrows.append(sd)
+
 # A shield takes the arrow (p4.9): the arrow drops off with no blast or cloud. The
 # spiked shield first (it comes back after SPIKE_REGEN); SHIELD is used up, for the
 # match too.
@@ -1247,9 +1409,10 @@ func _block(f: Fighter, a: Arrow) -> void:
 	a.fuse = -1
 	_event(P.E_SHIELD_POP, int(a.x), int(a.y), f.id, a.kind)
 
-# A blast at (x, y): k > 1 for a BIG arrow's (the event's b says so).
-func _explode(x: float, y: float, owner: int, k: float = 1.0) -> void:
-	_event(P.E_EXPLODE, int(x), int(y), owner, 1 if k > 1.0 else 0)
+# A blast at (x, y), k times a bomb's reach. The event's b: 1 a BIG arrow's, 2 a pumpkin's,
+# 4 a seed's (p4.12; without flags: 1 when k > 1).
+func _explode(x: float, y: float, owner: int, k: float = 1.0, flags: int = -1) -> void:
+	_event(P.E_EXPLODE, int(x), int(y), owner, flags if flags >= 0 else (1 if k > 1.0 else 0))
 	var r2 := EXPLODE_R * EXPLODE_R * k * k
 	for f in fighters:
 		if f.state == P.F_DEAD:
@@ -1279,7 +1442,7 @@ func _explode(x: float, y: float, owner: int, k: float = 1.0) -> void:
 func _tinks() -> void:
 	var flying: Array = []
 	for a in arrows:
-		if not a.dead and a.state == P.S_FLY:
+		if not a.dead and a.state == P.S_FLY and a.kind != P.A_SEED:
 			flying.append(a)
 	var n := flying.size()
 	for i in n:
@@ -1353,8 +1516,10 @@ func _update_powers() -> void:
 		cats.clear()
 		return
 	_update_cats()
+	_update_bats()          # p4.12: the bats belong to THE HAUNTED HOUSE (power-ups or not)
 	if not powerups:
 		return
+	_update_pet()           # the black cat's SHIELD is a power-up
 	for i in range(orbs.size() - 1, -1, -1):
 		var o: Orb = orbs[i]
 		o.t += 1
@@ -1417,9 +1582,16 @@ func top_points() -> int:
 
 # The power-up is f's: a regular one is kept for the match (keep), a BIG one runs now.
 func _give(f: Fighter, kind: int) -> void:
+	if kind == P.PU_TRICK:
+		_trick_or_treat(f)
+		return
 	_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, kind)
 	if kind >= P.PU_FIRE and kind <= P.PU_SMOKE:
 		f.pw_kind = kind          # the arrow kinds share the numbers 1..4
+	elif kind == P.PU_PUMPKIN:
+		f.pw_kind = P.A_PUMPKIN
+	elif kind == P.PU_BATS:
+		f.bats_t = BAT_SWARM_TICKS
 	elif kind == P.PU_SHIELD:
 		f.shield = 1
 	elif kind == P.PU_INF:
@@ -1452,8 +1624,186 @@ func _give(f: Fighter, kind: int) -> void:
 		f.spike_regen = 0
 	elif kind == P.PU_SPEED:
 		f.speed_t = SPEED_TICKS
-	if kind >= P.PU_FIRE and kind <= P.PU_SMOKE:
-		keep[f.id] = kind
+	if (kind >= P.PU_FIRE and kind <= P.PU_SMOKE) or kind == P.PU_PUMPKIN:
+		keep[f.id] = f.pw_kind
+
+# p4.12 TRICK OR TREAT: GHOSTFACE (MASK_CHANCE), a treat (a random power-up: its own pop and
+# banner follow), or one of the silly tricks for a moment.
+func _trick_or_treat(f: Fighter) -> void:
+	var r := rng.randf()
+	if r < MASK_CHANCE:
+		f.mask = true
+		f.drawn = false
+		f.aiming = false
+		f.shot_wait = false
+		_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, 4)
+		_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_MASK)
+		return
+	if r < MASK_CHANCE + TREAT * (1.0 - MASK_CHANCE):
+		_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, 0)
+		var treat: int = _pick_big() if rng.randf() < 1.0 / 6.0 else _pick_regular()
+		if treat == P.PU_TRICK:
+			treat = P.PU_SHIELD
+		_give(f, treat)
+	else:
+		f.trick = 1 + rng.randi() % 3
+		f.trick_t = TRICK_TICKS[f.trick]
+		f.drawn = false
+		f.aiming = false
+		f.shot_wait = false
+		_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, f.trick)
+
+# GHOSTFACE knocked down: it falls and lies MASK_DOWN ticks (a hurt that lasts), then gets up.
+func _collapse(f: Fighter) -> void:
+	f.down_t = MASK_DOWN
+	f.state = P.F_HURT
+	f.state_t = 0
+	f.dodge_t = MASK_DOWN
+	f.aiming = false
+	f.drawn = false
+	f.shot_wait = false
+	f.knife_t = 0
+	f.vx *= 0.3
+	_event(P.E_MASK_DOWN, f.x + HALF_W, f.y + MID_Y, f.id, 0)
+
+# GHOSTFACE's knife: a swing down in front, KNIFE_TICKS long, the way it aims (straight up
+# or down, or a let-go inside the ring: the way it faces); it lands at tick KNIFE_HIT_AT on
+# every living fighter within KNIFE_REACH in front, about its height (a dodging one is
+# safe; a shield takes it).
+func _knife(f: Fighter, ang: float, faced: bool) -> void:
+	if f.knife_cd > 0 or f.down_t > 0:
+		return
+	if not faced and absf(cos(ang)) > 0.2:
+		f.facing = 1 if cos(ang) > 0.0 else -1
+	f.knife_t = KNIFE_TICKS
+	f.knife_cd = KNIFE_CD
+	f.knife_hit = false
+	_event(P.E_KNIFE, f.x + HALF_W, f.y + MID_Y, f.id, 1 if f.facing > 0 else 0)
+
+func _knife_tick(f: Fighter) -> void:
+	if f.knife_cd > 0:
+		f.knife_cd -= 1
+	if f.knife_t <= 0:
+		return
+	f.knife_t -= 1
+	if f.knife_hit or f.knife_t > KNIFE_TICKS - KNIFE_HIT_AT:
+		return
+	f.knife_hit = true
+	for o in fighters:
+		if o == f or o.state == P.F_DEAD or o.state == P.F_DODGE:
+			continue
+		var dx := wrap_d(f.x + HALF_W, o.x + HALF_W, W) * f.facing
+		if dx > -6.0 and dx < KNIFE_REACH + HALF_W and absf(wrap_d(f.y, o.y, H)) < 56.0:
+			if o.spikes_t > 0 and o.spike_up:
+				o.spike_up = false
+				o.spike_regen = SPIKE_REGEN
+				_event(P.E_SHIELD_POP, int(o.x + HALF_W), int(o.y + MID_Y), o.id, 0)
+			elif o.shield > 0:
+				o.shield = 0
+				_event(P.E_SHIELD_POP, int(o.x + HALF_W), int(o.y + MID_Y), o.id, 0)
+			else:
+				_kill(o, f.id, 11)
+
+# p4.12 the black cat: it shows up at pet_at on a floor at least 4 cells long, walks it
+# (turning at an edge or a wall), and the first living fighter to touch it gets a SHIELD;
+# then it runs off (and it leaves by itself after PET_LIFE).
+func _update_pet() -> void:
+	if pet.is_empty():
+		if pet_at >= 0 and play_t >= pet_at:
+			pet_at = -1
+			_spawn_pet()
+		return
+	pet["t"] += 1
+	if pet["gone"] > 0:
+		pet["gone"] -= 1
+		pet["x"] = fposmod(pet["x"] + pet["dir"] * PET_SPEED * 3.0, W)
+		if pet["gone"] == 0:
+			pet = {}
+		return
+	var nx: float = pet["x"] + pet["dir"] * PET_SPEED
+	if level.cell_at(fposmod(nx + pet["dir"] * 14.0, W), pet["y"] + 2.0) == 0 or level.cell_at(fposmod(nx + pet["dir"] * 16.0, W), pet["y"] - 12.0) == 1:
+		pet["dir"] = -pet["dir"]
+	else:
+		pet["x"] = fposmod(nx, W)
+	if pet["t"] >= PET_LIFE:
+		pet["gone"] = 40
+		return
+	for f in fighters:
+		if f.state == P.F_DEAD:
+			continue
+		if absf(wrap_d(f.x + HALF_W, pet["x"], W)) < 30.0 and absf(wrap_d(f.y + BODY_H, pet["y"], H)) < 24.0:
+			f.shield = maxi(f.shield, 1)
+			_event(P.E_PET, int(pet["x"]), int(pet["y"]) - 20, f.id, 0)
+			pet["gone"] = 40
+			pet["dir"] = 1 if wrap_d(f.x + HALF_W, pet["x"], W) >= 0.0 else -1
+			break
+
+func _spawn_pet() -> void:
+	_ensure_spots()
+	for i in 20:
+		var sp: Vector2 = spots[rng.randi() % spots.size()]
+		var cx := int(sp.x / 30.0)
+		var cy := int(sp.y / 30.0)
+		var long := true
+		for k in range(-2, 3):
+			if level.cell(cx + k, cy) == 0 or level.cell(cx + k, cy - 1) == 1:
+				long = false
+		for f in fighters:   # never right by someone (petted before anyone sees it)
+			if f.state != P.F_DEAD and absf(wrap_d(f.x + HALF_W, sp.x, W)) < 160.0 and absf(wrap_d(f.y + BODY_H, sp.y, H)) < 120.0:
+				long = false
+		if not long:
+			continue
+		pet = {"x": sp.x, "y": sp.y, "dir": 1 if rng.randf() < 0.5 else -1, "t": 0, "gone": 0}
+		_event(P.E_CAT_COME, int(sp.x), int(sp.y), 0, 0)
+		return
+
+# p4.12 bats: the swarm on THE HAUNTED HOUSE (screech, then a band sweeping across: an
+# arrow flying into it drops, whoever is inside is hidden a moment), and each BAT SWARM
+# knocking away arrows that come near its fighter.
+func _update_bats() -> void:
+	for f in fighters:
+		if f.bats_t > 0 and f.state != P.F_DEAD:
+			for a in arrows:
+				if a.dead or a.state != P.S_FLY or a.owner == f.id:
+					continue
+				var dx := wrap_d(f.x + HALF_W, a.x, W)
+				var dy := wrap_d(f.y + MID_Y, a.y, H)
+				if dx * dx + dy * dy < BAT_SWARM_R * BAT_SWARM_R:
+					a.state = P.S_FALL
+					a.vx = signf(dx) * 6.0
+					a.vy = -4.0
+	if bats_at < 0:
+		return
+	if bats.is_empty():
+		if play_t >= bats_at:
+			var dir := 1 if rng.randf() < 0.5 else -1
+			bats = {"phase": 0, "t": 0, "y": rng.randf_range(220.0, 860.0), "dir": dir, "x": -BATS_W * 0.5 if dir > 0 else W + BATS_W * 0.5}
+			_event(P.E_BATS, 0 if dir > 0 else W, int(bats["y"]), 1 if dir > 0 else 0, 0)
+		return
+	bats["t"] += 1
+	if bats["phase"] == 0:
+		if bats["t"] >= BATS_WARN:
+			bats["phase"] = 1
+		return
+	if not bats_hold:
+		bats["x"] += bats["dir"] * BATS_SPEED
+	var x0: float = bats["x"] - BATS_W * 0.5
+	var y0: float = bats["y"] - BATS_H * 0.5
+	for a in arrows:
+		if not a.dead and a.state == P.S_FLY and a.x > x0 and a.x < x0 + BATS_W and a.y > y0 and a.y < y0 + BATS_H:
+			a.state = P.S_FALL
+			a.vx *= 0.25
+			a.vy = -3.0
+	for f in fighters:
+		if f.state != P.F_DEAD and f.x + HALF_W > x0 and f.x + HALF_W < x0 + BATS_W and f.y + MID_Y > y0 and f.y + MID_Y < y0 + BATS_H:
+			f.batted = 30
+	if (bats["dir"] > 0 and x0 > W) or (bats["dir"] < 0 and x0 + BATS_W < 0.0):
+		bats = {}
+		bats_at = play_t + rng.randi_range(BATS_EVERY[0], BATS_EVERY[1])
+
+# Out of sight for the others (and the bots): INVISIBLE now, or hidden in bats.
+static func hidden(f: Fighter) -> bool:
+	return invisible(f) or f.batted > 0 or f.bats_t > 0
 
 # A new round's fighter gets its seat's arrow kind back (p4.10: SHIELD, INFINITE,
 # FLYING and BIG ARROWS last one round).
@@ -1575,17 +1925,22 @@ func _pick_regular() -> int:
 	var total := 0
 	for k in REGULAR_W:
 		if k != pu_last:
-			total += REGULAR_W[k]
+			total += _weight(k)
 	var r := rng.randi() % maxi(1, total)
 	for k in REGULAR_W:
 		if k == pu_last:
 			continue
-		r -= REGULAR_W[k]
+		r -= _weight(k)
 		if r < 0:
 			pu_last = k
+			if k == P.PU_BOMB and level.theme == "halloween":
+				return P.PU_PUMPKIN    # p4.12: on THE HAUNTED HOUSE the bombs are pumpkins
 			return k
 	pu_last = P.PU_SHIELD
 	return P.PU_SHIELD
+
+func _weight(k: int) -> int:
+	return TRICK_W_HW if k == P.PU_TRICK and level.theme == "halloween" else int(REGULAR_W[k])
 
 func _pick_big() -> int:
 	var pick: int = BIG_KINDS[rng.randi() % BIG_KINDS.size()]
@@ -1667,7 +2022,7 @@ func gallery() -> void:
 		_orb_serial += 1
 		o.serial = _orb_serial
 		o.kind = kinds[i]
-		o.big = kinds[i] >= P.PU_CATS
+		o.big = P.is_big(kinds[i])
 		o.state = P.ORB_WARN if i == kinds.size() - 1 else P.ORB_LIVE
 		o.t = PU_WARN / 2 if o.state == P.ORB_WARN else 0
 		var sp: Vector2 = spots[(i * 37 + 11) % spots.size()]
@@ -1681,6 +2036,30 @@ func gallery() -> void:
 			cats.resize(2)
 	for c in cats:
 		c.t = -600              # they take their time (the pictures)
+
+# A test knob (the server's --hw-gallery, at FIGHT): p4.12's Halloween looks at once, for
+# pictures: seats 1 and 4 GHOSTFACE (bots: they hunt and swing), seat 2 GHOSTFACE knocked
+# down, seat 3 a PUMPKIN, seat 5 BACKWARDS, seat 6 BAT SWARM, seat 7 TINY with PUMPKIN
+# BOMBS; the black cat comes out, and a bat swarm stays in the middle.
+func hw_gallery() -> void:
+	for f in fighters:
+		if f.id == 1 or f.id == 4:
+			f.mask = true
+		elif f.id == 2:
+			f.mask = true
+			_collapse(f)
+			f.down_t = 250
+			f.dodge_t = 250
+		elif f.id == 3 or f.id == 5 or f.id == 7:
+			f.trick = {3: 1, 5: 2, 7: 3}[f.id]
+			f.trick_t = 3000
+		elif f.id == 6:
+			f.bats_t = 3000
+		if f.id == 7:
+			_give(f, P.PU_PUMPKIN)
+	pet_at = play_t
+	bats = {"phase": 1, "t": 0, "x": 960.0, "y": 300.0, "dir": 1}
+	bats_hold = true
 
 # A test knob (the server's --pin-demo): seat 7 is shot into the nearest wall to its
 # left (pinned there), seat 6 is shot in the open (the arrow carries it), for pictures.
@@ -1721,7 +2100,7 @@ func pin_demo() -> void:
 
 # The quarter seconds left of f's BIG power-up (the longest that runs), for the page.
 static func big_left(f: Fighter) -> int:
-	return maxi(maxi(f.invis_t, f.speed_t), maxi(f.umbrella_t, f.spikes_t))
+	return maxi(maxi(maxi(f.invis_t, f.speed_t), maxi(f.umbrella_t, f.spikes_t)), maxi(f.bats_t, f.trick_t))
 
 # The snapshot's power bits (proto PW_*).
 static func power_bits(f: Fighter) -> int:
@@ -1729,7 +2108,9 @@ static func power_bits(f: Fighter) -> int:
 		| (P.PW_BIG if f.big else 0) | (P.PW_INVIS if invisible(f) else 0) | (P.PW_INVIS_ON if f.invis_t > 0 else 0) \
 		| (P.PW_FROZEN if f.freeze_t > 0 else 0) | (P.PW_SLOW if f.slow_t > 0 and f.umbrella_t <= 0 else 0) \
 		| (P.PW_UMBRELLA if f.umbrella_t > 0 else 0) | (P.PW_SPIKES if f.spikes_t > 0 else 0) \
-		| (P.PW_SPIKE_UP if f.spikes_t > 0 and f.spike_up else 0) | (P.PW_SPEED if f.speed_t > 0 else 0)
+		| (P.PW_SPIKE_UP if f.spikes_t > 0 and f.spike_up else 0) | (P.PW_SPEED if f.speed_t > 0 else 0) \
+		| (P.PW_PUMPKIN if f.trick == 1 else 0) | (P.PW_BACKWARDS if f.trick == 2 else 0) | (P.PW_TINY if f.trick == 3 else 0) \
+		| (P.PW_BATS if f.batted > 0 or f.bats_t > 0 else 0)
 
 # ------------------------------------------------------------------ zones
 func _add_zone(kind: int, x: float, y: float, size: float, life: int) -> void:
@@ -1910,14 +2291,15 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 	buf.put_u8(P.PW_TAG)
 	var pf: Array = []
 	for f in fighters:
-		if power_bits(f) != 0 or f.pw_kind != 0:
+		if power_bits(f) != 0 or f.pw_kind != 0 or f.mask or f.bats_t > 0:
 			pf.append(f)
 	buf.put_u8(pf.size())
 	for f in pf:
 		buf.put_u8(f.id)
 		buf.put_u16(power_bits(f))
-		buf.put_u8(f.pw_kind)
+		buf.put_u8(f.pw_kind | (0x80 if f.bats_t > 0 else 0))   # p4.12: 0x80 BAT SWARM's own bats circle it
 		buf.put_u8(mini(255, ceili(big_left(f) / 15.0)))
+		buf.put_u8((1 if f.mask else 0) | (2 if f.down_t > 0 else 0) | (4 if f.knife_t > 0 else 0) | (8 if f.mask and f.drawn else 0))   # p4.12 GHOSTFACE
 	buf.put_u8(orbs.size())
 	for o in orbs:
 		buf.put_u8(o.state)
@@ -1945,6 +2327,17 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(f.gx))
 		buf.put_16(int(f.gy))
 		buf.put_u8((1 if f.popped_t > 0 else 0) | (2 if f.boo_t > 0 else 0) | (4 if f.boo_cd == 0 else 0))
+	buf.put_u8(0 if pet.is_empty() else 1)    # p4.12 the black cat
+	if not pet.is_empty():
+		buf.put_16(int(pet["x"]))
+		buf.put_16(int(pet["y"]))
+		buf.put_8(int(pet["dir"]))
+		buf.put_u8(mini(255, int(pet["gone"])))
+	buf.put_u8(255 if bats.is_empty() else int(bats["phase"]))   # a bat swarm
+	if not bats.is_empty():
+		buf.put_16(int(bats["x"]))
+		buf.put_16(int(bats["y"]))
+		buf.put_8(int(bats["dir"]))
 	buf.put_u8(1 if hazards != null else 0)   # THE BOILER ROOM's state (sim/boiler.gd write)
 	if hazards != null:
 		hazards.write(buf)
@@ -2019,6 +2412,12 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u8(f.boo_t)
 	buf.put_u8(f.boo_cd)
 	buf.put_u8(f.popped_t)
+	buf.put_u8(f.trick)                # p4.12 a trick (backwards and the pumpkin's hops move it)
+	buf.put_u16(f.trick_t)
+	buf.put_u8((1 if f.mask else 0) | (2 if f.knife_hit else 0))   # GHOSTFACE (its knife, its fall)
+	buf.put_u8(f.down_t)
+	buf.put_u8(f.knife_t)
+	buf.put_u8(f.knife_cd)
 
 func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.x = buf.get_16()
@@ -2084,3 +2483,11 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.boo_t = buf.get_u8()
 	f.boo_cd = buf.get_u8()
 	f.popped_t = buf.get_u8()
+	f.trick = buf.get_u8()
+	f.trick_t = buf.get_u16()
+	var mb := buf.get_u8()
+	f.mask = (mb & 1) != 0
+	f.knife_hit = (mb & 2) != 0
+	f.down_t = buf.get_u8()
+	f.knife_t = buf.get_u8()
+	f.knife_cd = buf.get_u8()

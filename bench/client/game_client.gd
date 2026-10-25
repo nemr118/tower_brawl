@@ -257,8 +257,10 @@ func _process(delta: float) -> void:
 			world.on_event(e)
 			if e[0] == P.E_PU_GET and e[3] == my_seat:
 				hud.power_banner(e[4])   # p4.9: you took a power-up: what it is and what it does
+			elif e[0] == P.E_TRICK and e[3] == my_seat and e[4] > 0 and e[4] < 4:   # p4.12: a trick: the small card
+				hud.power_banner(P.PU_TRICK, ["", "PUMPKIN HEAD", "BACKWARDS", "TINY"][e[4]], ["", "no shooting", "left is right!", "so small"][e[4]])
 			elif e[0] == P.E_GHOST and e[3] == my_seat:
-				hud.say("YOU'RE A GHOST! Fly anywhere with the stick. Let go of shoot to BOO someone. Arrows pop you.", 7.0)
+				hud.say("GHOST: fly anywhere, let go of shoot to BOO", 5.0)
 		world.set_me(my_seat, phase)
 		world.render(view, delta)
 		deathcam.record(view, evs, delta)

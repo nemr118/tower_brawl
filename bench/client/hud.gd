@@ -12,7 +12,7 @@ const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
 const LevelScript = preload("res://sim/level.gd")
 const PV = preload("res://client/powers_view.gd")
-const BANNER_S := 3.2
+const BANNER_S := 2.6
 const FIGHT_S := 0.9
 const CARD_W := 210.0
 const CARD_STEP := 228.0
@@ -37,6 +37,8 @@ var note_t := 0.0
 var hidden := true
 var awards: Array = []         # p4.11: the match's awards (match_end), on the winner's screen
 var banner_kind := 0           # p4.9: the power-up you just took (its banner), for banner_t seconds
+var banner_name := ""          # p4.12: a name and a tip in place of the power-up's own (the tricks)
+var banner_tip := ""
 var banner_t := 0.0
 var canvas := _Canvas.new()
 
@@ -81,9 +83,12 @@ func match_end(m: Dictionary) -> void:
 	banner = "%s WINS THE MATCH" % str(m.get("name", "")).to_upper()
 	banner_color = World.TEAM[w % 8]
 
-# p4.9: you took a power-up: its banner in the middle for BANNER_S.
-func power_banner(kind: int) -> void:
+# p4.9: you took a power-up: its banner for BANNER_S (p4.12: a small card under the
+# cards at the top; name and tip: words in place of the power-up's own, for a trick).
+func power_banner(kind: int, name := "", tip := "") -> void:
 	banner_kind = kind
+	banner_name = name
+	banner_tip = tip
 	banner_t = BANNER_S
 
 # A short line at the bottom for secs seconds (P2: the look stepped down).
@@ -225,14 +230,22 @@ func _chips(c: Control, font: Font, x: float, pw: Dictionary) -> void:
 	var kind: int = pw["kind"]
 	var left := ceili(float(pw["left"]))
 	var list: Array = []
-	if kind > 0:
-		list.append([P.PU_SHORT[kind], PV.COLORS[kind]])
+	var pk := kind if kind <= P.PU_SMOKE else (P.PU_PUMPKIN if kind == P.A_PUMPKIN else 0)   # p4.12: arrow kind 5 is PUMPKIN BOMBS
+	if pk > 0:
+		list.append([P.PU_SHORT[pk], PV.COLORS[pk]])
 	for pair in [[P.PW_SHIELD, P.PU_SHIELD], [P.PW_INF, P.PU_INF], [P.PW_FLY, P.PU_FLY], [P.PW_BIG, P.PU_BIG]]:
 		if bits & pair[0]:
 			list.append([P.PU_SHORT[pair[1]], PV.COLORS[pair[1]]])
 	for pair in [[P.PW_INVIS_ON, P.PU_INVIS], [P.PW_SPEED, P.PU_SPEED], [P.PW_UMBRELLA, P.PU_RAIN], [P.PW_SPIKES, P.PU_SPIKES]]:
 		if bits & pair[0]:
 			list.append(["%s %d" % [P.PU_SHORT[pair[1]], left], PV.COLORS[pair[1]]])
+	if pw.get("swarm", false):
+		list.append(["BATS %d" % left, PV.COLORS[P.PU_BATS]])
+	if (int(pw.get("mask", 0)) & 1) != 0:
+		list.append(["GHOSTFACE" if (int(pw["mask"]) & 2) == 0 else "DOWN!", PV.COLORS[P.PU_MASK]])
+	for tr in [[P.PW_PUMPKIN, "PUMPKIN!"], [P.PW_BACKWARDS, "BACKWARDS"], [P.PW_TINY, "TINY"]]:
+		if bits & tr[0]:
+			list.append([tr[1], PV.COLORS[P.PU_TRICK]])
 	if bits & P.PW_FROZEN:
 		list.append(["FROZEN", PV.COLORS[P.PU_FREEZE]])
 	elif bits & P.PW_SLOW:
@@ -250,27 +263,32 @@ func _chips(c: Control, font: Font, x: float, pw: Dictionary) -> void:
 		c.draw_string(font, Vector2(cx + 6, cy + 17), item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col.lerp(Color.WHITE, 0.45))
 		cx += w + 4.0
 
-# The banner for the power-up you took: a card in the middle with its picture,
-# its name and what it does; it pops in, stays, and fades.
+# The card for the power-up you took (p4.12: small, under the player cards, so it hides
+# little of the fight): its picture, its short name and a tip of two or three words; it
+# pops in, stays, and fades.
 func _power_banner(c: Control, font: Font) -> void:
 	var k := banner_t / BANNER_S
-	var a := clampf(banner_t / 0.5, 0.0, 1.0)
-	var pop := 1.0 + 0.25 * clampf((k - 0.85) / 0.15, 0.0, 1.0)
+	var a := clampf(banner_t / 0.4, 0.0, 1.0)
+	var pop := 1.0 + 0.3 * clampf((k - 0.88) / 0.12, 0.0, 1.0)
 	var col: Color = PV.COLORS.get(banner_kind, Color.WHITE)
-	var big := banner_kind >= P.PU_CATS
-	var name: String = ("BIG: " if big else "") + str(P.PU_NAMES.get(banner_kind, ""))
-	var help: String = P.PU_HELP.get(banner_kind, "")
-	var w := maxf(font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 60).x, font.get_string_size(help, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x) + 190.0
-	var r := Rect2(960.0 - w / 2.0, 250.0, w, 150.0)
-	c.draw_rect(r, Color(0.03, 0.03, 0.07, 0.82 * a))
-	c.draw_rect(r, Color(PV.GOLD if big else col, a), false, 4.0)
-	var ic := Vector2(r.position.x + 80.0, r.position.y + 75.0)
-	c.draw_circle(ic, 50.0 * pop, Color(col.darkened(0.2), a))
-	c.draw_arc(ic, 50.0 * pop, 0.0, TAU, 32, Color(1, 1, 1, a), 3.0)
-	PV.draw_icon(c, ic, banner_kind, 31.0 * pop, Color(0.08, 0.06, 0.12, a), 3.2 - banner_t)
-	c.draw_string_outline(font, Vector2(r.position.x + 150.0, r.position.y + 72.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, 7, Color(0, 0, 0, a))
-	c.draw_string(font, Vector2(r.position.x + 150.0, r.position.y + 72.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, Color(col.lerp(Color.WHITE, 0.35), a))
-	c.draw_string(font, Vector2(r.position.x + 150.0, r.position.y + 120.0), help, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(0.95, 0.95, 1.0, a))
+	var big := P.is_big(banner_kind)
+	var name: String = banner_name if banner_name != "" else str(P.PU_SHORT.get(banner_kind, ""))
+	var tip: String = banner_tip if banner_tip != "" else str(P.PU_TIP.get(banner_kind, ""))
+	var nw := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
+	var tw := font.get_string_size(tip, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x if tip != "" else 0.0
+	var w := 64.0 + nw + (14.0 + tw if tip != "" else 0.0) + 20.0
+	var r := Rect2(960.0 - w / 2.0, 128.0, w, 50.0)
+	c.draw_rect(r, Color(0.03, 0.03, 0.07, 0.72 * a))
+	c.draw_rect(Rect2(r.position, Vector2(r.size.x, 3.0)), Color(PV.GOLD if big else col, a))   # a coloured top edge
+	var ic := Vector2(r.position.x + 29.0, r.position.y + 26.0)
+	c.draw_circle(ic, 19.0 * pop, Color(col.darkened(0.2), a))
+	c.draw_arc(ic, 19.0 * pop, 0.0, TAU, 24, Color(PV.GOLD if big else Color.WHITE, a), 2.0)
+	PV.draw_icon(c, ic, banner_kind, 12.0 * pop, Color(0.08, 0.06, 0.12, a), BANNER_S - banner_t)
+	var x := r.position.x + 58.0
+	c.draw_string_outline(font, Vector2(x, r.position.y + 36.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, 5, Color(0, 0, 0, a))
+	c.draw_string(font, Vector2(x, r.position.y + 36.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(col.lerp(Color.WHITE, 0.35), a))
+	if tip != "":
+		c.draw_string(font, Vector2(x + nw + 14.0, r.position.y + 34.0), tip, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.86, 0.88, 0.96, 0.9 * a))
 
 func _banner(c: Control, font: Font, text: String, size: int, col: Color, y: float) -> void:
 	c.draw_string_outline(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, 1920, size, maxi(4, size / 10), Color.BLACK)

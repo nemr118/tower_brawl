@@ -14,6 +14,7 @@
 # --no-powerups: no power-up orbs (p4.9; the lobby's POWER-UPS switch starts ON).
 # --pu-gallery: a test knob: every round starts with every power-up's look (sim.gallery).
 # --pin-demo: a test knob: at FIGHT seat 7 is pinned to a wall, seat 6 carried (sim.pin_demo).
+# --hw-gallery: a test knob: at FIGHT the Halloween looks (GHOSTFACE, the tricks, the cat, bats; sim.hw_gallery).
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
@@ -125,12 +126,15 @@ const AWARDS := [
 	["ROUND WINNER", "round_wins", "max", 2, "won %d rounds", ""],
 	["GOOD KITTY", "pets", "max", 1, "petted the cat %d times", ""],
 	["TRICKED!", "tricks", "max", 1, "got tricked %d times", ""],
+	["SLASHER", "knife_kills", "max", 1, "%d knockouts with the knife", ""],
+	["SCARY MOVIE STAR", "masks", "max", 1, "turned into GHOSTFACE %d times", ""],
+	["GHOST BUSTER", "mask_kills", "max", 1, "finished off GHOSTFACE %d times", ""],
 ]
 const FALLBACK := [["GOOD SPORT", "played the whole match"], ["BEST WIGGLE", "the wiggliest archer"],
 	["MAIN CHARACTER", "every story needs one"], ["WILL WIN NEXT TIME", "just warming up"],
 	["FASHION ICON", "looked great doing it"], ["CERTIFIED SILLY", "the silliest moves"],
 	["FAN FAVORITE", "everybody's favorite"], ["NEVER GAVE UP", "kept on going"]]
-const CAUSE_KEY := {1: "d_arrow", 2: "d_blast", 3: "d_stomp", 4: "d_fire", 5: "d_poison", 6: "d_walls", 7: "d_lightning", 8: "d_cat", 9: "d_spikes"}
+const CAUSE_KEY := {1: "d_arrow", 2: "d_blast", 3: "d_stomp", 4: "d_fire", 5: "d_poison", 6: "d_walls", 7: "d_lightning", 8: "d_cat", 9: "d_spikes", 11: "d_knife"}
 const STAT_KEYS := ["matches", "match_wins", "rounds", "round_wins", "kills", "arrow_kills", "stomp_kills",
 	"other_kills", "deaths", "self_kills", "catches", "shots"]
 
@@ -249,6 +253,7 @@ var last_pos := {}               # seat -> where its fighter was last tick (the 
 var last_cause := {}             # seat -> its last death's cause (a kill's kind)
 var last_awards: Array = []      # the last match's awards (match_end, and the lobby's seats message)
 var pin_demo := false            # --pin-demo (a test knob: sim.pin_demo at each FIGHT)
+var hw_gallery := false          # --hw-gallery (a test knob: sim.hw_gallery at each FIGHT)
 var last_rec := {}               # the last report line (the host page shows its tick numbers)
 
 func _ready() -> void:
@@ -278,6 +283,7 @@ func _ready() -> void:
 	sim.powerups = not o.has("no-powerups")
 	pu_gallery = o.has("pu-gallery")
 	pin_demo = o.has("pin-demo")
+	hw_gallery = o.has("hw-gallery")
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):
@@ -786,6 +792,8 @@ func _match_tick() -> void:
 			phase_t = 0
 			if pin_demo:
 				sim.pin_demo()
+			if hw_gallery:
+				sim.hw_gallery()
 			_say("🏰 [ROUND] %d FIGHT" % round_no)
 	elif phase == P.PH_PLAY:
 		phase_t += 1
@@ -1354,11 +1362,17 @@ func _log_powers(evs: Array) -> void:
 		if k == P.E_PU_GET:
 			var i: int = e[3]
 			var who: String = seats[i].name if i >= 0 and i < SEATS else "?"
-			_say("🏰 [POWER] seat %d '%s' took %s%s" % [i, who, P.PU_NAMES.get(e[4], str(e[4])), " (BIG)" if e[4] >= P.PU_CATS else ""])
+			_say("🏰 [POWER] seat %d '%s' took %s%s" % [i, who, P.PU_NAMES.get(e[4], str(e[4])), " (BIG)" if P.is_big(e[4]) else ""])
 			server_log.store_line(JSON.stringify({"kind": "power", "t": Time.get_unix_time_from_system(), "match": match_no,
 				"round": round_no, "seat": i, "name": who, "power": P.PU_NAMES.get(e[4], str(e[4])), "s": snappedf(_round_secs(), 0.01)}))
 		elif k == P.E_PU_WARN and e[4] == 1:
 			_say("🏰 [POWER] a BIG %s comes for someone behind" % P.PU_NAMES.get(e[3], str(e[3])))
+		elif k == P.E_TRICK and e[4] > 0:
+			var ti: int = e[3]
+			_say("🏰 [POWER] seat %d '%s' got a TRICK: %s" % [ti, seats[ti].name if ti < SEATS else "?", ["", "PUMPKIN", "BACKWARDS", "TINY"][e[4]]])
+		elif k == P.E_PET:
+			var pi: int = e[3]
+			_say("🏰 [POWER] seat %d '%s' petted the black cat: a SHIELD" % [pi, seats[pi].name if pi < SEATS else "?"])
 
 # p4.11: this match's numbers by seat (the awards), from the events.
 func _mcount(seat: int, key: String, n: int = 1) -> void:
@@ -1387,8 +1401,10 @@ func _match_events(evs: Array) -> void:
 			_mcount(e[3], "pickups")
 		elif k == P.E_PU_GET:
 			_mcount(e[3], "powers")
-			if e[4] >= P.PU_CATS:
+			if P.is_big(e[4]):
 				_mcount(e[3], "bigs")
+			if e[4] == P.PU_MASK:
+				_mcount(e[3], "masks")
 		elif k == P.E_DEATH:
 			_mcount(e[3], "deaths")
 			_mcount(e[3], CAUSE_KEY.get(e[4], ""))
@@ -1402,7 +1418,9 @@ func _match_events(evs: Array) -> void:
 			else:
 				_mcount(e[3], "kills")
 				var c: int = last_cause.get(e[4], 0)
-				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills"}.get(c, ""))
+				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills", 11: "knife_kills"}.get(c, ""))
+				if e[4] < SEATS and sim.fighter(e[4]) != null and sim.fighter(e[4]).mask:
+					_mcount(e[3], "mask_kills")   # finished GHOSTFACE off while it was down
 		elif k == P.E_PIN:
 			_mcount(e[3], "pinned")
 			var pf = sim.fighter(e[3])
@@ -1410,6 +1428,10 @@ func _match_events(evs: Array) -> void:
 				_mcount(pf.killer, "pin_kills")
 		elif k == P.E_BOO and e[4] != 255:
 			_mcount(e[3], "boos")
+		elif k == P.E_PET:
+			_mcount(e[3], "pets")
+		elif k == P.E_TRICK and e[4] > 0:
+			_mcount(e[3], "tricks")
 
 # Each tick of play: who is in the fight, in the air, flying, invisible, a ghost, and the steps run.
 func _match_sample() -> void:
