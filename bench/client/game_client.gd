@@ -27,6 +27,7 @@ extends Node
 
 const P = preload("res://sim/proto.gd")
 const Net = preload("res://client/net.gd")
+const Deathcam = preload("res://client/deathcam.gd")
 const World = preload("res://client/world.gd")
 const LevelScript = preload("res://sim/level.gd")
 const Hud = preload("res://client/hud.gd")
@@ -91,6 +92,8 @@ var rep_step_downs := 0
 var rep_errors := 0
 var rep_mouse_shots := 0
 var rep_ua := ""
+var deathcam                      # p4.8: the match end's montage of the winner's kills
+var match_msg := {}               # the match_end message, shown once the montage is done
 var fps_t := 0.0
 var fps_now := 0.0
 var status := ""
@@ -148,6 +151,9 @@ func _ready() -> void:
 	lobby.set_look(str(opts["look"]) if look_test else _look_label())
 	sticks = Sticks.new()
 	add_child(sticks)
+	deathcam = Deathcam.new()
+	add_child(deathcam)
+	deathcam.skip_pressed.connect(func(): net.send({"kind": "skip"}))   # p4.8: back to the lobby for everyone
 	sticks.active = OS.has_feature("web_android") or OS.has_feature("web_ios") or OS.has_feature("mobile") \
 		or DisplayServer.is_touchscreen_available()
 	_setup_keys()
@@ -207,6 +213,7 @@ func _fit() -> void:
 	hud.fit(win)
 	lobby.fit(win)
 	sticks.fit(win)
+	deathcam.fit(win)
 
 func _process(delta: float) -> void:
 	if net == null:
@@ -223,21 +230,37 @@ func _process(delta: float) -> void:
 		_on_phase(int(s["phase"]), s)
 	var rt: float = net.render_tick()
 	var predicting: bool = pred.me != null and not s.is_empty()
-	for e in pred.take_events():
-		world.fx.on_event(e)
-	for e in net.take_events(rt, my_seat if predicting else -1, Predict.PREDICTED):
-		world.fx.on_event(e)
+	var evs: Array = pred.take_events()
+	evs.append_array(net.take_events(rt, my_seat if predicting else -1, Predict.PREDICTED))
 	var own: Dictionary = pred.fighter_dict(s["by_id"].get(my_seat, {})) if predicting else {}
 	var view: Dictionary = net.sample(rt, -1, own)
 	if predicting and not view.is_empty():
 		view["arrows"] = present.arrows_at(s, pred.tick, pred.me, my_seat, view["fighters"], pred.sim.arrows, delta)
-	world.set_me(my_seat, phase)
-	world.render(view, delta)
+	if deathcam.playing:
+		# p4.8: the montage draws its recorded frames; the live ones wait
+		var shot: Array = deathcam.step(delta)
+		if deathcam.playing:
+			for e in shot[1]:
+				world.fx.on_event(e)
+			world.set_me(deathcam.winner, phase)
+			world.set_view_zoom(deathcam.zoom, deathcam.focus)
+			world.render(shot[0], delta)
+		else:
+			world.set_view_zoom(1.0, Vector2(960, 540))
+	else:
+		for e in evs:
+			world.fx.on_event(e)
+		world.set_me(my_seat, phase)
+		world.render(view, delta)
+		deathcam.record(view, evs, delta)
+	if not deathcam.playing and not match_msg.is_empty():
+		hud.match_end(match_msg)   # after the montage (or with none): the winner's screen
+		match_msg = {}
 	var aim_on := false
 	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
 	if not me.is_empty():
 		sticks.arrows_left = int(me["arrows"])
-	if shoot_held and not me.is_empty():
+	if shoot_held and not me.is_empty() and not deathcam.playing:
 		aim_on = int(me["state"]) == P.F_NORMAL
 		var armed: bool = sticks.aim_armed if (sticks.active and sticks.visible) else true   # the mouse held: armed
 		world.show_aim(Vector2(me["x"] + 18.0, me["y"] + 28.0), aim_deg10 * TAU / 3600.0, aim_on, armed, int(me["arrows"]) <= 0)
@@ -271,7 +294,8 @@ func _process(delta: float) -> void:
 	_watch_frames(not show_lobby and phase >= P.PH_ROUND_START)
 	hud.update(seats_msg, s, my_seat, delta, fps_now, net.last_rtt, opts.has("info"), show_lobby)
 	lobby.visible = show_lobby
-	sticks.visible = sticks.active and not show_lobby
+	sticks.visible = sticks.active and not show_lobby and not deathcam.playing
+	hud.visible = not deathcam.playing
 	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad, stuck_url)
 
 # ------------------------------------------------------------------ the look (P2)
@@ -489,8 +513,13 @@ func _on_phase(new_phase: int, s: Dictionary) -> void:
 	if new_phase == P.PH_ROUND_START:
 		_reset_frames(2.0)   # a round's first moment (spawns, new sprites) is no measure
 	hud.on_phase(new_phase, int(s["round"]))
+	if new_phase == P.PH_ROUND_START and int(s["round"]) == 1:
+		deathcam.clear()   # p4.8: a new match: the last match's kills go
 	if new_phase == P.PH_LOBBY:
 		start_sent = false
+		deathcam.stop()    # the lobby is back: a montage still playing stops
+		world.set_view_zoom(1.0, Vector2(960, 540))
+		match_msg = {}
 
 func _on_message(m: Dictionary) -> void:
 	var kind := str(m.get("kind", ""))
@@ -527,7 +556,12 @@ func _on_message(m: Dictionary) -> void:
 	elif kind == "round_end":
 		hud.round_end(m)
 	elif kind == "match_end":
-		hud.match_end(m)
+		var seat_names: Array = []
+		for st in seats_msg.get("seats", []):
+			seat_names.append(str(st.get("name", "")))
+		match_msg = m
+		deathcam.can_skip = my_seat >= 0
+		deathcam.start(int(m.get("winner", -1)), seat_names)   # p4.8: the winner's kills first, if any
 
 func _say(text: String, secs: float) -> void:
 	status = text

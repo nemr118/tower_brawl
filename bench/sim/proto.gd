@@ -31,7 +31,7 @@ extends RefCounted
 
 # The game's version. tools/v2_build.sh bumps the last number on every build and
 # names the pck after it; the server turns away a client with another version.
-const VERSION := "v0.2.0-p4.7"
+const VERSION := "v0.2.0-p4.8"
 
 const PORT := 8091
 const T_SNAP := 1
@@ -104,6 +104,7 @@ const E_HURT := 15       # a = fighter
 const E_LEDGE := 16      # a = fighter, b = 1 wall on the right
 const E_SMOKE := 17
 const E_DRYFIRE := 18    # a = fighter: let go of shoot with an empty quiver
+const E_KILL := 19       # p4.8 (the deathcam): a = the killer (255: none, the arena), b = the fighter who died
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)

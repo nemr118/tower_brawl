@@ -489,6 +489,7 @@ func _kill(f: Fighter, killer: int, cause: int) -> void:
 	f.shot_wait = false
 	f.killer = killer
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
+	_event(P.E_KILL, f.x + HALF_W, f.y + MID_Y, killer if killer >= 0 and killer < 255 else 255, f.id)   # p4.8: who did it
 
 func _update_fighter(f: Fighter) -> void:
 	if f.shot_wait and f.state == P.F_NORMAL:   # p4.4: let go in a dodge, a ledge hang or a knock: it fires now

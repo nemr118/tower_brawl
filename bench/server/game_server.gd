@@ -45,6 +45,7 @@
 # The JSON (text frames). From a client: hello {name, version, token},
 # join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
 # bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.5: 1 the power arrows on, 0 off), name {name},
+# skip (p4.8: a seated player ends the match's end, the deathcam's montage, for everyone: the lobby),
 # report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
 # step_downs, shots_armed, shots_cancelled, mouse_shots, errors [], errors_total} (p4.7: a phone's own
 # numbers every 30 s and at a look change or a page error; logged as a "client" line, kept for /state). From the server: welcome {seat, version, name, phase},
@@ -74,7 +75,7 @@ const ROUND_MAX_TICKS := 3600    # a round with no end is a draw at 60 s (a back
 const WALLS_S := 25              # the purple walls (TowerFall's miasma) come 25 s after FIGHT
 const ROUND_END_TICKS := 90      # one fighter left: TowerFall waits 1.5 s before the point
 const DRAW_TICKS := 60           # nobody left: a shorter DRAW banner
-const MATCH_END_TICKS := 420     # the winner's screen: 7 s, then the lobby
+const MATCH_END_TICKS := 720     # the winner's screen: 12 s (p4.8: the deathcam's montage plays first; it was 7 s), then the lobby
 const REPORT_S := 5
 const NAME_MAX := 12
 const MAX_EARLY := 60            # an input more than 1 s early is applied at once (the client's clock is off)
@@ -395,6 +396,11 @@ func _on_text(c: Conn, txt: String) -> void:
 		return
 	if kind == "report":
 		_on_report(c, d)
+		return
+	if kind == "skip":
+		if c.seat >= 0 and phase == P.PH_MATCH_END:
+			_say("🏰 [MATCH] seat %d '%s' skipped the montage: back to the lobby" % [c.seat, seats[c.seat].name])
+			_to_lobby()
 		return
 	if kind == "join":
 		if c.seat >= 0:

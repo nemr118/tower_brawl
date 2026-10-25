@@ -89,6 +89,7 @@ var ring := Line2D.new()         # p4.3: the ring under your feet, in your colou
 var ring_glow := Sprite2D.new()
 var fighter_glows: Array = []    # p4.5: a soft glow in each fighter's colour, under it (one a slot)
 var me := -1                     # your seat (the game client, set_me); -1: none (the benchmark, a watcher)
+var base_zoom := 1.0             # p4.8: the camera's zoom for the whole arena (set_view_zoom multiplies it)
 var me_shown := -2               # the seat the outlines were last set for
 var me_phase := -1
 var pulse_t := 99.0              # seconds since your round began: the ring starts big and bright
@@ -145,6 +146,7 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	add_mat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
 	cam.position = Vector2(960, 540)
 	cam.zoom = Vector2.ONE * (render_size.y / 1080.0)
+	base_zoom = render_size.y / 1080.0
 	add_child(cam)
 	cam.make_current()
 	dark.color = dark_base
@@ -385,6 +387,11 @@ func _render_ring(fl: Array, delta: float) -> void:
 	ring_glow.position = feet
 	ring_glow.scale = Vector2(1.5, 0.45) * k
 	ring_glow.modulate = Color(c.r, c.g, c.b, 0.5 + 0.15 * sin(time * 4.0))
+
+# p4.8 (the deathcam): the camera's zoom (1: the whole arena) and where it looks.
+func set_view_zoom(z: float, at: Vector2) -> void:
+	cam.zoom = Vector2.ONE * base_zoom * z
+	cam.position = at if z > 1.0 else Vector2(960, 540)
 
 # Your own aim while you hold shoot (the game client). p4.4: armed (letting go
 # fires: a phone's thumb past the ring, or the mouse held) it is a bold gold
