@@ -1661,7 +1661,8 @@ func _trick_or_treat(f: Fighter) -> void:
 		return
 	if r < MASK_CHANCE + TREAT * (1.0 - MASK_CHANCE):
 		_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, 0)
-		var treat: int = _pick_big() if rng.randf() < 1.0 / 6.0 else _pick_regular()
+		# a BIG one 1 time in 6, but only for someone behind the leader (the BIG rule, as for orbs)
+		var treat: int = _pick_big() if rng.randf() < 1.0 / 6.0 and f.points < top_points() else _pick_regular()
 		if treat == P.PU_TRICK:
 			treat = P.PU_SHIELD
 		_give(f, treat)
