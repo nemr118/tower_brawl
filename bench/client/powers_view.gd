@@ -242,6 +242,9 @@ func _draw_warning(o: Dictionary) -> void:
 	draw_circle(c, R, Color(0.6, 0.8, 1.0, 0.06 + 0.12 * prog))
 	draw_arc(c, R, 0.0, TAU, 40, Color(0.75, 0.88, 1.0, 0.5 + 0.4 * prog), 3.0)
 	draw_arc(c, R * (1.0 + 2.2 * (1.0 - prog)), 0.0, TAU, 48, Color(0.75, 0.88, 1.0, 0.25 + 0.6 * prog), 4.0)
+	# the count to the bolt, big in the middle of the danger (3, 2, 1): stand back, then grab it
+	var secs := ceili((1.0 - prog) * SimScript.PU_WARN / 60.0)
+	_text_c(c + Vector2(0, 16), str(maxi(1, secs)), 46, Color(1.0, 1.0, 1.0, 0.55 + 0.4 * prog))
 	var pulse := 0.5 + 0.5 * sin(t * (10.0 + 20.0 * prog))
 	draw_set_transform(feet, 0.0, Vector2(1.0, 0.28))
 	draw_arc(Vector2.ZERO, R * 0.9, 0.0, TAU, 32, Color(0.85, 0.93, 1.0, 0.4 + 0.5 * pulse), 5.0)

@@ -1331,7 +1331,8 @@ func _update_cats() -> void:
 		c.vy = lerpf(c.vy, dy / d * speed, 0.12)
 		c.x = fposmod(c.x + c.vx, W)
 		c.y = fposmod(c.y + c.vy, H)
-		if absf(dx) < HALF_W + CAT_R * 0.5 and absf(dy) < MID_Y + CAT_R * 0.5:
+		var reach := CAT_R * (1.6 if tgt.state == P.F_DODGE else 0.5)   # a dodge catches a cat from farther
+		if absf(dx) < HALF_W + reach and absf(dy) < MID_Y + reach:
 			if tgt.state == P.F_DODGE:
 				_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 1)
 			else:

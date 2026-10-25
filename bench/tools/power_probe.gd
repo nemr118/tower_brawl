@@ -120,6 +120,33 @@ func _init() -> void:
 			_check(b.state != P.F_DEAD and b.shield == 0, "the shield took the first arrow")
 		else:
 			_check(b.state == P.F_DEAD, "the second arrow killed")
+	# ghost cats: one hunts a fighter standing still (it dies, cause 8), one meets a
+	# fighter dodging (the cat is caught: E_CAT_POOF with b = 1, nobody dies)
+	var s3 = SimScript.new(0, 24, 5)
+	s3.respawn = false
+	s3.set_arena(1)
+	s3.start_round([{"id": 0, "bot": false}, {"id": 1, "bot": false}, {"id": 2, "bot": false}])
+	s3.frozen = false
+	s3._give(s3.fighters[0], P.PU_CATS)
+	_check(s3.cats.size() == SimScript.CATS_N, "GHOST CATS sent %d cats" % s3.cats.size())
+	var cat_kills := 0
+	var caught := 0
+	var dodger = s3.fighters[2]
+	for tick in 600:
+		for c in s3.cats:      # the dodger dodges when a cat is close
+			if c.target == dodger.id and dodger.state == P.F_NORMAL and dodger.dodge_cd == 0 \
+					and absf(SimScript.wrap_d(c.x, dodger.x + 18.0, 1920)) < 60.0 and absf(SimScript.wrap_d(c.y, dodger.y + 31.0, 1080)) < 60.0:
+				s3._start_dodge(dodger, Vector2(SimScript.wrap_d(dodger.x + 18.0, c.x, 1920), SimScript.wrap_d(dodger.y + 31.0, c.y, 1080)))   # into the cat
+		s3.step()
+		for e in s3.take_events():
+			if e[0] == P.E_DEATH and e[4] == 8:
+				cat_kills += 1
+			elif e[0] == P.E_CAT_POOF and e[4] == 1:
+				caught += 1
+	print("🧪 [PowerProbe] ghost cats: %d kills, %d caught by a dodge, %d cats left" % [cat_kills, caught, s3.cats.size()])
+	_check(cat_kills >= 1, "a ghost cat killed the fighter standing still")
+	_check(caught >= 1, "a dodge caught a ghost cat")
+	_check(s3.fighters[0].state != P.F_DEAD, "the cats never hurt their owner")
 	var names := []
 	for k in counts:
 		names.append("%d:%d" % [k, counts[k]])
