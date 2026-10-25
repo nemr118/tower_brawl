@@ -112,6 +112,8 @@ func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: 
 	hidden = lobby_shown
 	fight_t = maxf(0.0, fight_t - delta)
 	note_t = maxf(0.0, note_t - delta)
+	if int(s.get("phase", -1)) == P.PH_ROUND_START and note.begins_with("GHOST"):
+		note_t = 0.0      # p4.13: a ghost's tip is over when the next round starts
 	banner_t = maxf(0.0, banner_t - delta)
 	end_t += delta
 	show_info = info

@@ -127,6 +127,7 @@ const AWARDS := [
 	["GOOD KITTY", "pets", "max", 1, "petted the cat %d times", ""],
 	["TRICKED!", "tricks", "max", 1, "got tricked %d times", ""],
 	["SLASHER", "knife_kills", "max", 1, "%d knockouts with the knife", ""],
+	["SWEET TOOTH", "candies", "max", 1, "opened %d candies", ""],
 	["SCARY MOVIE STAR", "masks", "max", 1, "turned into GHOSTFACE %d times", ""],
 	["GHOST BUSTER", "mask_kills", "max", 1, "finished off GHOSTFACE %d times", ""],
 ]
@@ -1370,6 +1371,9 @@ func _log_powers(evs: Array) -> void:
 		elif k == P.E_TRICK and e[4] > 0:
 			var ti: int = e[3]
 			_say("🏰 [POWER] seat %d '%s' got a TRICK: %s" % [ti, seats[ti].name if ti < SEATS else "?", ["", "PUMPKIN", "BACKWARDS", "TINY"][e[4]]])
+		elif k == P.E_CANDY_GET:
+			var ci: int = e[3]
+			_say("🏰 [POWER] seat %d '%s' opened a candy" % [ci, seats[ci].name if ci < SEATS else "?"])
 		elif k == P.E_PET:
 			var pi: int = e[3]
 			_say("🏰 [POWER] seat %d '%s' petted the black cat: a SHIELD" % [pi, seats[pi].name if pi < SEATS else "?"])
@@ -1432,6 +1436,8 @@ func _match_events(evs: Array) -> void:
 			_mcount(e[3], "pets")
 		elif k == P.E_TRICK and e[4] > 0:
 			_mcount(e[3], "tricks")
+		elif k == P.E_CANDY_GET:
+			_mcount(e[3], "candies")
 
 # Each tick of play: who is in the fight, in the air, flying, invisible, a ghost, and the steps run.
 func _match_sample() -> void:

@@ -150,7 +150,7 @@ static func _copy(v: Dictionary) -> Dictionary:
 	return {"fighters": fl, "arrows": al, "zones": zl, "arena": v.get("arena", 0), "walls": v.get("walls", 0.0),
 		"walls_deadly": v.get("walls_deadly", false), "powers": v.get("powers", {}).duplicate(true), "orbs": ol, "cats": cl,
 		"rain": v.get("rain", {}).duplicate(), "ghosts": v.get("ghosts", []).duplicate(true), "hazards": v.get("hazards", {}).duplicate(true),
-		"pet": v.get("pet", {}).duplicate(), "bats": v.get("bats", {}).duplicate()}
+		"pet": v.get("pet", {}).duplicate(), "bats": v.get("bats", {}).duplicate(), "candies": v.get("candies", []).duplicate(true)}
 
 # ------------------------------------------------------------------ the montage
 # True when the winner has a kill to show.

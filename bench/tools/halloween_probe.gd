@@ -96,6 +96,7 @@ func _init() -> void:
 	_pumpkins()
 	_bats()
 	_ghostface()
+	_candies()
 	_ghostface_bots(int(args.get("rounds", "40")))
 	_say("%s (%d fail) in %d ms" % ["PASS" if fails == 0 else "FAIL", fails, Time.get_ticks_msec() - t0])
 	quit(0 if fails == 0 else 1)
@@ -112,6 +113,8 @@ func _cat() -> void:
 		_say("the black cat comes in %.0f%% of rounds on %s" % [got / 20.0, s.level.name])
 		_check(absf(got / 2000.0 - want) < 0.04, "the black cat comes in %.0f%% of rounds, not %.0f%%" % [got / 20.0, want * 100.0])
 	var sp = _stage(HAUNTED, 2, 22, true)
+	sp.pu_wait = 99999          # no lightning orbs here (a strike could end the round, and the cat with it)
+	sp.candy_t = 99999
 	sp.pet_at = sp.play_t
 	sp.step()
 	_check(not sp.pet.is_empty() and _count(sp.take_events(), P.E_CAT_COME) == 1, "the black cat shows up")
@@ -430,6 +433,74 @@ func _ghostface() -> void:
 		s8.read_fighter_state(buf, r)
 		for key in ["mask", "down_t", "knife_t", "knife_cd", "knife_hit", "trick", "trick_t", "state", "dodge_t"]:
 			_check(r.get(key) == k8.get(key), "the whole fighter's %s read back %s, not %s" % [key, r.get(key), k8.get(key)])
+
+# p4.13 candies: no orb is a candy; a body drops one; it lands and rests on a floor; a
+# touch opens it (TRICK OR TREAT); left alone it goes after CANDY_LIFE; one falls from
+# the sky; never more than CANDY_MAX at once.
+func _candies() -> void:
+	var s0 = _stage(1, 2, 50, true)
+	var tricks := 0
+	for i in 3000:
+		if s0._pick_regular() == P.PU_TRICK:
+			tricks += 1
+	_check(tricks == 0, "no orb is a TRICK OR TREAT any more (%d of 3000)" % tricks)
+	var s = _stage(1, 3, 51, true)
+	s.pu_wait = 99999          # no orb drops (no lightning) in this stage
+	s.candy_t = 99999
+	s.candy_drop = 1.0
+	var at := _floor(s, 4)
+	var v = s.fighters[1]
+	_stand(v, at, 0)
+	var o = s.fighters[0]
+	o.x = (int(at.x) + 700) % 1920
+	s.take_events()
+	s._kill(v, 0, 1)
+	_check(s.candies.size() == 1 and _count(s.take_events(), P.E_CANDY_DROP, 0) == 1, "a body drops a candy")
+	var rested := -1
+	for k in 150:
+		s.step()
+		if s.candies.size() == 1 and s.candies[0]["rest"]:
+			rested = k
+			break
+	_check(rested > 0, "the candy falls and rests (after %d ticks)" % rested)
+	if rested > 0:
+		var c: Dictionary = s.candies[0]
+		_check(s.level.cell_at(c["x"], c["y"] + 9.0) != 0, "it rests on a floor (x %d, y %d)" % [c["x"], c["y"]])
+		var w = s.fighters[2]
+		w.x = int(c["x"]) - 18
+		w.y = int(c["y"]) - 40
+		w.vx = 0.0
+		w.vy = 0.0
+		s.take_events()
+		s.step()
+		var evs: Array = s.take_events()
+		_check(s.candies.is_empty() and _count(evs, P.E_CANDY_GET) == 1 and _count(evs, P.E_TRICK) == 1,
+			"touching it opens it: TRICK OR TREAT (candy %d, trick %d)" % [_count(evs, P.E_CANDY_GET), _count(evs, P.E_TRICK)])
+	var s2 = _stage(1, 2, 52, true)
+	s2.pu_wait = 99999
+	s2.candy_t = 99999
+	s2.candies.clear()
+	s2._spawn_candy(300.0, 60.0, 0.0, 0.0, false)
+	s2.candies[0]["t"] = SimScript.CANDY_LIFE - 3
+	for f in s2.fighters:
+		f.x = 1500
+	for k in 5:
+		s2.step()
+	_check(s2.candies.is_empty(), "a candy nobody takes goes after %d s" % (SimScript.CANDY_LIFE / 60))
+	s2.candy_t = 1
+	s2.take_events()
+	s2.step()
+	s2.step()
+	_check(s2.candies.size() == 1 and s2.candies[0]["sky"] and _count(s2.take_events(), P.E_CANDY_DROP, 1) == 1, "one falls from the sky")
+	var s3 = _stage(1, 8, 53, true)
+	s3.pu_wait = 99999
+	s3.candy_t = 99999
+	s3.candy_drop = 1.0
+	for f in s3.fighters:
+		f.x = 900
+	for i in range(1, 8):
+		s3._kill(s3.fighters[i], 0, 1)
+	_check(s3.candies.size() == SimScript.CANDY_MAX, "never more than %d candies at once (%d)" % [SimScript.CANDY_MAX, s3.candies.size()])
 
 func _ghostface_bots(rounds: int) -> void:
 	var s = SimScript.new(0, 24, 41)

@@ -114,7 +114,7 @@ const ORB_R := 30.0
 const ORB_UP := 34                  # the orb's middle sits this far above its floor spot
 const BIG_CHANCE := 0.3             # a drop is BIG this often with a person 1 point behind the leader (+0.15 a point more)
 const REGULAR_W := {P.PU_FIRE: 13, P.PU_BOMB: 13, P.PU_POISON: 12, P.PU_SMOKE: 12, P.PU_SHIELD: 14,
-	P.PU_INF: 12, P.PU_FLY: 11, P.PU_BIG: 13, P.PU_TRICK: 14}
+	P.PU_INF: 12, P.PU_FLY: 11, P.PU_BIG: 13}   # p4.13: TRICK OR TREAT is a candy now, not an orb
 const BIG_KINDS := [P.PU_CATS, P.PU_RAIN, P.PU_INVIS, P.PU_FREEZE, P.PU_SPIKES, P.PU_SPEED, P.PU_BATS]
 const FLY_MAX := 1.4 * S            # FLYING: the stick floats the fighter this fast, any way
 const FLY_ACCEL := 0.12 * S
@@ -205,7 +205,19 @@ const KNIFE_CD := 34
 const KNIFE_REACH := 66.0
 const MASK_DOWN := 120
 const MASK_GRACE := 15
-const TRICK_W_HW := 22         # TRICK OR TREAT's weight on THE HAUNTED HOUSE (REGULAR_W's elsewhere)
+# p4.13 candies (the user: "The candies should be separate from the normal orb spawns. Make
+# corpses drop candies and occasional random spawns"): a body drops one CANDY_DROP of the
+# time, and one falls from the sky every CANDY_EVERY; at most CANDY_MAX at once. A candy
+# falls (CANDY_G), bounces (CANDY_BOUNCE), rests on a floor, and goes after CANDY_LIFE;
+# a living fighter that touches it (within CANDY_R of its body) opens it: TRICK OR TREAT.
+# Bots do not go looking for candies; they open one they bump into.
+const CANDY_DROP := 0.5
+const CANDY_EVERY := [900, 1500]
+const CANDY_MAX := 3
+const CANDY_G := 0.45
+const CANDY_BOUNCE := 0.35
+const CANDY_LIFE := 600
+const CANDY_R := 14.0
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -359,6 +371,9 @@ var pet_at := -1                # the play tick it shows up this round (-1: not 
 var bats := {}                  # a bat swarm: {phase (0 screeching, 1 sweeping), t, x (its middle), y, dir}
 var bats_at := -1               # the play tick the next swarm screeches (-1: none on this arena)
 var bats_hold := false          # a test knob (hw_gallery): the swarm stays where it is
+var candies: Array = []         # p4.13: {x, y (its middle), vx, vy, t, rest, sky}
+var candy_t := -1               # play ticks to the next candy from the sky
+var candy_drop := CANDY_DROP    # a body's chance to drop one (the probe sets 1.0)
 var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
                                 # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
@@ -489,6 +504,8 @@ func _reset_powers_round() -> void:
 	pet_at = rng.randi_range(PET_AT[0], PET_AT[1]) if rng.randf() < (PET_CHANCE_HW if level.theme == "halloween" else PET_CHANCE) else -1
 	bats = {}
 	bats_at = BATS_FIRST if level.theme == "halloween" else -1
+	candies.clear()
+	candy_t = rng.randi_range(CANDY_EVERY[0], CANDY_EVERY[1])
 	orbs.clear()
 	cats.clear()
 	rain_owner = -1
@@ -752,6 +769,8 @@ func _kill(f: Fighter, killer: int, cause: int) -> void:
 	f.killer = killer
 	if ghosts and not f.bot:
 		f.ghost_wait = GHOST_WAIT    # p4.11: a person's ghost rises soon
+	if powerups and candies.size() < CANDY_MAX and rng.randf() < candy_drop:
+		_spawn_candy(f.x + HALF_W, f.y + MID_Y, rng.randf_range(-3.0, 3.0), -7.5, false)   # p4.13: a candy out of the body
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
 	_event(P.E_KILL, f.x + HALF_W, f.y + MID_Y, killer if killer >= 0 and killer < 255 else 255, f.id)   # p4.8: who did it
 
@@ -1520,6 +1539,7 @@ func _update_powers() -> void:
 	if not powerups:
 		return
 	_update_pet()           # the black cat's SHIELD is a power-up
+	_update_candies()
 	for i in range(orbs.size() - 1, -1, -1):
 		var o: Orb = orbs[i]
 		o.t += 1
@@ -1652,6 +1672,60 @@ func _trick_or_treat(f: Fighter) -> void:
 		f.aiming = false
 		f.shot_wait = false
 		_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, f.trick)
+
+# p4.13 candies: one out of a body or from the sky (x, y its middle).
+func _spawn_candy(x: float, y: float, vx: float, vy: float, sky: bool) -> void:
+	candies.append({"x": fposmod(x, W), "y": y, "vx": vx, "vy": vy, "t": 0, "rest": false, "sky": sky})
+	_event(P.E_CANDY_DROP, int(x), int(y), 0, 1 if sky else 0)
+
+# One tick: the next one from the sky, each candy falls, bounces and rests, and the first
+# living fighter to touch one opens it.
+func _update_candies() -> void:
+	if candy_t > 0:
+		candy_t -= 1
+	elif candies.size() < CANDY_MAX:
+		_ensure_spots()
+		var sp: Vector2 = spots[rng.randi() % spots.size()]
+		_spawn_candy(sp.x, sp.y - 300.0, 0.0, 0.0, true)
+		candy_t = rng.randi_range(CANDY_EVERY[0], CANDY_EVERY[1])
+	for i in range(candies.size() - 1, -1, -1):
+		var c: Dictionary = candies[i]
+		c["t"] += 1
+		if c["t"] >= CANDY_LIFE:
+			candies.remove_at(i)
+			continue
+		if not c["rest"]:
+			c["vy"] = minf(c["vy"] + CANDY_G, 10.0)
+			var nx: float = c["x"] + c["vx"]
+			if c["vx"] != 0.0 and level.cell_at(fposmod(nx + signf(c["vx"]) * 8.0, W), c["y"]) == 1:
+				c["vx"] = -c["vx"] * 0.5      # a wall: back off it
+			else:
+				c["x"] = fposmod(nx, W)
+			var ny: float = c["y"] + c["vy"]
+			if c["vy"] < 0.0 and level.cell_at(c["x"], fposmod(ny - 8.0, H)) == 1:
+				c["vy"] = 0.0                 # a ceiling
+			elif c["vy"] > 0.0 and level.cell_at(c["x"], fposmod(ny + 8.0, H)) != 0:
+				var top := floorf(fposmod(ny + 8.0, H) / 30.0) * 30.0
+				c["y"] = top - 8.0           # a floor (or a ledge): sit on it, bounce a little
+				if c["vy"] > 3.0:
+					c["vy"] = -c["vy"] * CANDY_BOUNCE
+					c["vx"] *= 0.6
+				else:
+					c["vy"] = 0.0
+					c["vx"] = 0.0
+					c["rest"] = true
+			else:
+				c["y"] = fposmod(ny, H)
+		for f in fighters:
+			if f.state == P.F_DEAD:
+				continue
+			var dx := wrap_d(f.x + HALF_W, c["x"], W)
+			var dy := wrap_d(f.y + MID_Y, c["y"], H)
+			if absf(dx) < HALF_W + CANDY_R and absf(dy) < BODY_H * 0.5 + CANDY_R:
+				candies.remove_at(i)
+				_event(P.E_CANDY_GET, int(c["x"]), int(c["y"]), f.id, 0)
+				_trick_or_treat(f)
+				break
 
 # GHOSTFACE knocked down: it falls and lies MASK_DOWN ticks (a hurt that lasts), then gets up.
 func _collapse(f: Fighter) -> void:
@@ -1940,7 +2014,7 @@ func _pick_regular() -> int:
 	return P.PU_SHIELD
 
 func _weight(k: int) -> int:
-	return TRICK_W_HW if k == P.PU_TRICK and level.theme == "halloween" else int(REGULAR_W[k])
+	return int(REGULAR_W[k])
 
 func _pick_big() -> int:
 	var pick: int = BIG_KINDS[rng.randi() % BIG_KINDS.size()]
@@ -2060,6 +2134,13 @@ func hw_gallery() -> void:
 	pet_at = play_t
 	bats = {"phase": 1, "t": 0, "x": 960.0, "y": 300.0, "dir": 1}
 	bats_hold = true
+	_ensure_spots()
+	for i in 3:   # p4.13 three candies falling onto floors
+		var sp: Vector2 = spots[(i * 5 + 2) % spots.size()]
+		_spawn_candy(sp.x, sp.y - 120.0, 0.0, 0.0, i == 0)
+	var f0 := fighter(0)
+	if f0 != null:   # and one right on seat 0 (the page's player), opened at once: the candy burst
+		_spawn_candy(f0.x + HALF_W, f0.y + MID_Y, 0.0, 0.0, false)
 
 # A test knob (the server's --pin-demo): seat 7 is shot into the nearest wall to its
 # left (pinned there), seat 6 is shot in the open (the arrow carries it), for pictures.
@@ -2338,6 +2419,12 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(bats["x"]))
 		buf.put_16(int(bats["y"]))
 		buf.put_8(int(bats["dir"]))
+	buf.put_u8(candies.size())                 # p4.13 the candies
+	for c in candies:
+		buf.put_16(int(c["x"]))
+		buf.put_16(int(c["y"]))
+		buf.put_u8(mini(255, (CANDY_LIFE - int(c["t"])) / 4))
+		buf.put_u8((1 if c["rest"] else 0) | (2 if c["sky"] else 0))
 	buf.put_u8(1 if hazards != null else 0)   # THE BOILER ROOM's state (sim/boiler.gd write)
 	if hazards != null:
 		hazards.write(buf)

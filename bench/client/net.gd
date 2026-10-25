@@ -412,6 +412,11 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 			var ph := b.get_u8()
 			if ph != 255:
 				s["bats"] = {"phase": ph, "x": float(b.get_16()), "y": float(b.get_16()), "dir": b.get_8()}
+		var candies: Array = []
+		if b.get_available_bytes() > 0:                        # p4.13 the candies
+			for i in b.get_u8():
+				candies.append({"x": float(b.get_16()), "y": float(b.get_16()), "life": b.get_u8() * 4, "flags": b.get_u8()})
+		s["candies"] = candies
 		if b.get_available_bytes() > 0 and b.get_u8() == 1:   # THE BOILER ROOM's state
 			s["hazards"] = BoilerScript.read(b)
 	s["powers"] = powers
@@ -547,7 +552,17 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"], "arena": b.get("arena", 0),
 		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false),
 		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {}), "ghosts": ghosts,
-		"hazards": b.get("hazards", {}), "pet": _glide(a.get("pet", {}), b.get("pet", {}), t), "bats": _glide(a.get("bats", {}), b.get("bats", {}), t)}
+		"hazards": b.get("hazards", {}), "pet": _glide(a.get("pet", {}), b.get("pet", {}), t), "bats": _glide(a.get("bats", {}), b.get("bats", {}), t),
+		"candies": _glide_list(a.get("candies", []), b.get("candies", []), t)}
+
+# p4.13: the candies between two snapshots (by place in the list, when both have the same ones).
+func _glide_list(la: Array, lb: Array, t: float) -> Array:
+	if la.size() != lb.size():
+		return lb
+	var out: Array = []
+	for i in lb.size():
+		out.append(_glide(la[i], lb[i], t) if absf(la[i]["y"] - lb[i]["y"]) < 300.0 else lb[i])
+	return out
 
 # p4.12: the black cat or a bat swarm between two snapshots (by x; a jump stays a jump).
 func _glide(da: Dictionary, db: Dictionary, t: float) -> Dictionary:

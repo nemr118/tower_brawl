@@ -15,7 +15,8 @@
 #             seconds left, u8 ghosts, ghost x (p4.11: u8 seat, s16 x, s16 y, u8 flags: 1 popped,
 #             2 dashing, 4 ready to BOO), (p4.12) u8 the black cat is here, then s16 x, s16 y,
 #             s8 dir, u8 leaving (p4.12: each power-up row has one more byte: 1 GHOSTFACE, 2 down,
-#             4 swinging, 8 the knife up); u8 a bat swarm's phase (255: none; 0 screeching, 1 sweeping),
+#             4 swinging, 8 the knife up); u8 a bat swarm's phase (p4.13: then u8 candies, each s16 x,
+#             s16 y, u8 life left / 4 ticks, u8 1 resting, 2 from the sky) (255: none; 0 screeching, 1 sweeping),
 #             then s16 x, s16 y, s8 dir; then u8 1 with THE BOILER ROOM's state (sim/boiler.gd)
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
@@ -206,6 +207,8 @@ const PU_TIP := {1: "burning arrows", 2: "boom arrows", 3: "poison arrows", 4: "
 const E_KNIFE := 35      # GHOSTFACE swings the knife: a = fighter, b = 1 to the right
 const E_MASK_DOWN := 36  # GHOSTFACE is knocked down (2 s): a = fighter
 const E_MASK_UP := 37    # and gets back up: a = fighter
+const E_CANDY_DROP := 38 # p4.13 a candy appears: x, y; b = 0 out of a body, 1 from the sky
+const E_CANDY_GET := 39  # someone opens a candy (TRICK OR TREAT, then its E_TRICK): x, y; a = fighter
 const E_FURNACE := 40    # THE BOILER ROOM (sim/boiler.gd): a furnace blasts fire: x, y its mouth; a = which one; b = its direction
 const E_STEAM := 41      # a pressure pipe vents steam: x, y its valve; a = which one; b = its direction
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,

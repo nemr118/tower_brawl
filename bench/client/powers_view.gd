@@ -50,6 +50,10 @@ var knife_at := {}                 # p4.12 GHOSTFACE: seat -> when (t) it last s
 var down_at := {}                  # seat -> when it was knocked down
 var up_at := {}                    # seat -> when it got back up
 var hearts: Array = []             # [pos, secs left]: hearts rising from a petted cat
+var candy_pops: Array = []         # p4.13 a candy opened: {pos, left, seat, word, icon, trick, at}
+var confetti: Array = []           # [pos, vel, colour, secs left, spin]: a candy's wrapper bits
+const CANDY_POP_S := 1.8
+const CANDY_COLS := [Color(1.0, 0.55, 0.12), Color(0.62, 0.3, 0.95), Color(0.5, 0.95, 0.4), Color(1.0, 0.45, 0.75), Color(1, 1, 1)]
 
 class _Glow extends Node2D:
 	var pv
@@ -99,6 +103,14 @@ func show_view(s: Dictionary, delta: float, my_seat: int) -> void:
 	for h in hearts:
 		h[1] -= delta
 	hearts = hearts.filter(func(h): return h[1] > 0.0)
+	for cp in candy_pops:
+		cp["left"] -= delta
+	candy_pops = candy_pops.filter(func(cp): return cp["left"] > 0.0)
+	for q in confetti:
+		q[1] = q[1] * (1.0 - 1.5 * delta) + Vector2(0, 700.0 * delta)
+		q[0] = q[0] + q[1] * delta
+		q[3] -= delta
+	confetti = confetti.filter(func(q): return q[3] > 0.0)
 	for r in rings:
 		r[4] -= delta
 	rings = rings.filter(func(r): return r[4] > 0.0)
@@ -182,6 +194,11 @@ func on_event(e: Array) -> void:
 	elif type == P.E_PU_GET:
 		var k: int = e[4]
 		var col: Color = COLORS.get(k, Color.WHITE)
+		var cp := _candy_pop_for(int(e[3]))
+		if not cp.is_empty() and (cp["word"] == "TREAT" or k == P.PU_MASK):
+			cp["word"] = str(P.PU_SHORT.get(k, ""))   # p4.13: a candy's treat: its big badge shows it, no small one
+			cp["icon"] = k
+			return
 		_pop(pos + Vector2(0, -36), P.PU_SHORT.get(k, ""), col, 1.6, P.is_big(k) or k == P.PU_MASK, k)
 		rings.append([pos + Vector2(0, 30), 110.0 if P.is_big(k) or k == P.PU_MASK else 80.0, col, 0.4, 0.4])
 		world.fx.flash(pos + Vector2(0, 30), 4.0, col, 0.25, true)
@@ -208,11 +225,25 @@ func on_event(e: Array) -> void:
 	elif type == P.E_MASK_UP:
 		up_at[int(e[3])] = t
 		rings.append([pos + Vector2(0, 28), 56.0, Color(0.85, 0.85, 0.95), 0.3, 0.3])   # a puff as it gets up
-	elif type == P.E_TRICK:      # p4.12 TRICK OR TREAT
-		if e[4] == 4:
-			return               # GHOSTFACE: its own pop (E_PU_GET) says so
-		_pop(pos + Vector2(0, -40), "TREAT" if e[4] == 0 else "TRICK!", COLORS[P.PU_TRICK], 1.3, e[4] > 0, P.PU_TRICK)
-		rings.append([pos + Vector2(0, 30), 90.0, COLORS[P.PU_TRICK], 0.4, 0.4])
+	elif type == P.E_TRICK:      # p4.12 TRICK OR TREAT (p4.13: from a candy; its big badge says what came out)
+		var cp := _candy_pop_for(int(e[3]))
+		if cp.is_empty():
+			cp = _new_candy_pop(pos, int(e[3]))
+		var b: int = e[4]
+		cp["trick"] = b > 0 and b < 4
+		cp["word"] = ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"][clampi(b, 0, 4)]
+		cp["icon"] = [P.PU_TRICK, P.PU_PUMPKIN, P.PU_TRICK, P.PU_TRICK, P.PU_MASK][clampi(b, 0, 4)]
+	elif type == P.E_CANDY_DROP:  # p4.13 a candy out of a body, or from the sky
+		rings.append([pos, 44.0, COLORS[P.PU_TRICK], 0.3, 0.3])
+	elif type == P.E_CANDY_GET:   # someone opens one: a burst of wrapper bits, and a big badge
+		_new_candy_pop(pos, int(e[3]))
+		rings.append([pos, 120.0, COLORS[P.PU_TRICK], 0.45, 0.45])
+		rings.append([pos, 70.0, Color(1.0, 0.6, 0.15), 0.3, 0.3])
+		world.fx.flash(pos, 5.0, Color(0.9, 0.6, 1.0), 0.3, true)
+		for i in 16:
+			var ang := TAU * i / 16.0 + randf() * 0.3
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(180.0, 420.0) + Vector2(0, -160.0),
+				CANDY_COLS[i % CANDY_COLS.size()], randf_range(0.7, 1.1), randf() * TAU])
 	elif type == P.E_CAT_COME:   # the black cat shows up (its own PET ME tag says the rest)
 		rings.append([pos + Vector2(0, -14), 60.0, Color(0.75, 0.6, 1.0), 0.4, 0.4])
 	elif type == P.E_PET:        # someone petted it
@@ -246,6 +277,8 @@ func _draw() -> void:
 			_draw_warning(o)
 		else:
 			_draw_orb(o)
+	for cd in view.get("candies", []):
+		_draw_candy(cd)
 	for seat in fighters:   # p4.12 GHOSTFACE, in place of its archer (dead ones too: it lies there)
 		if not powers.has(seat) or (int(powers[seat].get("mask", 0)) & 1) == 0:
 			continue
@@ -288,6 +321,14 @@ func _draw() -> void:
 		var col: Color = r[2]
 		col.a *= 1.0 - k
 		draw_arc(r[0], r[1] * (0.2 + 0.8 * k), 0.0, TAU, 40, col, 5.0 * (1.0 - k) + 2.0)
+	for q in confetti:   # p4.13 a candy's wrapper bits
+		var qa: float = clampf(q[3] * 1.6, 0.0, 1.0)
+		var sp: float = q[4] + t * 9.0
+		var u := Vector2(cos(sp), sin(sp)) * 5.0
+		var v := Vector2(-u.y, u.x) * 0.5
+		draw_colored_polygon(PackedVector2Array([q[0] - u - v, q[0] + u - v, q[0] + u + v, q[0] - u + v]), Color(q[2], qa))
+	for cp in candy_pops:   # p4.13 the big candy badge: what came out of it
+		_draw_candy_pop(cp)
 	for h in hearts:   # a petted cat: three little hearts float up
 		var hk: float = h[1] / 1.2
 		for i in 3:
@@ -318,6 +359,79 @@ func _draw() -> void:
 			for i in 3:
 				var lx := -5.0 + i * 5.0
 				draw_line(ec + Vector2(lx, 4.0), ec + Vector2(lx * 1.3, 8.0), Color(1, 1, 1, 0.9), 2.0, true)
+
+# p4.13 a candy: a wrapped sweet with orange and purple stripes and twisted ends, a soft
+# glow; resting it bobs and wiggles, falling it spins (from the sky: sparkles above it);
+# it blinks in its last 2 seconds.
+func _draw_candy(cd: Dictionary) -> void:
+	var rest: bool = (int(cd["flags"]) & 1) != 0
+	var a := 1.0
+	if int(cd["life"]) < 120 and int(t * 8.0) % 2 == 0:
+		a = 0.35
+	var c := Vector2(cd["x"], cd["y"])
+	var rot := t * 10.0
+	if rest:
+		c.y += sin(t * 3.0 + c.x * 0.05) * 3.0 - 3.0
+		rot = sin(t * 5.0 + c.x) * 0.3
+	elif (int(cd["flags"]) & 2) != 0:
+		for k in 3:   # a falling star's sparkles
+			var sp := c + Vector2(sin(t * 7.0 + k * 2.0) * 8.0, -16.0 - k * 12.0)
+			draw_circle(sp, 2.5 - k * 0.6, Color(1.0, 0.92, 0.6, (0.8 - k * 0.2) * a))
+	draw_circle(c, 34.0, Color(0.85, 0.5, 1.0, 0.12 * a))
+	draw_circle(c, 21.0, Color(1.0, 0.7, 0.3, 0.14 * a))
+	var pulse := fmod(t * 0.9 + c.x * 0.003, 1.0)   # a ring that grows and fades: something to grab
+	draw_arc(c, 18.0 + 26.0 * pulse, 0.0, TAU, 28, Color(1.0, 0.8, 0.4, (1.0 - pulse) * 0.6 * a), 2.5, true)
+	draw_set_transform(c, rot, Vector2.ONE * 1.4)
+	var edge := Color(0.14, 0.04, 0.2, a)
+	var wrap := Color(0.62, 0.3, 0.95, a)
+	for side in [-1.0, 1.0]:   # the twisted ends
+		var tri := PackedVector2Array([Vector2(side * 8.0, 0), Vector2(side * 18.0, -8.0), Vector2(side * 18.0, 8.0)])
+		draw_colored_polygon(tri, wrap)
+		tri.append(tri[0])
+		draw_polyline(tri, edge, 1.5, true)
+	var body := PackedVector2Array()
+	for i in 16:
+		var th := TAU * i / 16.0
+		body.append(Vector2(cos(th) * 10.0, sin(th) * 8.0))
+	draw_colored_polygon(body, Color(1.0, 0.55, 0.12, a))
+	for k in 3:   # the stripes
+		var sx := -5.0 + k * 5.0
+		draw_line(Vector2(sx - 2.5, 6.0), Vector2(sx + 2.5, -6.0), wrap, 2.5, true)
+	body.append(body[0])
+	draw_polyline(body, edge, 1.6, true)
+	draw_circle(Vector2(-4.0, -3.5), 2.0, Color(1, 1, 1, 0.75 * a))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _new_candy_pop(pos: Vector2, seat: int) -> Dictionary:
+	var cp := {"pos": pos + Vector2(0, -40), "left": CANDY_POP_S, "seat": seat, "word": "", "icon": P.PU_TRICK, "trick": false, "at": t}
+	candy_pops.append(cp)
+	return cp
+
+# The candy badge this seat opened a moment ago (its TRICK OR TREAT result follows in the same tick).
+func _candy_pop_for(seat: int) -> Dictionary:
+	for i in range(candy_pops.size() - 1, -1, -1):
+		if candy_pops[i]["seat"] == seat and t - float(candy_pops[i]["at"]) < 0.25:
+			return candy_pops[i]
+	return {}
+
+# The big candy badge: a ring of candy stripes, what came out of the candy inside, its name
+# under it, and TREAT! or TRICK! over it; it pops in, rises and fades.
+func _draw_candy_pop(cp: Dictionary) -> void:
+	var k: float = cp["left"] / CANDY_POP_S
+	var a := clampf(k * 2.5, 0.0, 1.0)
+	var at: Vector2 = cp["pos"] + Vector2(0, -60.0 * (1.0 - k))
+	var r := 24.0 * (1.0 + 0.4 * clampf((k - 0.85) / 0.15, 0.0, 1.0))
+	draw_circle(at, r + 6.0, Color(0.03, 0.03, 0.07, 0.8 * a))
+	for i in 8:   # the striped ring
+		var a0 := t * 2.0 + i * TAU / 8.0
+		draw_arc(at, r + 3.0, a0, a0 + TAU / 8.0, 6, Color(CANDY_COLS[i % 2], a), 5.0)
+	var icon: int = cp["icon"]
+	draw_circle(at, r, Color(Color(COLORS.get(icon, Color.WHITE)).darkened(0.25), a))
+	draw_icon(self, at, icon, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
+	var top := "TRICK!" if cp["trick"] else ("BOO!" if icon == P.PU_MASK else "TREAT!")
+	_text_c(at + Vector2(0, -r - 12.0), top, 16, Color(1.0, 0.75, 0.3, a))
+	if str(cp["word"]) != "":
+		_text_c(at + Vector2(0, r + 24.0), str(cp["word"]), 20, Color(1.0, 0.95, 0.85, a))
 
 # A pop over someone (p4.12): a badge with a power-up's picture and one small word, rising
 # and fading (the user: "graphics or small stylized text that disrupts the game as little
