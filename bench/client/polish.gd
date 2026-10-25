@@ -25,10 +25,10 @@ const SWITCHES := {
 	"castle_sconces": true,    # iron wall sconces with glowing coals instead of the plain torch stick; a flame on LOW
 	# every arena (world.gd's hook)
 	"arrows2": true,           # new arrow art: a pointed steel head, an outlined shaft, fletching in the kind's colour
-	"shaft_motes": true, 
-	# every arena (client/powers_view.gd, p4.13): ComfyUI's power-up pictures (assets/pu_icons.png) in the orbs,
-	# badges and your power-up card, on darker discs; until the user's yes on the BEFORE/AFTER
-	"icons2": true,      # NORMAL and HIGH: the light shafts a little stronger, with dust drifting in them
+	"shaft_motes": true,       # NORMAL and HIGH: the light shafts a little stronger, with dust drifting in them
+	# every arena (client/powers_view.gd, p4.13): ComfyUI's power-up pictures (assets/pu_icons.png) in the
+	# orbs, the badges and your power-up card, on darker discs (the user said yes)
+	"icons2": true,
 }
 
 static var _off := {}
