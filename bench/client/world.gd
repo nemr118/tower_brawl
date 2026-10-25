@@ -130,7 +130,7 @@ var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while th
 var pview                        # p4.9: the power-ups (client/powers_view.gd), every look
 var theme_view                   # p4.9: an arena's holiday look (client/theme_view.gd: THE HAUNTED HOUSE)
 var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
-var edges                        # p4.11: the arena's edges, easy to read (client/edges_view.gd)
+var edges                        # p4.11: the arena's shapes stand out (client/edges_view.gd: halo behind, light on top)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -372,9 +372,10 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	threats.add_child(pview)
 	pview.setup(self, glow, add_mat, TEAM)
 	theme_view.setup(threats)
-	edges = EdgesView.new()
-	threats.add_child(edges)
-	threats.move_child(edges, 0)    # first in the threats layer: under the pumpkins and the fighters
+	edges = EdgesView.new()          # p4.11: behind the tiles (a halo on the backdrop), light on the glow layer
+	add_child(edges)
+	move_child(edges, tiles_plain.get_index())
+	edges.setup(glow, add_mat)
 	edges.build(level)
 	fx.prewarm(Vector2(960, 1200))
 

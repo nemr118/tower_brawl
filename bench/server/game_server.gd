@@ -85,6 +85,52 @@ const MAX_EARLY := 60            # an input more than 1 s early is applied at on
 const EVENTS_MAX := 80           # the host page's recent events
 const HOST_MAX := 16384          # the largest request the host port reads
 const PHASE_NAMES := ["LOBBY", "COUNTDOWN", "ROUND START", "PLAYING", "ROUND END", "MATCH END"]
+# p4.11 the awards at a match's end (the user: "awards for a wide variety of things, many
+# of them silly, so the kids get awards even if they didn't perform well"): [title, the
+# match number it reads, max or min, the least that counts, the line under it, unit ("":
+# a count, "s": ticks shown as seconds, "steps": px shown as steps of 30 px)]. Everyone
+# gets one: the rarest award they lead, else a silly one from FALLBACK.
+const AWARDS := [
+	["SHARPSHOOTER", "arrow_kills", "max", 2, "%d arrow knockouts", ""],
+	["STOMP CHAMP", "stomp_kills", "max", 1, "%d stomps on heads", ""],
+	["BOOM BOOM", "blast_kills", "max", 1, "%d knockouts with a blast", ""],
+	["CAT WHISPERER", "cat_kills", "max", 1, "the ghost cats got %d", ""],
+	["CATCH OF THE DAY", "catches", "max", 1, "caught %d arrows", ""],
+	["TREASURE HUNTER", "powers", "max", 2, "grabbed %d power-ups", ""],
+	["PARTY ANIMAL", "bigs", "max", 1, "grabbed %d BIG power-ups", ""],
+	["PIN MASTER", "pin_kills", "max", 1, "pinned %d to the wall", ""],
+	["WALL DECORATION", "pinned", "max", 1, "pinned to the wall %d times", ""],
+	["LIGHTNING ROD", "d_lightning", "max", 1, "zapped by lightning %d times", ""],
+	["EXTRA CRISPY", "d_fire", "max", 1, "burned %d times", ""],
+	["STINKY", "d_poison", "max", 1, "poisoned %d times", ""],
+	["PANCAKE", "d_stomp", "max", 1, "squished %d times", ""],
+	["PINCUSHION", "d_arrow", "max", 2, "hit by %d arrows", ""],
+	["CAT FOOD", "d_cat", "max", 1, "caught by ghost cats %d times", ""],
+	["OOPS!", "self_kills", "max", 1, "knocked themselves out %d times", ""],
+	["BUTTERFINGERS", "dryfires", "max", 3, "shot an empty bow %d times", ""],
+	["TRIGGER HAPPY", "shots", "max", 15, "%d arrows shot", ""],
+	["PEACEMAKER", "shots", "min", 0, "only %d arrows shot", ""],
+	["BOUNCY CASTLE", "jumps", "max", 15, "%d jumps", ""],
+	["NINJA ROLL", "dodges", "max", 6, "%d dodges", ""],
+	["SPEED DEMON", "distance", "max", 3000, "ran %d steps", "steps"],
+	["COUCH POTATO", "distance", "min", 0, "only ran %d steps", "steps"],
+	["THE FLOOR IS LAVA", "air", "max", 900, "%d seconds in the air", "s"],
+	["FREQUENT FLYER", "fly", "max", 180, "flew for %d seconds", "s"],
+	["SURVIVOR", "alive", "max", 1200, "in the fight for %d seconds", "s"],
+	["NAP TIME", "first_out", "max", 1, "first one out %d times", ""],
+	["SPOOKY", "boos", "max", 1, "BOO'd %d players as a ghost", ""],
+	["FRIENDLY GHOST", "ghost", "max", 300, "a ghost for %d seconds", "s"],
+	["NOW YOU SEE ME", "invis", "max", 120, "invisible for %d seconds", "s"],
+	["ARROW COLLECTOR", "pickups", "max", 6, "picked up %d arrows", ""],
+	["ROUND WINNER", "round_wins", "max", 2, "won %d rounds", ""],
+	["GOOD KITTY", "pets", "max", 1, "petted the cat %d times", ""],
+	["TRICKED!", "tricks", "max", 1, "got tricked %d times", ""],
+]
+const FALLBACK := [["GOOD SPORT", "played the whole match"], ["BEST WIGGLE", "the wiggliest archer"],
+	["MAIN CHARACTER", "every story needs one"], ["WILL WIN NEXT TIME", "just warming up"],
+	["FASHION ICON", "looked great doing it"], ["CERTIFIED SILLY", "the silliest moves"],
+	["FAN FAVORITE", "everybody's favorite"], ["NEVER GAVE UP", "kept on going"]]
+const CAUSE_KEY := {1: "d_arrow", 2: "d_blast", 3: "d_stomp", 4: "d_fire", 5: "d_poison", 6: "d_walls", 7: "d_lightning", 8: "d_cat", 9: "d_spikes"}
 const STAT_KEYS := ["matches", "match_wins", "rounds", "round_wins", "kills", "arrow_kills", "stomp_kills",
 	"other_kills", "deaths", "self_kills", "catches", "shots"]
 
@@ -197,6 +243,11 @@ var stats := {}                  # "name" or "bot:name" -> the player's numbers 
 var stats_since := 0.0
 var stats_path := ""
 var pu_gallery := false          # --pu-gallery (a test knob: sim.gallery each round)
+var mstats := {}                 # p4.11: this match's numbers by seat (for the awards)
+var round_first := true          # no death yet this round (NAP TIME)
+var last_pos := {}               # seat -> where its fighter was last tick (the steps it ran)
+var last_cause := {}             # seat -> its last death's cause (a kill's kind)
+var last_awards: Array = []      # the last match's awards (match_end, and the lobby's seats message)
 var pin_demo := false            # --pin-demo (a test knob: sim.pin_demo at each FIGHT)
 var last_rec := {}               # the last report line (the host page shows its tick numbers)
 
@@ -321,6 +372,9 @@ func _physics_process(_dt: float) -> void:
 	var evs: Array = sim.take_events()
 	_log_deaths(evs)
 	_log_powers(evs)
+	_match_events(evs)
+	if phase == P.PH_PLAY:
+		_match_sample()
 	_count_events(evs)
 	pending_events.append_array(evs)
 	var t2 := Time.get_ticks_usec()
@@ -753,6 +807,8 @@ func _match_tick() -> void:
 				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths,
 				"names": _seat_names()}))
 			server_log.flush()
+			if not draw:
+				_mcount(winner, "round_wins")   # p4.11
 			for s in seats:
 				if s.kind != 0 and (s.in_round or (not draw and s.i == winner)):
 					var r := _stat(s)
@@ -774,7 +830,11 @@ func _match_tick() -> void:
 					_save_stats()
 				phase = P.PH_MATCH_END
 				phase_t = MATCH_END_TICKS
-				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points()}))
+				last_awards = _awards()   # p4.11
+				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points(),
+					"awards": last_awards}))
+				for aw in last_awards:
+					_say("🏰 [AWARD] %s: %s (%s)" % [aw["name"], aw["title"], aw["why"]])
 				_say("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s" % [round_no, winner, seats[winner].name, _score_line()])
 				server_log.store_line(JSON.stringify({"kind": "match", "t": Time.get_unix_time_from_system(), "match": match_no,
 					"rounds": round_no, "winner": winner, "people": _people(), "bot_level": sim.bot_level}))
@@ -797,6 +857,8 @@ func _round_secs() -> float:
 func _begin_match() -> void:
 	match_no += 1
 	sim.reset_powers()     # p4.9: a new match: no power-ups kept
+	mstats.clear()         # p4.11: the awards count from here
+	last_awards = []
 	for s in seats:
 		s.points = 0
 	round_no = 1
@@ -858,6 +920,8 @@ func _start_round() -> void:
 	if arena_pick == P.ARENA_MIX:
 		mix_i += 1
 	sim.start_round(seat_list)
+	round_first = true     # p4.11
+	last_pos.clear()
 	if pu_gallery:
 		sim.gallery()
 	round_deaths = []
@@ -959,6 +1023,7 @@ func _send_seats(target: int) -> void:
 			"points": s.points, "crowns": s.crowns, "in": s.in_round})
 	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
 		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.powerups else 0,
+		"awards": last_awards,
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"seats": list}
 	_out(target, JSON.stringify(msg))
@@ -1294,6 +1359,151 @@ func _log_powers(evs: Array) -> void:
 				"round": round_no, "seat": i, "name": who, "power": P.PU_NAMES.get(e[4], str(e[4])), "s": snappedf(_round_secs(), 0.01)}))
 		elif k == P.E_PU_WARN and e[4] == 1:
 			_say("🏰 [POWER] a BIG %s comes for someone behind" % P.PU_NAMES.get(e[3], str(e[3])))
+
+# p4.11: this match's numbers by seat (the awards), from the events.
+func _mcount(seat: int, key: String, n: int = 1) -> void:
+	if seat < 0 or seat >= SEATS or key == "":
+		return
+	if not mstats.has(seat):
+		mstats[seat] = {}
+	mstats[seat][key] = int(mstats[seat].get(key, 0)) + n
+
+func _match_events(evs: Array) -> void:
+	if phase < P.PH_PLAY or phase > P.PH_ROUND_END:
+		return
+	for e in evs:
+		var k: int = e[0]
+		if k == P.E_JUMP and e[4] != 1:
+			_mcount(e[3], "jumps")
+		elif k == P.E_DODGE:
+			_mcount(e[3], "dodges")
+		elif k == P.E_SHOOT:
+			_mcount(e[3], "shots")
+		elif k == P.E_DRYFIRE:
+			_mcount(e[3], "dryfires")
+		elif k == P.E_CATCH:
+			_mcount(e[3], "catches")
+		elif k == P.E_PICKUP:
+			_mcount(e[3], "pickups")
+		elif k == P.E_PU_GET:
+			_mcount(e[3], "powers")
+			if e[4] >= P.PU_CATS:
+				_mcount(e[3], "bigs")
+		elif k == P.E_DEATH:
+			_mcount(e[3], "deaths")
+			_mcount(e[3], CAUSE_KEY.get(e[4], ""))
+			last_cause[e[3]] = e[4]
+			if round_first:
+				round_first = false
+				_mcount(e[3], "first_out")
+		elif k == P.E_KILL and e[3] < SEATS:
+			if e[3] == e[4]:
+				_mcount(e[3], "self_kills")
+			else:
+				_mcount(e[3], "kills")
+				var c: int = last_cause.get(e[4], 0)
+				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills"}.get(c, ""))
+		elif k == P.E_PIN:
+			_mcount(e[3], "pinned")
+			var pf = sim.fighter(e[3])
+			if pf != null and pf.killer < SEATS:
+				_mcount(pf.killer, "pin_kills")
+		elif k == P.E_BOO and e[4] != 255:
+			_mcount(e[3], "boos")
+
+# Each tick of play: who is in the fight, in the air, flying, invisible, a ghost, and the steps run.
+func _match_sample() -> void:
+	for f in sim.fighters:
+		if f.state != P.F_DEAD:
+			_mcount(f.id, "alive")
+			if not f.on_ground:
+				_mcount(f.id, "air")
+			if f.fly:
+				_mcount(f.id, "fly")
+			if f.invis_t > 0:
+				_mcount(f.id, "invis")
+			if last_pos.has(f.id):
+				var dx := absf(SimScript.wrap_d(last_pos[f.id].x, f.x, 1920.0))
+				if dx < 40.0:
+					_mcount(f.id, "distance", int(dx))
+			last_pos[f.id] = Vector2(f.x, f.y)
+		elif f.ghost:
+			_mcount(f.id, "ghost")
+
+# The match's awards: [{seat, name, title, why}]. Each award goes to whoever leads it
+# (a tie of 3 or more: nobody; a "min" award only with 3 players or more and one clear
+# one). Everyone gets one: the rarest award they lead, else a silly one; then up to 3
+# more of the awards nobody got yet.
+func _awards() -> Array:
+	var played: Array = []
+	for st in seats:
+		if st.kind != 0 and mstats.has(st.i):
+			played.append(st.i)
+	if played.is_empty():
+		return []
+	var leads: Array = []      # [award index, [seats], value]
+	for ai in AWARDS.size():
+		var aw: Array = AWARDS[ai]
+		var best := NAN
+		var who: Array = []
+		for i in played:
+			var v := float(mstats[i].get(aw[1], 0))
+			if is_nan(best) or (aw[2] == "max" and v > best) or (aw[2] == "min" and v < best):
+				best = v
+				who = [i]
+			elif v == best:
+				who.append(i)
+		if is_nan(best) or who.size() > 2:
+			continue
+		if aw[2] == "max" and best < float(aw[3]):
+			continue
+		if aw[2] == "min" and (played.size() < 3 or who.size() > 1):
+			continue
+		leads.append([ai, who, best])
+	var order := played.duplicate()
+	for i in range(order.size() - 1, 0, -1):
+		var j: int = sim.rng.randi_range(0, i)
+		var tmp = order[i]
+		order[i] = order[j]
+		order[j] = tmp
+	var out: Array = []
+	var used := {}
+	var got := {}
+	for i in order:
+		var pick = null
+		for L in leads:
+			if used.has(L[0]) or not (i in L[1]):
+				continue
+			if pick == null or L[1].size() < pick[1].size():
+				pick = L
+		if pick != null:
+			used[pick[0]] = true
+			got[i] = true
+			out.append(_award_line(i, AWARDS[pick[0]], pick[2]))
+	var fb: int = sim.rng.randi() % FALLBACK.size()
+	for i in order:
+		if not got.has(i):
+			var f: Array = FALLBACK[fb % FALLBACK.size()]
+			fb += 1
+			out.append({"seat": i, "name": seats[i].name, "title": f[0], "why": f[1]})
+	var extra := 0
+	for L in leads:
+		if extra >= 3:
+			break
+		if used.has(L[0]):
+			continue
+		used[L[0]] = true
+		extra += 1
+		out.append(_award_line(L[1][0], AWARDS[L[0]], L[2]))
+	return out
+
+func _award_line(seat: int, aw: Array, value: float) -> Dictionary:
+	var n := int(value)
+	if aw[5] == "s":
+		n = int(round(value / 60.0))
+	elif aw[5] == "steps":
+		n = int(round(value / 30.0))
+	return {"seat": seat, "name": seats[seat].name, "title": aw[0], "why": aw[4] % n}
 
 func _count_events(evs: Array) -> void:
 	for e in evs:

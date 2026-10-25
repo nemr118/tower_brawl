@@ -12,7 +12,8 @@
 #             its BIG power-up), u8 orbs, orb x (u8 state, u8 kind, u8 big, s16 x, s16 y,
 #             u8 progress 0..255, u8 the seat a BIG one came for), u8 cats, cat x (u8 owner,
 #             u8 target, s16 x, s16 y), u8 the rain's owner (NO_ONE: no rain), u8 its quarter
-#             seconds left
+#             seconds left, u8 ghosts, ghost x (p4.11: u8 seat, s16 x, s16 y, u8 flags: 1 popped,
+#             2 dashing, 4 ready to BOO)
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
 #   arrow     u16 id, u8 kind | state << 4 | 0x40 a BIG arrow (p4.9), then stuck or in a body (p4.10): s16 x, s16 y, u8 angle (256 steps);
@@ -170,6 +171,9 @@ const E_SHIELD_POP := 24 # a = fighter: its shield took an arrow; b = the arrow'
 const E_CAT_POOF := 25   # a ghost cat is gone: a = owner; b = 1 caught by a dodge
 const E_FREEZE := 26     # a = the fighter who froze everyone else
 const E_PIN := 27        # p4.10: an arrow pins a body to a wall: x, y the arrow in the wall; a = fighter, b = 1 the wall on the right
+const E_GHOST := 28      # p4.11: a person's ghost rises from the body: a = fighter
+const E_BOO := 29        # a ghost BOOs: a = the ghost, b = the one it shoved (255: the dash starts)
+const E_GHOST_POP := 30  # an arrow pops a ghost (gone 3 s): a = the ghost, b = the shooter
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)

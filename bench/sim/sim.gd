@@ -144,6 +144,19 @@ const CARRY_DRAG := 0.96            # and slows by this a tick (it goes about 17
 const CARRY_G := 0.3
 const CARRY_TICKS := 22
 const PIN_MIN := 3.0
+# p4.11 ghosts (the user picked the research's idea: keep playing after you are out):
+# GHOST_WAIT after a person's death its ghost rises from the body; it floats through
+# walls with the stick at GHOST_SPEED; letting go of shoot dashes BOO_TICKS at BOO_SPEED
+# the way it aims, and the first living fighter within BOO_R is shoved (knocked, not
+# killed; a dodge is safe); then it waits BOO_CD. An arrow through it pops it for GHOST_POP.
+const GHOST_WAIT := 75
+const GHOST_SPEED := 4.5
+const GHOST_ACCEL := 0.35
+const BOO_SPEED := 15.0
+const BOO_TICKS := 10
+const BOO_CD := 150
+const BOO_R := 42.0
+const GHOST_POP := 180
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -207,6 +220,15 @@ class Fighter:
 	var spike_up: bool = false  # the spiked shield is up
 	var spike_regen: int = 0    # ticks until it is back after an arrow
 	var pinned: bool = false    # p4.10: dead, pinned to a wall by the arrow that killed it
+	var ghost: bool = false     # p4.11: a person's ghost floats (gx, gy its middle), after ghost_wait
+	var ghost_wait: int = 0
+	var gx: float = 0.0
+	var gy: float = 0.0
+	var gvx: float = 0.0
+	var gvy: float = 0.0
+	var boo_t: int = 0          # a BOO dash's ticks left
+	var boo_cd: int = 0         # ticks until it can BOO again
+	var popped_t: int = 0       # an arrow popped the ghost: gone this long
 	var carry_t: int = 0        # p4.10: dead, still carried by the arrow that killed it
 
 class Arrow:
@@ -272,6 +294,7 @@ var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the
 var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
 var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
+var ghosts := true              # p4.11: a person's ghost rises after its death (the game; the benchmark has no people)
 var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
                                 # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
@@ -437,6 +460,17 @@ func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 	f.buttons = buttons
 	f.aim = fposmod(aim * TAU / 3600.0, TAU)
 	f.vdir = (1 if buttons & P.B_DOWN else 0) - (1 if buttons & (P.B_UP | P.B_JUMP) else 0)
+	if f.state == P.F_DEAD and f.ghost and not frozen:
+		# p4.11 a ghost: the stick floats it; letting go of shoot BOOs the way it aims
+		f.move_dir = (1 if buttons & P.B_RIGHT else 0) - (1 if buttons & P.B_LEFT else 0)
+		if (prev & P.B_SHOOT) and not (buttons & P.B_SHOOT) and not (buttons & P.B_CANCEL) and f.boo_cd == 0 and f.popped_t == 0:
+			var bd := Vector2.from_angle(f.aim)
+			f.gvx = bd.x * BOO_SPEED
+			f.gvy = bd.y * BOO_SPEED
+			f.boo_t = BOO_TICKS
+			f.boo_cd = BOO_CD
+			_event(P.E_BOO, int(f.gx), int(f.gy), f.id, 255)
+		return
 	if f.state == P.F_DEAD or frozen or f.freeze_t > 0:
 		f.move_dir = 0
 		if f.freeze_t > 0:      # p4.9 FREEZE: frozen solid: no run, jump, shot or dodge
@@ -623,6 +657,8 @@ func _kill(f: Fighter, killer: int, cause: int) -> void:
 	f.drawn = false
 	f.shot_wait = false
 	f.killer = killer
+	if ghosts and not f.bot:
+		f.ghost_wait = GHOST_WAIT    # p4.11: a person's ghost rises soon
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
 	_event(P.E_KILL, f.x + HALF_W, f.y + MID_Y, killer if killer >= 0 and killer < 255 else 255, f.id)   # p4.8: who did it
 
@@ -657,6 +693,8 @@ func _update_fighter(f: Fighter) -> void:
 				f.vy = -f.vy * 0.3 if f.vy > 6.0 else 0.0
 			f.x = posmod(f.x, W)
 			f.y = posmod(f.y, H)
+		if not f.bot:
+			_update_ghost(f)
 		if f.dead_t <= 0 and respawn:
 			_respawn(f)
 		return
@@ -799,6 +837,57 @@ func _update_fighter(f: Fighter) -> void:
 	f.x = posmod(f.x, W)
 	f.y = posmod(f.y, H)
 	_fighter_zones(f)
+
+# p4.11: a person's ghost: it rises from the body after GHOST_WAIT, floats by the stick
+# through walls, and while a BOO dash lasts the first living fighter it meets (not one
+# dodging) is shoved. Popped by an arrow: it waits where it is, out of sight.
+func _update_ghost(f: Fighter) -> void:
+	if predicting:
+		return
+	if not f.ghost:
+		if f.ghost_wait > 0:
+			f.ghost_wait -= 1
+			if f.ghost_wait == 0:
+				f.ghost = true
+				f.gx = float(f.x + HALF_W)
+				f.gy = float(f.y + MID_Y) - 30.0
+				f.gvx = 0.0
+				f.gvy = -2.0
+				_event(P.E_GHOST, int(f.gx), int(f.gy), f.id, 0)
+		return
+	if f.boo_cd > 0:
+		f.boo_cd -= 1
+	if f.popped_t > 0:
+		f.popped_t -= 1
+		return
+	if f.boo_t > 0:
+		f.boo_t -= 1
+		for o in fighters:
+			if o == f or o.state == P.F_DEAD or o.state == P.F_DODGE:
+				continue
+			var dx := wrap_d(f.gx, o.x + HALF_W, W)
+			var dy := wrap_d(f.gy, o.y + MID_Y, H)
+			if dx * dx + dy * dy < BOO_R * BOO_R:
+				var push := signf(dx) if absf(dx) > 2.0 else signf(f.gvx)
+				_hurt(o, push * 11.0, -7.0)
+				_event(P.E_BOO, int(o.x + HALF_W), int(o.y + MID_Y), f.id, o.id)
+				f.boo_t = 0
+				break
+	else:
+		f.gvx = move_toward(f.gvx, GHOST_SPEED * f.move_dir, GHOST_ACCEL)
+		f.gvy = move_toward(f.gvy, GHOST_SPEED * f.vdir, GHOST_ACCEL)
+	f.gx = fposmod(f.gx + f.gvx, W)
+	f.gy = fposmod(f.gy + f.gvy, H)
+
+# p4.11: a flying arrow through a ghost (not its own shooter's) pops it for GHOST_POP.
+func _arrow_pops_ghosts(a: Arrow) -> void:
+	for f in fighters:
+		if not f.ghost or f.popped_t > 0 or f.id == a.owner:
+			continue
+		if absf(wrap_d(a.x, f.gx, W)) < 26.0 and absf(wrap_d(a.y, f.gy, H)) < 32.0:
+			f.popped_t = GHOST_POP
+			f.boo_t = 0
+			_event(P.E_GHOST_POP, int(f.gx), int(f.gy), f.id, a.owner)
 
 # p4.10: a carried body meets a wall: it hangs there, and the arrow in it sticks in
 # the wall, pointing in (a living fighter can take that arrow: the body falls then).
@@ -1057,6 +1146,8 @@ func _update_arrow(a: Arrow) -> void:
 		a.y = fposmod(ny, H)
 		if a.state == P.S_FLY and _arrow_hit_fighters(a):
 			return
+	if a.state == P.S_FLY and not predicting:
+		_arrow_pops_ghosts(a)
 
 func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 	var was_flying := a.state == P.S_FLY
@@ -1837,6 +1928,16 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(c.y))
 	buf.put_u8(rain_owner if rain_t > 0 and rain_owner >= 0 else P.NO_ONE)
 	buf.put_u8(mini(255, ceili(rain_t / 15.0)))
+	var gl: Array = []           # p4.11 the ghosts
+	for f in fighters:
+		if f.ghost and f.state == P.F_DEAD:
+			gl.append(f)
+	buf.put_u8(gl.size())
+	for f in gl:
+		buf.put_u8(f.id)
+		buf.put_16(int(f.gx))
+		buf.put_16(int(f.gy))
+		buf.put_u8((1 if f.popped_t > 0 else 0) | (2 if f.boo_t > 0 else 0) | (4 if f.boo_cd == 0 else 0))
 
 # The snapshot's fighter flags (proto.gd): 1 facing right, 2 on the ground, 4 at a
 # wall (p4.10: a dead one, pinned to a wall), 8 burning, 16 poisoned, 32 rolling or
