@@ -1157,7 +1157,7 @@ func _enforce_cap() -> void:
 # ------------------------------------------------------------------ power-ups (p4.9)
 # One tick: the rain slows everyone but its owner, the ghost cats hunt, an orb's
 # warning turns into the strike, a waiting orb is taken (or fades), and with no orb
-# waiting the next one's clock runs (not once the round is decided).
+# waiting the next one's clock runs. Once the round is decided nothing more happens.
 func _update_powers() -> void:
 	if predicting or frozen:
 		return
@@ -1166,6 +1166,13 @@ func _update_powers() -> void:
 		for f in fighters:
 			if f.id != rain_owner and f.state != P.F_DEAD:
 				f.slow_t = maxi(f.slow_t, rain_t)
+	if alive_count() <= 1 and fighters.size() > 1:
+		# the round is decided: the power-ups hurt nobody now (as the purple walls melt):
+		# the cats go, a warning never strikes
+		for c in cats:
+			_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 0)
+		cats.clear()
+		return
 	_update_cats()
 	if not powerups:
 		return
