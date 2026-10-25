@@ -29,6 +29,8 @@ const SWITCHES := {
 	# every arena (client/powers_view.gd, p4.13): ComfyUI's power-up pictures (assets/pu_icons.png) in the
 	# orbs, the badges and your power-up card, on darker discs (the user said yes)
 	"icons2": true,
+	# the winner's screen (client/winner_view.gd, p4.13): a ComfyUI picture on each award card (assets/award_art.png)
+	"award_art": true,
 }
 
 static var _off := {}

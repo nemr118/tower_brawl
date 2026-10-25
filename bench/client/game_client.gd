@@ -603,7 +603,8 @@ func _on_message(m: Dictionary) -> void:
 			seat_names.append(str(st.get("name", "")))
 		match_msg = m
 		deathcam.can_skip = my_seat >= 0
-		deathcam.start(int(m.get("winner", -1)), seat_names)   # p4.8: the winner's kills first, if any
+		if not opts.has("nocam"):   # p4.13 test knob ?nocam: straight to the winner's screen (pictures)
+			deathcam.start(int(m.get("winner", -1)), seat_names)   # p4.8: the winner's kills first, if any
 
 func _say(text: String, secs: float) -> void:
 	status = text

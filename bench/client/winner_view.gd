@@ -9,6 +9,8 @@ extends RefCounted
 
 const Art = preload("res://client/lobby_art.gd")
 const World = preload("res://client/world.gd")
+const Polish = preload("res://client/polish.gd")
+const AwardArt = preload("res://client/award_art.gd")   # p4.13 polish "award_art": a picture on each award card
 const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
 const FIGHTER := 3.0              # the fighter: 3 x its 128 px frame
@@ -83,14 +85,20 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 			c.draw_style_box(Art.box(Color(0.07, 0.04, 0.11, 0.94), pc.darkened(0.2), 12, 2, 4, Color(0, 0, 0, 0.45), 10), r)
 			c.draw_rect(Rect2(x + 4, y + 4, 12, r.size.y - 12), pc)
 			var title := str(aw.get("title", ""))
-			Art.text(c, Art.DISPLAY, Vector2(x + 30, y + r.size.y * 0.46), title, Art.fit_size(Art.DISPLAY, title, 34, 450, 18),
+			var tx := x + 30.0          # the words start here (after the picture, when there is one)
+			if Polish.on("award_art"):
+				var side := r.size.y - 14.0
+				if AwardArt.draw(c, title, Rect2(x + 22.0, y + 7.0, side, side)):
+					tx = x + 30.0 + side
+			var tw := 450.0 - (tx - x - 30.0)
+			Art.text(c, Art.DISPLAY, Vector2(tx, y + r.size.y * 0.46), title, Art.fit_size(Art.DISPLAY, title, 34, tw, 18),
 				Color(1.0, 0.86, 0.35), 5, edge, HORIZONTAL_ALIGNMENT_LEFT, -1, false)
 			var nm := str(aw.get("name", ""))
 			var why := str(aw.get("why", ""))
 			var nw := Art.BODY.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x
-			c.draw_string(Art.BODY, Vector2(x + 30, y + r.size.y * 0.82), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, pc.lightened(0.35))
-			c.draw_string(Art.BODY, Vector2(x + 38 + nw, y + r.size.y * 0.82), "· " + why, HORIZONTAL_ALIGNMENT_LEFT, 440 - nw,
-				Art.fit_size(Art.BODY, "· " + why, 26, 440 - nw, 16), Color(0.9, 0.9, 0.96))
+			c.draw_string(Art.BODY, Vector2(tx, y + r.size.y * 0.82), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, pc.lightened(0.35))
+			c.draw_string(Art.BODY, Vector2(tx + 8 + nw, y + r.size.y * 0.82), "· " + why, HORIZONTAL_ALIGNMENT_LEFT, tw - 10 - nw,
+				Art.fit_size(Art.BODY, "· " + why, 26, tw - 10 - nw, 16), Color(0.9, 0.9, 0.96))
 	# the lobby comes back: a pill with a bar that runs out
 	var secs := ceili(left_ticks / 60.0)
 	var pr := Rect2(660, 986, 600, 62)
