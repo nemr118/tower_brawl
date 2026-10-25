@@ -257,6 +257,8 @@ func _process(delta: float) -> void:
 			world.on_event(e)
 			if e[0] == P.E_PU_GET and e[3] == my_seat:
 				hud.power_banner(e[4])   # p4.9: you took a power-up: what it is and what it does
+			elif e[0] == P.E_GHOST and e[3] == my_seat:
+				hud.say("YOU'RE A GHOST! Fly anywhere with the stick. Let go of shoot to BOO someone. Arrows pop you.", 7.0)
 		world.set_me(my_seat, phase)
 		world.render(view, delta)
 		deathcam.record(view, evs, delta)
@@ -269,8 +271,16 @@ func _process(delta: float) -> void:
 		sticks.arrows_left = int(me["arrows"])
 	if shoot_held and not me.is_empty() and not deathcam.playing:
 		aim_on = int(me["state"]) == P.F_NORMAL
+		var from := Vector2(me["x"] + 18.0, me["y"] + 28.0)
+		var empty: bool = int(me["arrows"]) <= 0
+		if int(me["state"]) == P.F_DEAD:   # p4.11: your ghost aims its BOO
+			for g in view.get("ghosts", []):
+				if int(g["seat"]) == my_seat and (int(g["flags"]) & 1) == 0:
+					from = Vector2(g["x"], g["y"])
+					aim_on = true
+					empty = false
 		var armed: bool = sticks.aim_armed if (sticks.active and sticks.visible) else true   # the mouse held: armed
-		world.show_aim(Vector2(me["x"] + 18.0, me["y"] + 28.0), aim_deg10 * TAU / 3600.0, aim_on, armed, int(me["arrows"]) <= 0)
+		world.show_aim(from, aim_deg10 * TAU / 3600.0, aim_on, armed, empty)
 	if not aim_on:
 		world.show_aim(Vector2.ZERO, 0.0, false)
 	if predicting:   # the HUD shows your arrows as the prediction has them (a shot counts at once)

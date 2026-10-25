@@ -1503,7 +1503,11 @@ func _award_line(seat: int, aw: Array, value: float) -> Dictionary:
 		n = int(round(value / 60.0))
 	elif aw[5] == "steps":
 		n = int(round(value / 30.0))
-	return {"seat": seat, "name": seats[seat].name, "title": aw[0], "why": aw[4] % n}
+	var why: String = aw[4] % n
+	if n == 1:   # one of them, not ones
+		for pl in [" knockouts", " times", " power-ups", " stomps", " arrows", " jumps", " dodges", " players", " rounds", " seconds", " steps"]:
+			why = why.replace(pl, pl.substr(0, pl.length() - 1))
+	return {"seat": seat, "name": seats[seat].name, "title": aw[0], "why": why}
 
 func _count_events(evs: Array) -> void:
 	for e in evs:

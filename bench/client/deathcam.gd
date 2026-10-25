@@ -149,7 +149,7 @@ static func _copy(v: Dictionary) -> Dictionary:
 		cl.append(c.duplicate())
 	return {"fighters": fl, "arrows": al, "zones": zl, "arena": v.get("arena", 0), "walls": v.get("walls", 0.0),
 		"walls_deadly": v.get("walls_deadly", false), "powers": v.get("powers", {}).duplicate(true), "orbs": ol, "cats": cl,
-		"rain": v.get("rain", {}).duplicate()}
+		"rain": v.get("rain", {}).duplicate(), "ghosts": v.get("ghosts", []).duplicate(true)}
 
 # ------------------------------------------------------------------ the montage
 # True when the winner has a kill to show.

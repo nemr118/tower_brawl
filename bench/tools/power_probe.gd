@@ -190,6 +190,54 @@ func _init() -> void:
 		s4.step()
 	_check(a2.dead and not v2.pinned and v2.y > hang_y, "taking the pinning arrow lets the body fall")
 	print("🧪 [PowerProbe] deaths: carried %d px in 12 ticks; pinned on the wall at y %d; it fell to y %d once the arrow was taken" % [carried, hang_y, v2.y])
+	# p4.11 ghosts: a person's ghost rises GHOST_WAIT after its death, floats by the stick
+	# (through walls), its BOO dash shoves a living fighter (not a dead one), an arrow pops it
+	var s5 = SimScript.new(0, 24, 4)
+	s5.respawn = false
+	s5.set_arena(1)
+	s5.start_round([{"id": 0, "bot": false}, {"id": 1, "bot": true}, {"id": 2, "bot": true}])
+	s5.frozen = false
+	var pg = s5.fighters[0]
+	var tg = s5.fighters[1]
+	s5._kill(pg, 1, 1)
+	_check(not pg.ghost and pg.ghost_wait == SimScript.GHOST_WAIT, "a person's ghost waits to rise")
+	var bot_dead = s5.fighters[2]
+	s5._kill(bot_dead, 1, 1)
+	for tick in SimScript.GHOST_WAIT + 2:
+		s5.step()
+	_check(pg.ghost and not bot_dead.ghost, "the person's ghost rose, a bot's did not")
+	var gx0: float = pg.gx
+	for tick in 30:
+		s5.apply_input(pg, P.B_RIGHT, 0)
+		s5.step()
+	_check(SimScript.wrap_d(gx0, pg.gx, 1920) > 60.0, "the stick floats the ghost (it moved %.0f px)" % SimScript.wrap_d(gx0, pg.gx, 1920))
+	pg.gx = float(tg.x + 18 - 100)
+	pg.gy = float(tg.y + 31)
+	pg.boo_cd = 0
+	tg.state = P.F_NORMAL
+	s5.apply_input(pg, P.B_SHOOT, 0)
+	s5.apply_input(pg, 0, 0)       # let go of shoot, aimed right (0): BOO
+	var shoved := false
+	for tick in 12:
+		s5.step()
+		for e in s5.take_events():
+			if e[0] == P.E_BOO and e[4] == tg.id:
+				shoved = true
+	_check(shoved and tg.state != P.F_DEAD, "the BOO shoves a living fighter (and never kills it)")
+	pg.gx = 900.0      # in open air on THE KEEP (a ghost inside a wall is safe: arrows stick in the wall)
+	pg.gy = 300.0
+	pg.gvx = 0.0
+	pg.gvy = 0.0
+	var ar := SimScript.Arrow.new()
+	ar.x = pg.gx - 20.0
+	ar.y = pg.gy
+	ar.vx = 16.0
+	ar.owner = 1
+	ar.t = 20
+	s5.arrows.append(ar)
+	s5.step()
+	_check(pg.popped_t > 0, "an arrow pops the ghost")
+	print("🧪 [PowerProbe] ghosts: rose after %d ticks, floated, BOO'd, popped by an arrow" % SimScript.GHOST_WAIT)
 	# ghost cats: one hunts a fighter standing still (it dies, cause 8), one meets a
 	# fighter dodging (the cat is caught: E_CAT_POOF with b = 1, nobody dies)
 	var s3 = SimScript.new(0, 24, 5)

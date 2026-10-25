@@ -37,6 +37,7 @@ var arena_btn := Button.new()
 var power_btn := Button.new()     # p4.9: POWER-UPS on or off (p4.5's POWER ARROWS before)
 var status_label := Label.new()
 var help := Label.new()
+var awards_panel := _Awards.new()   # p4.11: the last match's awards, right of the lobby
 var seated := false
 var bots_wanted := 7
 var phone := false
@@ -96,6 +97,28 @@ func _init() -> void:
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_label(help, HELP_PC, Vector2(470, 968), Vector2(980, 64), 19, Color(0.6, 0.6, 0.66), HORIZONTAL_ALIGNMENT_LEFT)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD
+	awards_panel.position = Vector2(1524, 40)
+	awards_panel.size = Vector2(380, 1000)
+	awards_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(awards_panel)
+
+# p4.11: the last match's awards, on a card right of the lobby (the seats message
+# carries them until the next match starts).
+class _Awards extends Control:
+	var list: Array = []
+	func _draw() -> void:
+		if list.is_empty():
+			return
+		var font := ThemeDB.fallback_font
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.03, 0.03, 0.05, 0.84))
+		draw_string(font, Vector2(16, 44), "LAST MATCH AWARDS", HORIZONTAL_ALIGNMENT_LEFT, size.x - 32, 24, Color(1.0, 0.82, 0.3))
+		var y := 92.0
+		for aw in list.slice(0, 12):
+			var seat := int(aw.get("seat", 0))
+			draw_string(font, Vector2(16, y), str(aw.get("title", "")), HORIZONTAL_ALIGNMENT_LEFT, size.x - 32, 24, Color(1.0, 0.88, 0.45))
+			draw_string(font, Vector2(16, y + 26), "%s · %s" % [aw.get("name", ""), aw.get("why", "")], HORIZONTAL_ALIGNMENT_LEFT, size.x - 32, 17,
+				World.TEAM[seat % 8].lightened(0.35))
+			y += 66.0
 
 func _label(l: Label, text: String, pos: Vector2, size: Vector2, font_size: int, col: Color, align: int) -> void:
 	l.text = text
@@ -142,6 +165,10 @@ func _on_join_btn() -> void:
 # a while (game_client.gd STUCK_S), else "".
 func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, connected: bool, version_bad: bool, stuck_url: String = "") -> void:
 	seated = my_seat >= 0
+	var aw: Array = m.get("awards", [])
+	if aw != awards_panel.list:
+		awards_panel.list = aw
+		awards_panel.queue_redraw()
 	join_btn.text = "LEAVE" if seated else "JOIN"
 	join_btn.disabled = not connected or version_bad
 	name_edit.editable = not seated

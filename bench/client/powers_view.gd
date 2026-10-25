@@ -189,6 +189,18 @@ func on_event(e: Array) -> void:
 			pops.append([pos + Vector2(0, -20), "CAUGHT!", Color(0.7, 1.0, 0.7), 0.9, 0.9, false, ""])
 	elif type == P.E_PU_GONE:
 		rings.append([pos, 46.0, Color(1, 1, 1, 0.7), 0.3, 0.3])
+	elif type == P.E_GHOST:      # p4.11: a ghost rises from its body
+		rings.append([pos, 60.0, Color(0.85, 0.9, 1.0, 0.8), 0.5, 0.5])
+	elif type == P.E_BOO:
+		if e[4] == 255:          # the dash starts: a whoosh
+			rings.append([pos, 40.0, Color(0.9, 0.95, 1.0, 0.7), 0.25, 0.25])
+		else:                    # it shoved someone: BOO!
+			pops.append([pos + Vector2(0, -30), "BOO!", Color(0.92, 0.96, 1.0), 1.0, 1.0, true, ""])
+			rings.append([pos, 80.0, Color(0.9, 0.95, 1.0, 0.9), 0.3, 0.3])
+			world.fx.shake = maxf(world.fx.shake, 5.0)
+	elif type == P.E_GHOST_POP:  # an arrow popped a ghost
+		rings.append([pos, 55.0, Color(0.8, 0.85, 1.0, 0.9), 0.3, 0.3])
+		pops.append([pos + Vector2(0, -20), "POP!", Color(0.8, 0.85, 1.0), 0.8, 0.8, false, ""])
 
 # ------------------------------------------------------------------ the main layer (never darkened)
 func _draw() -> void:
@@ -211,6 +223,8 @@ func _draw() -> void:
 		_draw_kit(f, powers[seat], 0.35 if (bits & P.PW_INVIS) != 0 else 1.0)
 	for c in view.get("cats", []):
 		_draw_cat(c)
+	for g in view.get("ghosts", []):
+		_draw_ghost(g)
 	for r in rings:
 		var k: float = 1.0 - r[4] / r[3]
 		var col: Color = r[2]
@@ -479,6 +493,35 @@ func _draw_cat(cd: Dictionary) -> void:
 		tail.append(c + Vector2(-dir * (26.0 + i * 5.0), -6.0 - i * 4.0 + sin(t * 8.0 + i * 0.8) * 4.0))
 	draw_polyline(tail, line, 8.0)
 	draw_polyline(tail, body, 5.0)
+
+# p4.11: a person's ghost: a floating sheet in its colour, eyes, a wavy hem; yours has a
+# white outline; dashing (a BOO), a streak behind and an open mouth; popped: out of sight.
+func _draw_ghost(g: Dictionary) -> void:
+	var flags := int(g["flags"])
+	if flags & 1:
+		return
+	var seat := int(g["seat"])
+	var c := Vector2(g["x"], g["y"] + sin(t * 3.0 + seat) * 4.0)
+	var tc: Color = team[seat % team.size()] if team.size() > 0 else Color.WHITE
+	var body := Color(tc.lerp(Color.WHITE, 0.6), 0.7)
+	if flags & 2:   # a BOO dash: whoosh rings around it
+		for k in 3:
+			draw_arc(c, 28.0 + k * 7.0, 0.0, TAU, 24, Color(body, 0.35 - k * 0.1), 3.0)
+	var pts := PackedVector2Array()
+	for i in 13:
+		pts.append(c + Vector2.from_angle(PI + PI * i / 12.0) * 22.0)
+	for k in 7:
+		var x := 22.0 - k * (44.0 / 6.0)
+		pts.append(c + Vector2(x, 26.0 + (6.0 if k % 2 == 0 else 0.0) + sin(t * 8.0 + k) * 2.0))
+	draw_colored_polygon(pts, body)
+	pts.append(pts[0])
+	draw_polyline(pts, Color(1, 1, 1, 0.9 if seat == me else 0.35), 2.5 if seat == me else 1.5)
+	for side in [-1.0, 1.0]:
+		draw_circle(c + Vector2(side * 8.0, -4.0), 4.5, Color(0.08, 0.06, 0.15, 0.9))
+	if flags & 2:
+		draw_circle(c + Vector2(0, 9), 5.0, Color(0.08, 0.06, 0.15, 0.9))
+	if seat == me and (flags & 4):
+		draw_arc(c, 30.0, 0.0, TAU, 24, Color(1, 1, 1, 0.25 + 0.15 * sin(t * 4.0)), 2.0)
 
 func _text_c(at: Vector2, s: String, size: int, col: Color) -> void:
 	var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x

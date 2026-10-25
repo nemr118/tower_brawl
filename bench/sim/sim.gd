@@ -2000,6 +2000,15 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u16(mini(f.spike_regen, 65535))
 	buf.put_u8(1 if f.pinned else 0)   # p4.10
 	buf.put_u8(f.carry_t)
+	buf.put_u8(1 if f.ghost else 0)    # p4.11 the ghost
+	buf.put_u8(f.ghost_wait)
+	buf.put_double(f.gx)
+	buf.put_double(f.gy)
+	buf.put_double(f.gvx)
+	buf.put_double(f.gvy)
+	buf.put_u8(f.boo_t)
+	buf.put_u8(f.boo_cd)
+	buf.put_u8(f.popped_t)
 
 func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.x = buf.get_16()
@@ -2056,3 +2065,12 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.spike_regen = buf.get_u16()
 	f.pinned = buf.get_u8() != 0
 	f.carry_t = buf.get_u8()
+	f.ghost = buf.get_u8() != 0
+	f.ghost_wait = buf.get_u8()
+	f.gx = buf.get_double()
+	f.gy = buf.get_double()
+	f.gvx = buf.get_double()
+	f.gvy = buf.get_double()
+	f.boo_t = buf.get_u8()
+	f.boo_cd = buf.get_u8()
+	f.popped_t = buf.get_u8()

@@ -35,6 +35,7 @@ var show_info := false
 var note := ""                 # a short line at the bottom (the look stepped down), for note_t seconds
 var note_t := 0.0
 var hidden := true
+var awards: Array = []         # p4.11: the match's awards (match_end), on the winner's screen
 var banner_kind := 0           # p4.9: the power-up you just took (its banner), for banner_t seconds
 var banner_t := 0.0
 var canvas := _Canvas.new()
@@ -75,6 +76,7 @@ func round_end(m: Dictionary) -> void:
 		banner_color = World.TEAM[w % 8]
 
 func match_end(m: Dictionary) -> void:
+	awards = m.get("awards", [])
 	var w := int(m.get("winner", 0))
 	banner = "%s WINS THE MATCH" % str(m.get("name", "")).to_upper()
 	banner_color = World.TEAM[w % 8]
@@ -189,10 +191,32 @@ func _paint(c: Control) -> void:
 	elif phase == P.PH_ROUND_END and banner != "":
 		_banner(c, font, banner, 78, banner_color, 440)
 	elif phase == P.PH_MATCH_END and banner != "":
-		_banner(c, font, banner, 90, banner_color, 440)
-		_banner(c, font, "THE LOBBY OPENS IN %d" % ceili(left / 60.0), 40, Color(0.85, 0.85, 0.9), 520)
+		_banner(c, font, banner, 90, banner_color, 300)
+		_banner(c, font, "THE LOBBY OPENS IN %d" % ceili(left / 60.0), 36, Color(0.85, 0.85, 0.9), 360)
+		_awards(c, font)
 	if banner_t > 0.0 and banner_kind > 0:
 		_power_banner(c, font)
+
+# p4.11: the awards under the winner's banner, two columns: the award in gold, under
+# it who and why (the name in its colour).
+func _awards(c: Control, font: Font) -> void:
+	if awards.is_empty():
+		return
+	_banner(c, font, "AWARDS", 40, Color(1.0, 0.82, 0.3), 432)
+	for i in mini(awards.size(), 12):
+		var aw: Dictionary = awards[i]
+		var col := i % 2
+		var row := i / 2
+		var x := 330.0 + col * 660.0
+		var y := 490.0 + row * 88.0
+		c.draw_rect(Rect2(x - 12, y - 30, 620, 80), Color(0.03, 0.03, 0.07, 0.72))
+		c.draw_string_outline(font, Vector2(x, y), str(aw.get("title", "")), HORIZONTAL_ALIGNMENT_LEFT, 600, 32, 5, Color.BLACK)
+		c.draw_string(font, Vector2(x, y), str(aw.get("title", "")), HORIZONTAL_ALIGNMENT_LEFT, 600, 32, Color(1.0, 0.85, 0.35))
+		var seat := int(aw.get("seat", 0))
+		var who := str(aw.get("name", ""))
+		c.draw_string(font, Vector2(x, y + 36), who, HORIZONTAL_ALIGNMENT_LEFT, 300, 24, World.TEAM[seat % 8].lightened(0.3))
+		var ww := font.get_string_size(who, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x
+		c.draw_string(font, Vector2(x + ww + 10, y + 36), str(aw.get("why", "")), HORIZONTAL_ALIGNMENT_LEFT, 590 - ww, 22, Color(0.85, 0.85, 0.92))
 
 # The power-up chips under a seat's card: its arrow kind, SHIELD, INFINITE, FLY,
 # BIG, then a BIG power-up with its seconds left, and FROZEN or SLOW.

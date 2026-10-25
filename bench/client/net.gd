@@ -387,6 +387,7 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 	var orbs: Array = []
 	var cats: Array = []
 	var rain := {"owner": P.NO_ONE, "left": 0.0}
+	var ghosts: Array = []
 	if b.get_available_bytes() > 0 and b.get_u8() == P.PW_TAG:
 		for i in b.get_u8():
 			var seat := b.get_u8()
@@ -397,7 +398,11 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 		for i in b.get_u8():
 			cats.append({"owner": b.get_u8(), "target": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16())})
 		rain = {"owner": b.get_u8(), "left": b.get_u8() / 4.0}
+		if b.get_available_bytes() > 0:      # p4.11 the ghosts
+			for i in b.get_u8():
+				ghosts.append({"seat": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()), "flags": b.get_u8()})
 	s["powers"] = powers
+	s["ghosts"] = ghosts
 	s["orbs"] = orbs
 	s["cats"] = cats
 	s["rain"] = rain
@@ -514,9 +519,21 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 			cats.append(c)
 		else:
 			cats.append(cb)
+	# p4.11: the ghosts glide too (matched by seat)
+	var ghosts: Array = []
+	var ga := {}
+	for g in a.get("ghosts", []):
+		ga[int(g["seat"])] = g
+	for g in b.get("ghosts", []):
+		var gd: Dictionary = g.duplicate()
+		var g0: Dictionary = ga.get(int(g["seat"]), {})
+		if not g0.is_empty() and absf(g0["x"] - g["x"]) < 300.0 and absf(g0["y"] - g["y"]) < 300.0:
+			gd["x"] = _wlerp(g0["x"], g["x"], t, W)
+			gd["y"] = _wlerp(g0["y"], g["y"], t, H)
+		ghosts.append(gd)
 	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"], "arena": b.get("arena", 0),
 		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false),
-		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {})}
+		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {}), "ghosts": ghosts}
 
 # The network numbers since the last call, for a bench card.
 func take_window() -> Dictionary:
