@@ -18,7 +18,8 @@
 #   server=wss://host:8091  name=Ava  look=t2 (a test look, world.gd VARIANTS: no
 #   setting, no step-down)  join  start
 #   bots=N  arena=N (the lobby's ARENA once seated: -1 MIX, 1 THE KEEP, 2 THE
-#   BRIDGES, 0 the bench)  info (the version, fps and ping at the bottom)  bench (the old
+#   BRIDGES, 0 the bench)  bolt_s=N (p4.9 test knob: each lightning bolt held N s)
+#   info (the version, fps and ping at the bottom)  bench (the old
 #   benchmark page instead, with its own options)  lag=MS jitter=MS (a test
 #   knob: every packet sent and got waits MS/2, plus up to jitter, client/net.gd)
 #   slow=MS (a test knob: every frame takes at least MS, for the step-down)
@@ -128,6 +129,8 @@ func _ready() -> void:
 	sub.add_child(world)
 	world.setup(Vector2i(1920, 1080), false, 1.0)
 	look_test = opts.has("look") and world.set_variant(str(opts["look"]))
+	if opts.has("bolt_s"):
+		world.pview.bolt_s = float(opts["bolt_s"])   # p4.9 a test knob: the bolt held for pictures
 	if not look_test:
 		look_pick = _storage_get(LOOK_KEY)
 		if not PICKS.has(look_pick):

@@ -30,6 +30,8 @@ ap.add_argument("--secs", type=float, default=12.0)
 ap.add_argument("--wait", type=float, default=0.0, help="seconds of play before the first picture")
 ap.add_argument("--look", default="", help="the page's look: low, normal or high (default: the page's AUTO)")
 ap.add_argument("--port", type=int, default=9338)
+ap.add_argument("--size", default="1280x720", help="the page's size (smaller pictures come faster)")
+ap.add_argument("--bolt-s", type=float, default=0.0, help="hold each lightning bolt this long (a test knob of the page)")
 a = ap.parse_args()
 
 
@@ -44,7 +46,7 @@ def host(path, body=None):
 prof = tempfile.mkdtemp(prefix="tb-cam-")
 chrome = subprocess.Popen(["chromium", "--headless=new", "--no-first-run", f"--remote-debugging-port={a.port}",
                            f"--user-data-dir={prof}", "--ignore-certificate-errors", "--use-gl=angle", "--use-angle=swiftshader",
-                           "--enable-unsafe-swiftshader", "--window-size=1280,720", "--touch-events=enabled", "about:blank"],
+                           "--enable-unsafe-swiftshader", "--window-size=%s" % a.size.replace("x", ","), "--touch-events=enabled", "about:blank"],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 console = []
 errors = []
@@ -85,10 +87,11 @@ try:
 
     cmd("Runtime.enable")
     cmd("Page.enable")
-    cmd("Emulation.setDeviceMetricsOverride", width=1280, height=720, deviceScaleFactor=1, mobile=True)
+    W, H = (int(v) for v in a.size.split("x"))
+    cmd("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=True)
     cmd("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
     cmd("Emulation.setUserAgentOverride", userAgent="Mozilla/5.0 (Linux; Android 15; SM-S938B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
-    cmd("Page.navigate", url=f"{a.url}?server={a.server}&name=Cam&join" + (f"&look={a.look}" if a.look else ""))
+    cmd("Page.navigate", url=f"{a.url}?server={a.server}&name=Cam&join" + (f"&look={a.look}" if a.look else "") + (f"&bolt_s={a.bolt_s}" if a.bolt_s > 0 else ""))
     for i in range(60):
         drain(0.5)
         try:

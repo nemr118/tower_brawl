@@ -41,6 +41,7 @@ var drops: Array = []              # the rain's streaks
 var jag_t := 0.0                   # the electricity is redrawn this often (it crackles)
 var arcs := {}                     # key -> [PackedVector2Array]: the warnings' and the bodies' arcs
 var blind := false                 # your fighter stands in smoke: the others are out of sight
+var bolt_s := 0.4                  # a bolt shows this long (a test knob: the page's bolt_s= holds it for pictures)
 var names: Array = []              # the seats' names (the game client sets them), for a BIG warning's "for"
 
 class _Glow extends Node2D:
@@ -158,7 +159,7 @@ func on_event(e: Array) -> void:
 	var type: int = e[0]
 	if type == P.E_STRIKE:
 		var big: bool = e[4] == 1
-		bolts.append([pos, 0.4, big, _bolt_points(pos, big)])
+		bolts.append([pos, bolt_s, big, _bolt_points(pos, big)])
 		flash = 1.0
 		flash_col = Color(0.8, 0.88, 1.0)
 		rings.append([pos, SimScript.STRIKE_R * (2.6 if big else 2.0), BOLT_COL, 0.45, 0.45])
@@ -505,7 +506,7 @@ func _paint_glow(g: Node2D) -> void:
 			if o["big"]:
 				g.draw_circle(c, r * 3.0, Color(GOLD, 0.12))
 	for b in bolts:
-		var k: float = b[1] / 0.4
+		var k: float = clampf(b[1] / 0.4, 0.0, 1.0)
 		g.draw_polyline(b[3], Color(BOLT_COL, k), 16.0 if b[2] else 12.0)
 		g.draw_polyline(b[3], Color(1, 1, 1, k), 5.0)
 		g.draw_circle(b[0], 50.0 * k + 20.0, Color(0.7, 0.85, 1.0, 0.6 * k))
