@@ -44,7 +44,10 @@
 # close) comes up, net_out (a snapshot for all, a JSON text for one) goes down.
 # The JSON (text frames). From a client: hello {name, version, token},
 # join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
-# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.5: 1 the power arrows on, 0 off), name {name}. From the server: welcome {seat, version, name, phase},
+# bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.5: 1 the power arrows on, 0 off), name {name},
+# report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
+# step_downs, shots_armed, shots_cancelled, mouse_shots, errors [], errors_total} (p4.7: a phone's own
+# numbers every 30 s and at a look change or a page error; logged as a "client" line, kept for /state). From the server: welcome {seat, version, name, phase},
 # version_error {server, yours}, full, note {text}, seats {phase, round, goal,
 # bots, bots_wanted, bot_level, power, people, arena (the pick), arena_now (the round's,
 # or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
@@ -104,6 +107,9 @@ class Conn:                     # what this thread knows about a socket
 	var name: String = ""
 	var token: String = ""
 	var last_tick: int = 0      # the newest client input tick applied
+	var report := {}            # p4.7: the phone's last report (cleaned), for the host page
+	var report_ms: int = 0
+	var fps_seen := -1.0        # its frame rate from the last report that had match frames (-1: none yet)
 
 class Seat:
 	var i: int = 0
@@ -387,6 +393,9 @@ func _on_text(c: Conn, txt: String) -> void:
 		return
 	if not c.ok:
 		return
+	if kind == "report":
+		_on_report(c, d)
+		return
 	if kind == "join":
 		if c.seat >= 0:
 			return
@@ -448,6 +457,52 @@ func _on_text(c: Conn, txt: String) -> void:
 			c.name = _clean_name(str(d.get("name", "")), c.seat)
 			seats[c.seat].name = c.name
 			seats_dirty = true
+
+# p4.7: a phone's report: cleaned (known fields only, numbers clamped, text cut), logged
+# as a "client" line in v2_server.jsonl with who sent it, kept for the host page; a
+# step-down or page errors also make a [PHONE] line.
+func _on_report(c: Conn, d: Dictionary) -> void:
+	var now := Time.get_ticks_msec()
+	var why := str(d.get("why", "")).substr(0, 10)
+	if why == "timer" and now - c.report_ms < 2000:
+		return
+	var r := {"why": why}
+	for k in ["device", "pick", "look"]:
+		r[k] = str(d.get(k, "")).substr(0, 10)
+	r["ua"] = str(d.get("ua", "")).substr(0, 140)
+	r["screen"] = str(d.get("screen", "")).substr(0, 12)
+	for k in ["fps", "slow_pct", "frame_max_ms"]:
+		r[k] = snappedf(clampf(float(d.get(k, 0.0)), 0.0, 100000.0), 0.1)
+	for k in ["frames", "ping_ms", "reconnects", "step_downs", "shots_armed", "shots_cancelled", "mouse_shots", "errors_total"]:
+		r[k] = clampi(int(d.get(k, 0)), 0, 100000000)
+	var errs: Array = []
+	var raw = d.get("errors", [])
+	if typeof(raw) == TYPE_ARRAY:
+		for e in raw.slice(0, 10):
+			errs.append(str(e).substr(0, 240))
+	r["errors"] = errs
+	c.report = r
+	c.report_ms = now
+	if r["frames"] >= 30:
+		c.fps_seen = r["fps"]
+	var line := {"kind": "client", "t": Time.get_unix_time_from_system(), "client": c.id, "seat": c.seat, "name": c.name, "ip": c.ip}
+	line.merge(r)
+	server_log.store_line(JSON.stringify(line))
+	server_log.flush()
+	var who := "seat %d '%s'" % [c.seat, c.name] if c.seat >= 0 else "watcher '%s'" % c.name
+	if why == "step":
+		_say("🏰 [PHONE] %s (%s): the look stepped down to %s (%.0f fps)" % [who, r["device"], r["look"].to_upper(), r["fps"]])
+	if not errs.is_empty():
+		_say("🏰 [PHONE] %s (%s): %d page error%s: %s" % [who, r["device"], errs.size(), "" if errs.size() == 1 else "s", errs[0]])
+
+# The host page's view of a phone (p4.7), or null before its first report.
+func _phone(c: Conn):
+	if c == null or c.report.is_empty():
+		return null
+	var r: Dictionary = c.report
+	return {"device": r["device"], "pick": r["pick"], "look": r["look"], "fps": c.fps_seen if c.fps_seen >= 0.0 else null,
+		"slow_pct": r["slow_pct"], "ping_ms": r["ping_ms"], "reconnects": r["reconnects"], "step_downs": r["step_downs"],
+		"errors": r["errors_total"], "age_s": snappedf((Time.get_ticks_msec() - c.report_ms) / 1000.0, 0.1)}
 
 func _clean_name(raw: String, seat: int) -> String:
 	var n := ""
@@ -1420,12 +1475,12 @@ func _host_state() -> Dictionary:
 		seat_list.append({"i": s.i, "name": s.name, "kind": s.kind, "who": ["empty", "person", "bot"][s.kind],
 			"online": s.kind == 2 or s.client_id != 0, "held_s": ceili(s.hold_t / 60.0) if held else 0,
 			"points": s.points, "crowns": s.crowns, "in_round": s.in_round,
-			"ip": c.ip if c != null else "", "ping_ms": pings.get(s.client_id, -1), "client": s.client_id})
+			"ip": c.ip if c != null else "", "ping_ms": pings.get(s.client_id, -1), "client": s.client_id, "phone": _phone(c)})
 	var watching: Array = []
 	for id in conns:
 		var c: Conn = conns[id]
 		if c.ok and c.seat < 0:
-			watching.append({"client": c.id, "name": c.name, "ip": c.ip, "ping_ms": pings.get(c.id, -1)})
+			watching.append({"client": c.id, "name": c.name, "ip": c.ip, "ping_ms": pings.get(c.id, -1), "phone": _phone(c)})
 	var arenas: Array = [{"n": P.ARENA_MIX, "name": "MIX"}]
 	for n in SimScript.LevelScript.PLAY:
 		arenas.append({"n": n, "name": SimScript.LevelScript.name_of(n)})

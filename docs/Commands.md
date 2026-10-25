@@ -16,9 +16,10 @@ godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws:
 ./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --seconds 300 --start --bots 0  # 7 fake players
 ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot [--phone [--ios]] [--watch 20] [--look-tap] [--extra "look=t1"]  # Chromium pictures
 ./venv/bin/python tools/v2_soak_report.py --file bench_results/<date>/v2_server.jsonl --map   # a soak's checks
-./venv/bin/python tools/v2_host_check.py   # the host port's checks
-./venv/bin/python tools/v2_pull_check.py   # a phone's pull-back shot (its header)
-tools/deploy_rog.sh   # the ROG travel server; its panel: tools/v2_dash.py
+./venv/bin/python tools/v2_host_check.py   # the host port
+./venv/bin/python tools/v2_pull_check.py   # pull-back shots
+tools/deploy_rog.sh   # the ROG as server; its panel: tools/v2_dash.py
+tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>   # a night's logs
 ```
 Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
 
@@ -52,15 +53,15 @@ Knobs: `--seed`, `--die-rate`, `--ai-difficulty 0.3`, `--no-state`; `MINOR` = a 
 
 ## Headless clients (the old game)
 ```bash
-godot --headless --path . -- --autojoin --name=Bot --ai=sniper   # or: tbbot add sniper
-./venv/bin/python tools/soak_report.py --dir playtest_logs/<f> --from 23:08   # an old bot soak
+godot --headless --path . -- --autojoin --ai=sniper   # or: tbbot add sniper
+./venv/bin/python tools/soak_report.py --dir playtest_logs/<f>   # an old bot soak
 ```
 Console lines: `📈 [NetStats]`, `🎮 [Layout]`, `🏹 [Quiver]`, `📼 [Replay]` ([[tape]]), `🧭 [BotNav]`, `🏃 [Speed]` (25), `🪤 [JumpTrap]` (20).
 
 ## The deck and the logs (the old game)
 ```bash
-tbdash   # = tools/watch_server.py (a: bot menu, i: info); --no-controls --plain --once
+tbdash   # = tools/watch_server.py; --no-controls --plain --once
 ./venv/bin/python tools/stats_table.py --list   # client_stats.jsonl's matches; --match 3, --by-round, --summary --last 3, --from/--to
-grep "\[GATE\]\|\[TAPE\]\|\[NET\]" server.log | tail   # tags: JOIN LEAVE CONN NAME LOCK MATCH ROUND KILL NET STATS GATE TAPE
+grep "\[GATE\]\|\[TAPE\]\|\[NET\]" server.log | tail   # tags: JOIN LEAVE MATCH ROUND KILL NET GATE TAPE
 ```
 `server.log`, `debug.log`: `.1` at 50 MB; `client_stats.jsonl` at 10 MB. Keys: [[deck]].

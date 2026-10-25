@@ -74,6 +74,23 @@ var arena_sent := false
 var aim_deg10 := 0
 var shoot_held := false
 var fps_frames := 0
+# p4.7 (Night Log): a phone report to the server every REPORT_S, and at once when the
+# look changes or the page logs an error (console.error, a script error): the look,
+# the frame rate in matches, the ping, reconnects, step-downs, shots, errors.
+const REPORT_S := 30.0
+const REPORT_ERR_S := 5.0         # page errors go out at most this often
+var rep_t := 0.0
+var rep_err_t := 0.0
+var rep_frames := 0               # frames, slow ones and their time since the last report (a match on screen)
+var rep_slow := 0
+var rep_time := 0.0
+var rep_max_ms := 0.0
+var rep_opens := 0                # the socket opened: the first time, then reconnects
+var rep_was_open := false
+var rep_step_downs := 0
+var rep_errors := 0
+var rep_mouse_shots := 0
+var rep_ua := ""
 var fps_t := 0.0
 var fps_now := 0.0
 var status := ""
@@ -154,6 +171,7 @@ func _ready() -> void:
 	net.lag_ms = float(opts.get("lag", 0))
 	net.jitter_ms = float(opts.get("jitter", 0))
 	net.open(server_url, my_name, token)
+	_catch_page_errors()
 	get_viewport().size_changed.connect(_fit)
 	_fit()
 	print("🎮 [Client] %s, server %s, sticks %s, look %s" % [P.VERSION, server_url, "on" if sticks.active else "off",
@@ -240,6 +258,7 @@ func _process(delta: float) -> void:
 		if status_t <= 0.0:
 			status = ""
 	var connected: bool = net.state == WebSocketPeer.STATE_OPEN
+	_reports(delta, connected)
 	stuck_t = 0.0 if connected else stuck_t + delta
 	# a phone's browser drops a wss to a certificate it has not accepted, and never asks:
 	# the page's own port (8443) was accepted, the game server's (8091) must be too
@@ -279,6 +298,7 @@ func _on_look() -> void:
 	lobby.set_look(_look_label())
 	_reset_frames(2.0)
 	print("🎮 [Look] %s, picked in the lobby" % _look_label())
+	_send_report("look")
 
 func _look_label() -> String:
 	return ("AUTO · %s" % look.to_upper()) if look_pick == "auto" else look.to_upper()
@@ -294,6 +314,12 @@ func _watch_frames(in_match: bool) -> void:
 	var now := Time.get_ticks_usec()
 	var gap := (now - last_frame_us) / 1000.0 if last_frame_us > 0 else 0.0
 	last_frame_us = now
+	if in_match and gap > 0.0 and gap < 1000.0:   # p4.7: the phone report's frame numbers
+		rep_frames += 1
+		rep_time += gap
+		rep_max_ms = maxf(rep_max_ms, gap)
+		if gap > SLOW_MS:
+			rep_slow += 1
 	if look_test or look_pick != "auto" or look == "low" or not in_match:
 		_reset_frames(0.0)
 		return
@@ -317,9 +343,70 @@ func _watch_frames(in_match: bool) -> void:
 		world.set_tier(LOOK_TIER[look])
 		lobby.set_look(_look_label())
 		hud.say("LOOK: AUTO stepped down to %s to stay smooth (pick a look in the lobby to keep one)" % look.to_upper(), 5.0)
+		rep_step_downs += 1
+		_send_report("step")
 		print("🎮 [Look] step down %s -> %s: %d of %d frames over %d ms in %.0f s" % [
 			was, look, frame_slow, frame_gaps.size(), int(SLOW_MS), STEP_S])
 		_reset_frames(STEP_S)
+
+# ------------------------------------------------------------------ the phone report (p4.7)
+# Page errors (console.error, which Godot's own errors use, script errors, failed
+# promises) go into a list on the page; each report takes up to 10 of them.
+func _catch_page_errors() -> void:
+	if not OS.has_feature("web"):
+		return
+	rep_ua = str(JavaScriptBridge.eval("navigator.userAgent", true)).substr(0, 140)
+	JavaScriptBridge.eval("(function(){ if (window.__tbErrs) return; window.__tbErrs = []; var keep = function(s){ if (window.__tbErrs.length < 50) window.__tbErrs.push(String(s).slice(0, 240)); }; var ce = console.error; console.error = function(){ try { keep(Array.prototype.join.call(arguments, ' ')); } catch (e) {} return ce.apply(console, arguments); }; window.addEventListener('error', function(ev){ keep('script: ' + ev.message); }); window.addEventListener('unhandledrejection', function(ev){ keep('promise: ' + (ev.reason && ev.reason.message || ev.reason)); }); })()", true)
+
+func _take_page_errors() -> Array:
+	if not OS.has_feature("web"):
+		return []
+	var s = JavaScriptBridge.eval("(function(){ var e = window.__tbErrs || []; window.__tbErrs = []; return JSON.stringify(e.slice(0, 10)); })()", true)
+	var a = JSON.parse_string(str(s)) if s != null else null
+	return a if typeof(a) == TYPE_ARRAY else []
+
+func _device() -> String:
+	if OS.has_feature("web_ios") or (OS.has_feature("web_macos") and DisplayServer.is_touchscreen_available()):
+		return "ios"
+	if OS.has_feature("web_android") or OS.has_feature("mobile"):
+		return "android"
+	return "pc"
+
+func _reports(delta: float, connected: bool) -> void:
+	if connected and not rep_was_open:
+		rep_opens += 1
+		rep_t = REPORT_S - 3.0   # the first report 3 s after the socket opens (the hello goes first)
+	rep_was_open = connected
+	if not connected:
+		return
+	rep_t += delta
+	rep_err_t += delta
+	if rep_err_t >= REPORT_ERR_S:
+		rep_err_t = 0.0
+		var errs := _take_page_errors()
+		if not errs.is_empty():
+			rep_errors += errs.size()
+			_send_report("error", errs)
+			return
+	if rep_t >= REPORT_S:
+		_send_report("timer")
+
+func _send_report(why: String, errs: Array = []) -> void:
+	if net == null or net.state != WebSocketPeer.STATE_OPEN:
+		return
+	var win := get_viewport().get_visible_rect().size
+	net.send({"kind": "report", "why": why, "device": _device(), "ua": rep_ua, "screen": "%dx%d" % [int(win.x), int(win.y)],
+		"pick": "test" if look_test else look_pick, "look": look,
+		"fps": rep_frames * 1000.0 / rep_time if rep_time > 0.0 else 0.0,
+		"slow_pct": 100.0 * rep_slow / rep_frames if rep_frames > 0 else 0.0, "frame_max_ms": rep_max_ms, "frames": rep_frames,
+		"ping_ms": net.last_rtt, "reconnects": maxi(0, rep_opens - 1), "step_downs": rep_step_downs,
+		"shots_armed": sticks.shots_armed, "shots_cancelled": sticks.shots_cancelled, "mouse_shots": rep_mouse_shots,
+		"errors": errs, "errors_total": rep_errors})
+	rep_t = 0.0
+	rep_frames = 0
+	rep_slow = 0
+	rep_time = 0.0
+	rep_max_ms = 0.0
 
 func _reset_frames(wait_s: float) -> void:
 	frame_gaps.clear()
@@ -363,6 +450,8 @@ func _physics_process(_dt: float) -> void:
 	if not sticks.active and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not lobby.visible:
 		buttons |= P.B_SHOOT
 		aim_deg10 = _mouse_aim()
+	if shoot_held and not (buttons & P.B_SHOOT) and not sticks.active:
+		rep_mouse_shots += 1   # the phone report: a mouse shot let go
 	shoot_held = (buttons & P.B_SHOOT) != 0
 	# P2: each tick the clock runs (one, or two or none while it catches up or falls
 	# back): your fighter steps on it at once, and the input goes to the server for it

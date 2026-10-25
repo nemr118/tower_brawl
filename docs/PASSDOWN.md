@@ -10,8 +10,8 @@ Two games in one repo. The old game (v0.1.7: Godot 4.7 web client, the Python re
 - **Waiting on a human:** (1) [[Playtest v0.2.0-p1.1]] (11 lines; the gathering's notes on lines 2 and 6 are acted on in p4.4 and p4.3); (2) [[Playtest v0.1.7]] (the old game).
 - **Next:** the gathering's notes are done (p4.3 to p4.6); p4.5 on the home laptop (the deploy asks; then a 3-hour `--soak` there) with a new sheet from the pages' "For the next sheet" lines; then the release v0.2.0 (G7) ([[v0.2-transformation-plan]]).
 - **Ideas:** a TV page (the user's, 2026-10-10: `?tv`, the match full screen, phones as pads; a PC on HDMI or Roku mirroring); stats views, a replay skip key, sound (G9). [[PASSDOWN-2026-09-05]].
+- **v0.2.0-p4.7 "Night Log":** each phone reports to the server every 30 s (look, frame rate, ping, reconnects, shots, errors); `client` lines in `v2_server.jsonl`, `seats[].phone` on the host page; `tools/pull_rog_logs.sh`, `tools/v2_night_report.py`. [[v0.2.0-p4.7 - Night Log]].
 - **v0.2.0-p4.6 "Look Fixes":** LOOK gets AUTO (a picked look is kept, AUTO steps down only when really choppy); fire, poison and smoke drawn on every look; blasts flash on LOW. [[v0.2.0-p4.6 - Look Fixes]].
-- **v0.2.0-p4.5 "Scene Light":** POWER ARROWS as a lobby switch (and `/power`); a death bursts in its colour and lights the walls; fighters and arrows glow; spirit lights; arrow lights and bloom on HIGH. [[v0.2.0-p4.5 - Scene Light]].
 
 ## Open backlog
 `N. **Title** — state — next action — detail`. Numbers are never reused; closed: [[closed]].

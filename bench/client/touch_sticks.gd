@@ -50,6 +50,8 @@ var aim_set := false
 var aim_armed := false            # p4.4: the thumb is past the ring: letting go fires
 var aim_cancel := false           # p4.4: the last let-go was inside the ring: B_CANCEL until the next touch
 var arrows_left := 3              # the game client's count, for the ring (NO ARROWS)
+var shots_armed := 0              # p4.7 (the phone report): let go past the ring
+var shots_cancelled := 0          # and inside it
 var dodge_touch := -1
 var jump_tap := 0
 var dodge_tap := 0
@@ -115,6 +117,10 @@ func _touch(e: InputEventScreenTouch) -> void:
 		elif e.index == aim_touch:
 			aim_touch = -1          # let go: the next tick sends no shoot bit: past the ring it fires,
 			aim_cancel = not aim_armed   # inside it B_CANCEL lowers the bow
+			if aim_armed:
+				shots_armed += 1
+			else:
+				shots_cancelled += 1
 			aim_armed = false
 			aim_offset = Vector2.ZERO
 		elif e.index == dodge_touch:
