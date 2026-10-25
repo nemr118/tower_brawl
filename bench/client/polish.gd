@@ -31,6 +31,9 @@ const SWITCHES := {
 	"icons2": true,
 	# the winner's screen (client/winner_view.gd, p4.13): a ComfyUI picture on each award card (assets/award_art.png)
 	"award_art": true,
+	# p4.14 the platforms' detail (client/dress_view.gd), code-drawn (ComfyUI changed their shapes):
+	"hh_dress": true,          # THE HAUNTED HOUSE: cobwebs, cracks, candles, skulls, purple moss, roots
+	"boiler_dress": true,      # THE BOILER ROOM: rivet rows, rust drips, oil stains, hazard stripes
 }
 
 static var _off := {}

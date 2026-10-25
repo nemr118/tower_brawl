@@ -6,9 +6,15 @@
 #   castle_ledges   iron brackets where a plank meets a wall, chains from a floating plank up to the block above
 #   castle_sconces  iron wall sconces with glowing coals for the torches (the old sprite was a plain
 #                   stick); on LOW, where there are no flame particles, a small flickering flame in each
+# p4.14 the user picked code-drawn detail for two more arenas' platforms (ComfyUI changed
+# their shapes): THE HAUNTED HOUSE (hh_dress: cobwebs in the top inner corners, a few faint
+# cracks, candles with flickering flames, little skulls, purple moss, dark roots under
+# ceilings) and THE BOILER ROOM (boiler_dress: rivet rows on steel tops, rust drips, oil
+# stains under overhangs, short hazard stripes; world.gd lifts this node over the boiler's
+# picture there).
 # world.gd puts this node over the tiles (the lit layer: the night darkens it and the
 # torches light it, like the stone) and calls build() for each arena and look. Drawn once;
-# only the LOW flames move.
+# only the flames move (the LOW sconces, the candles).
 extends Node2D
 
 const Polish = preload("res://client/polish.gd")
@@ -20,6 +26,9 @@ const MOSS := [Color(0.2, 0.42, 0.3), Color(0.3, 0.6, 0.4), Color(0.42, 0.74, 0.
 
 var level
 var castle := false
+var hh := false                   # p4.14 hh_dress: THE HAUNTED HOUSE's dressing
+var nightmare := false            # p4.14 boiler_dress: THE BOILER ROOM's dressing
+var candles: Array = []           # hh_dress: where each candle's flame sits
 var depth := PackedByteArray()    # castle_depth: each block cell's distance (in cells) to the nearest open cell
 var flames := _Flames.new()       # castle_sconces on LOW: the torch flames, added light on the glow layer
 var t := 0.0
@@ -40,8 +49,11 @@ func setup(glow_parent: Node2D, add_mat: Material) -> void:
 func build(lv, particles: bool) -> void:
 	level = lv
 	castle = lv.theme == ""
-	visible = castle
-	flames.visible = castle and not particles and Polish.on("castle_sconces")
+	hh = lv.theme == "halloween" and Polish.on("hh_dress")
+	nightmare = lv.theme == "nightmare" and Polish.on("boiler_dress")
+	visible = castle or hh or nightmare
+	candles = _find_candles() if hh else []
+	flames.visible = (castle and not particles and Polish.on("castle_sconces")) or (hh and not candles.is_empty())
 	if castle and Polish.on("castle_depth"):
 		_measure_depth()
 	queue_redraw()
@@ -95,7 +107,15 @@ func _depth_at(cx: int, cy: int) -> float:
 	return float(depth[cy * cols + cx])
 
 func _draw() -> void:
-	if not castle or level == null:
+	if level == null:
+		return
+	if hh:
+		_paint_hh()
+		return
+	if nightmare:
+		_paint_boiler()
+		return
+	if not castle:
 		return
 	if Polish.on("castle_depth"):
 		_paint_depth()
@@ -241,8 +261,20 @@ func _sconce(p: Vector2) -> void:
 	draw_rect(Rect2(p.x - 10, p.y - 30, 20, 2), Color(2.4, 0.9, 0.3))    # the coals (over 1: the night darkens them)
 	draw_rect(Rect2(p.x - 6, p.y - 31, 12, 1), Color(2.6, 1.5, 0.5))
 
-# castle_sconces on LOW: a flame over each bowl, flickering (no particles on LOW).
+# castle_sconces on LOW: a flame over each bowl, flickering (no particles on LOW); hh_dress:
+# a small flame on each candle.
 func _paint_flames(n: Node2D) -> void:
+	if hh:
+		for i in candles.size():
+			var cp: Vector2 = candles[i]
+			var ck := 0.8 + 0.2 * sin(t * 11.0 + i * 2.1) * sin(t * 6.7 + i)
+			n.draw_texture_rect(HALO, Rect2(cp - Vector2(30, 32), Vector2(60, 52)), false, Color(1.0, 0.6, 0.25, 0.45 * ck))
+			var sw := sin(t * 8.0 + i * 1.7) * 0.8
+			n.draw_colored_polygon(PackedVector2Array([cp + Vector2(-2.5 * ck, 0), cp + Vector2(sw, -8.0 * ck), cp + Vector2(2.5 * ck, 0),
+				cp + Vector2(0, 1.5)]), Color(1.0, 0.62, 0.2, 0.95))
+			n.draw_colored_polygon(PackedVector2Array([cp + Vector2(-1.2, -0.5), cp + Vector2(sw * 0.6, -5.0 * ck), cp + Vector2(1.2, -0.5)]),
+				Color(1.0, 0.95, 0.7))
+		return
 	for i in level.torches.size():
 		var p: Vector2 = level.torches[i] + Vector2(0, -31)
 		var k := 0.85 + 0.15 * sin(t * 13.0 + i * 1.9) * sin(t * 7.3 + i)
@@ -254,3 +286,142 @@ func _paint_flames(n: Node2D) -> void:
 			var col: Color = [Color(1.0, 0.42, 0.1, 0.9), Color(1.0, 0.72, 0.25), Color(1.0, 0.95, 0.7)][layer]
 			n.draw_colored_polygon(PackedVector2Array([p + Vector2(-w, 0), p + Vector2(-w * 0.7, -h * 0.45), p + Vector2(sway, -h),
 				p + Vector2(w * 0.7, -h * 0.45), p + Vector2(w, 0), p + Vector2(0, w * 0.35)]), col)
+
+# ---------------------------------------------------------------- p4.14 THE HAUNTED HOUSE
+const WEB := Color(0.92, 0.92, 1.0, 0.55)
+const ROOT := Color(0.2, 0.11, 0.16)
+const ROOT_HI := Color(0.34, 0.2, 0.26)
+const HH_MOSS := [Color(0.24, 0.3, 0.3), Color(0.32, 0.4, 0.36), Color(0.42, 0.5, 0.44)]
+const BONE := Color(1.0, 0.98, 0.9)
+const BONE_D := Color(0.62, 0.6, 0.56)
+const HOLE := Color(0.1, 0.05, 0.12)
+const WAX := Color(0.94, 0.9, 0.78)
+
+# Tops you stand on (a block cell with open air above): a candle on about one in seven,
+# never two side by side, never on the outer floor's edge.
+func _find_candles() -> Array:
+	var out: Array = []
+	var last := -9
+	for cy in range(1, level.ROWS):
+		for cx in range(1, level.COLS - 1):
+			if _solid(cx, cy) and level.cell(cx, cy - 1) == 0 and _hash(cx, cy, 11) % 5 == 0 and absi(cx - last) > 2:
+				out.append(Vector2(cx * C + 8 + _hash(cx, cy, 12) % 14, cy * C - 9))
+				last = cx
+	return out
+
+func _paint_hh() -> void:
+	var rows: int = level.ROWS
+	var cols: int = level.COLS
+	for cy in rows:
+		for cx in cols:
+			var x := cx * C
+			var y := cy * C
+			if not _solid(cx, cy):
+				# a cobweb in a top inner corner: a wall on one side, a ceiling above
+				if cy > 0 and level.cell(cx, cy) == 0 and _solid(cx, cy - 1):
+					if _solid(cx - 1, cy):
+						_web(Vector2(x, y), 1.0, 24 + _hash(cx, cy, 14) % 12)
+					if _solid(cx + 1, cy):
+						_web(Vector2(x + C, y), -1.0, 24 + _hash(cx, cy, 16) % 12)
+				continue
+			var open_up: bool = cy > 0 and level.cell(cx, cy - 1) == 0
+			if open_up and _hash(cx, cy, 17) % 3 == 0:   # a purple-grey moss tuft on a top
+				var h := _hash(cx, cy, 18)
+				var bx: int = x + 4 + h % 18
+				for k in 4:
+					var bh := 2 + (h >> (k + 3)) % 4
+					draw_rect(Rect2(bx + k * 2, y - bh, 2, bh), HH_MOSS[(h >> k) % 3])
+				draw_rect(Rect2(bx - 2, y, 12, 2), HH_MOSS[1])
+			elif open_up and _hash(cx, cy, 19) % 6 == 0 and not _has_candle(cx, cy):   # a little skull on a top
+				_skull(Vector2(x + 8 + _hash(cx, cy, 20) % 12, y - 7))
+			if cy + 1 < rows and level.cell(cx, cy + 1) == 0 and _hash(cx, cy, 21) % 3 == 0:   # a root under a ceiling
+				_root(Vector2(x + 5 + _hash(cx, cy, 22) % 20, y + C), 18 + _hash(cx, cy, 23) % 40, _hash(cx, cy, 24))
+			if _hash(cx, cy, 25) % 7 == 0 and (open_up or not _solid(cx - 1, cy) or not _solid(cx + 1, cy)):   # a faint crack on a face
+				var hc := _hash(cx, cy, 26)
+				var p0 := Vector2(x + 6 + hc % 16, y + 4 + (hc >> 4) % 8)
+				draw_polyline(PackedVector2Array([p0, p0 + Vector2(3, 5), p0 + Vector2(1, 9), p0 + Vector2(5, 14)]), Color(0.04, 0.02, 0.07, 0.3), 1.0)
+	for cp in candles:   # the candles (their flames are on the glow layer)
+		var c: Vector2 = cp
+		draw_rect(Rect2(c.x - 3, c.y - 1, 6, 10), WAX)
+		draw_rect(Rect2(c.x - 3, c.y - 1, 1, 10), Color(1.2, 1.2, 1.1))
+		draw_rect(Rect2(c.x + 2, c.y + 3, 2, 4), WAX)          # a drip
+		draw_rect(Rect2(c.x - 4, c.y + 8, 8, 1), Color(0.7, 0.66, 0.56))
+		draw_line(c + Vector2(0, 1), c + Vector2(0, -1), Color(0.15, 0.1, 0.1), 1.0)   # the wick
+
+func _has_candle(cx: int, cy: int) -> bool:
+	for cp in candles:
+		var c: Vector2 = cp
+		if int(c.x) / C == cx and int(c.y + 9) / C == cy:
+			return true
+	return false
+
+# A cobweb from a corner: threads out from it and three curved rings between them.
+func _web(corner: Vector2, dir: float, r: int) -> void:
+	var spokes := [0.0, 0.42, 0.85, 1.28]
+	for a in spokes:
+		draw_line(corner, corner + Vector2(dir * cos(a), sin(a)) * r, WEB, 1.0)
+	for ring in [0.35, 0.65, 0.95]:
+		var pts := PackedVector2Array()
+		for a in spokes:
+			pts.append(corner + Vector2(dir * cos(a), sin(a)) * (r * ring + (1.5 if a == 0.42 or a == 0.85 else 0.0)))
+		draw_polyline(pts, WEB, 1.0)
+
+func _skull(at: Vector2) -> void:
+	at += Vector2(0, -3)
+	draw_rect(Rect2(at.x - 5, at.y, 11, 7), BONE)         # the head
+	draw_rect(Rect2(at.x - 4, at.y - 2, 9, 2), BONE)
+	draw_rect(Rect2(at.x - 3, at.y + 7, 7, 3), BONE_D)    # the jaw
+	draw_rect(Rect2(at.x - 3, at.y + 2, 3, 3), HOLE)      # the eyes
+	draw_rect(Rect2(at.x + 1, at.y + 2, 3, 3), HOLE)
+	draw_rect(Rect2(at.x, at.y + 5, 1, 2), HOLE)          # the nose
+	draw_rect(Rect2(at.x - 2, at.y + 8, 1, 1), HOLE)      # teeth
+	draw_rect(Rect2(at.x + 1, at.y + 8, 1, 1), HOLE)
+
+func _root(top: Vector2, length: int, h: int) -> void:
+	var pts := PackedVector2Array()
+	for s in range(0, length + 1, 3):
+		pts.append(top + Vector2(sin(s * 0.3 + h % 5) * 2.0 + s * 0.06 * (1 if h % 2 == 0 else -1), s))
+	draw_polyline(pts, ROOT, 3.0)
+	draw_polyline(pts, ROOT_HI, 1.0)
+	if pts.size() > 4:   # a little side root
+		var mid: Vector2 = pts[pts.size() / 2]
+		var side := 1.0 if (h >> 3) % 2 == 0 else -1.0
+		draw_line(mid, mid + Vector2(side * 5.0, 6.0), ROOT, 1.0)
+
+# ---------------------------------------------------------------- p4.14 THE BOILER ROOM
+const RIVET := Color(0.62, 0.58, 0.54)
+const RIVET_D := Color(0.1, 0.08, 0.08)
+const RUST := Color(0.55, 0.26, 0.1)
+const HAZ_Y := Color(0.86, 0.68, 0.14)
+const HAZ_K := Color(0.08, 0.07, 0.06)
+
+func _paint_boiler() -> void:
+	var rows: int = level.ROWS
+	var cols: int = level.COLS
+	for cy in rows:
+		for cx in cols:
+			if not _solid(cx, cy):
+				continue
+			var x := cx * C
+			var y := cy * C
+			var open_up: bool = cy > 0 and level.cell(cx, cy - 1) == 0
+			var open_dn: bool = cy + 1 < rows and level.cell(cx, cy + 1) == 0
+			if open_up:                                    # a row of rivets just under the top
+				for k in range(4, C - 2, 6):
+					draw_rect(Rect2(x + k, y + 4, 3, 3), RIVET)
+					draw_rect(Rect2(x + k + 2, y + 6, 1, 1), RIVET_D)
+			if open_up and _hash(cx, cy, 32) % 6 == 0:    # a short band of hazard stripes along a top
+				draw_rect(Rect2(x, y, C, 5), HAZ_K)
+				for k in range(0, C, 6):
+					draw_colored_polygon(PackedVector2Array([Vector2(x + k, y), Vector2(x + k + 3, y), Vector2(x + k, y + 5),
+						Vector2(x + k - 3, y + 5)]), HAZ_Y)
+			if _hash(cx, cy, 33) % 4 == 0:                 # a rust drip running down from a seam
+				var hx := x + 3 + _hash(cx, cy, 34) % 24
+				var ln := 6 + _hash(cx, cy, 35) % 16
+				for k in ln:
+					draw_rect(Rect2(hx, y + 6 + k, 3 if k < ln - 3 else 2, 1), Color(RUST, 0.85 * (1.0 - float(k) / ln)))
+			if open_dn and _hash(cx, cy, 36) % 4 == 0:     # an oil stain dripping under an overhang
+				var ox := x + 6 + _hash(cx, cy, 37) % 18
+				draw_rect(Rect2(ox - 3, y + C - 3, 8, 3), Color(0.03, 0.02, 0.02, 0.5))
+				draw_rect(Rect2(ox, y + C, 2, 3 + _hash(cx, cy, 38) % 5), Color(0.03, 0.02, 0.02, 0.45))
+

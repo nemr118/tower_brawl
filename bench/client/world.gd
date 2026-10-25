@@ -519,6 +519,11 @@ func _apply_theme() -> void:
 		edges.build(level)
 	if dress != null:
 		dress.build(level, fx_on)
+		# p4.14: on THE BOILER ROOM the dressing goes over the boiler's picture (its platforms)
+		if boiler != null and level.theme == "nightmare":
+			move_child(dress, boiler.front.get_index() + 1)
+		else:
+			move_child(dress, tiles_lit.get_index() + 1)
 	if boiler != null:
 		boiler.set_theme(level)
 
