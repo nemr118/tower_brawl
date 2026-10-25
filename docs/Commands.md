@@ -5,7 +5,7 @@ tags: [handoff, commands]
 
 ## The new game (`bench/`, [[first-playable-plan]])
 ```bash
-godot --headless --path bench res://server/game_server.tscn -- --bots 7  # wss 8091; --arena mix|keep|bridges|3, --bot-level easy|normal|hard, --soak, --no-tls, --goal N, --walls-s N, --port, --out, --spots 2,3, --admin-port 8092, --no-powerups, --pu-gallery
+godot --headless --path bench res://server/game_server.tscn -- --bots 7  # wss 8091; --arena mix|keep|bridges|3, --bot-level easy|normal|hard, --soak, --no-tls, --goal N, --walls-s N, --port, --out, --spots 2,3, --admin-port 8092, --no-powerups, --pu-gallery, --hw-gallery, --boiler-demo
 godot --path bench -- --server=wss://192.168.4.21:8091  # the game in a window
 tools/v2_build.sh --title "Short Title"   # check, bump, export build/web/v2/, patch page; --phase 5 = p5.1; `none` re-exports
 godot --headless --path bench --script res://tools/check_scripts.gd  # the check: scripts, scenes
@@ -21,7 +21,7 @@ godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws:
 tools/deploy_rog.sh   # the ROG as server
 tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>   # a night's logs
 ```
-Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
+Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `dress=castle`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
 
 ## The old game: editor and server
 ```bash
@@ -39,7 +39,7 @@ ssh nemr@<laptop ip>   # find it: ip neigh | grep -i 08:60:6e. On it: tbdash, tb
 
 ## Build and bump (the old game, every GDScript change)
 ```bash
-./bump_build.sh --title "Short Title"   # check, bump v0.0.x, export, version the pck, patch page; `minor` = the next minor ([[release-v0.1.0]]); `none` re-exports
+./bump_build.sh --title "Short Title"   # the old game: check, bump v0.0.x, export, patch page; `minor` ([[release-v0.1.0]]); `none`
 godot --headless --path . --script tools/check_scripts.gd -- --no-net   # the check: scripts compile, scenes load
 ```
 
