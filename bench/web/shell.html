@@ -373,6 +373,9 @@ const engine = new Engine(GODOT_CONFIG);
 	const button = document.getElementById('fs-button');
 	const hint = document.getElementById('rotate-hint');
 	const page = document.documentElement;
+	if (!gate || !button || !hint) {
+		return; // the page is going away (a quick reload): nothing to set up
+	}
 
 	// Is this a touch screen? Two checks, because some phones only pass one.
 	const isTouch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
@@ -436,7 +439,7 @@ const engine = new Engine(GODOT_CONFIG);
 	}
 	// v0.2.0-p4.13: an iPhone not opened from the Home Screen yet: the small tip, 10 s.
 	const pill = document.getElementById('ios-pill');
-	if (!canFullscreen && !isFullscreen()) {
+	if (pill && !canFullscreen && !isFullscreen()) {
 		pill.classList.add('show');
 		setTimeout(function () { pill.classList.remove('show'); }, 10000);
 		pill.addEventListener('click', function () { pill.classList.remove('show'); });

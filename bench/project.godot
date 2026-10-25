@@ -10,6 +10,9 @@ config_version=5
 config/name="Tower Brawl"
 run/main_scene="res://client/game_client.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
+boot_splash/bg_color=Color(0.04, 0.02, 0.08, 1)
+boot_splash/fullsize=true
+boot_splash/image="res://assets/splash.png"
 
 [display]
 

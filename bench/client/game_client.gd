@@ -332,7 +332,7 @@ func _process(delta: float) -> void:
 	_watch_frames(not show_lobby and phase >= P.PH_ROUND_START)
 	hud.update(seats_msg, s, my_seat, delta, fps_now, net.last_rtt, opts.has("info"), show_lobby)
 	lobby.visible = show_lobby
-	sticks.visible = sticks.active and not show_lobby and not deathcam.playing
+	sticks.visible = sticks.active and not show_lobby and not deathcam.playing and phase != P.PH_MATCH_END   # the winner's screen: nobody plays
 	hud.visible = not deathcam.playing
 	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad, stuck_url)
 

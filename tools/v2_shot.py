@@ -127,7 +127,7 @@ cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('f
 drain(1.0)
 shot("lobby")
 if a.look_tap:
-    tap(1230, 774)      # LOOK (lobby.gd: the button at 1020..1440 x 742..806, since G5)
+    tap(1700, 54)       # LOOK (lobby.gd since 2026-10-25: the button at the top right, 1540..1860 x 18..90)
     drain(1.5)
     shot("lobby_look")
     cmd("Page.reload")
@@ -135,7 +135,7 @@ if a.look_tap:
     cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('fs-gate'); if(g){g.click(); g.remove();} return 'ok'})()")
     drain(1.0)
     shot("lobby_reload")
-tap(1230, 854)          # START (lobby.gd: the button at 1020..1440 x 812..896)
+tap(1230, 854)          # START (lobby.gd since 2026-10-25: the big button at 920..1860 x 798..952)
 drain(a.round_wait)     # 3 s countdown + the ROUND 1 banner
 shot("round")
 drain(2.5)              # FIGHT
