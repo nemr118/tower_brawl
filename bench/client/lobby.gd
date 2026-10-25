@@ -34,7 +34,7 @@ var bot_level_btn := Button.new()
 var start_btn := Button.new()
 var look_btn := Button.new()
 var arena_btn := Button.new()
-var power_btn := Button.new()     # p4.5: POWER ARROWS on or off
+var power_btn := Button.new()     # p4.9: POWER-UPS on or off (p4.5's POWER ARROWS before)
 var status_label := Label.new()
 var help := Label.new()
 var seated := false
@@ -79,7 +79,7 @@ func _init() -> void:
 		rows.append([swatch, lab])
 	_button(arena_btn, "ARENA: MIX", Vector2(470, 742), Vector2(330, 64), 24)
 	arena_btn.pressed.connect(func(): arena_pressed.emit())
-	_button(power_btn, "POWER: OFF", Vector2(810, 742), Vector2(200, 64), 24)
+	_button(power_btn, "POWER-UPS: ON", Vector2(810, 742), Vector2(200, 64), 22)
 	power_btn.pressed.connect(func(): power_pressed.emit())
 	_label(bots_label, "BOTS: 7", Vector2(470, 818), Vector2(220, 70), 34, Color.WHITE, HORIZONTAL_ALIGNMENT_LEFT)
 	_button(bots_minus, "-", Vector2(690, 818), Vector2(70, 70), 40)
@@ -195,7 +195,7 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status: String, 
 	var pick := int(m.get("arena", P.ARENA_MIX))
 	arena_btn.text = "ARENA: %s" % ("MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick))
 	arena_btn.disabled = not seated or not in_lobby
-	power_btn.text = "POWER: %s" % ("ON" if int(m.get("power", 0)) != 0 else "OFF")
+	power_btn.text = "POWER-UPS: %s" % ("ON" if int(m.get("power", 0)) != 0 else "OFF")
 	power_btn.disabled = not seated or not in_lobby
 	if phase == P.PH_COUNTDOWN:
 		start_btn.text = "STARTING IN %d" % ceili(left / 60.0)

@@ -141,8 +141,15 @@ static func _copy(v: Dictionary) -> Dictionary:
 	var zl: Array = []
 	for z in v.get("zones", []):
 		zl.append(z.duplicate())
+	var ol: Array = []
+	for o in v.get("orbs", []):
+		ol.append(o.duplicate())
+	var cl: Array = []
+	for c in v.get("cats", []):
+		cl.append(c.duplicate())
 	return {"fighters": fl, "arrows": al, "zones": zl, "arena": v.get("arena", 0), "walls": v.get("walls", 0.0),
-		"walls_deadly": v.get("walls_deadly", false)}
+		"walls_deadly": v.get("walls_deadly", false), "powers": v.get("powers", {}).duplicate(true), "orbs": ol, "cats": cl,
+		"rain": v.get("rain", {}).duplicate()}
 
 # ------------------------------------------------------------------ the montage
 # True when the winner has a kill to show.

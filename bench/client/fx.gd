@@ -228,9 +228,10 @@ func on_event(e: Array) -> void:
 		_burst("debris", pos)
 		_burst("spark", pos, KIND_COLOR[e[3] % 5])
 	elif type == P.E_EXPLODE:
-		flash(pos, 5.0, Color(1, 0.9, 0.6), 0.16, true)   # p4.6: a blast shows on LOW too
-		ring(pos, 230.0, Color(1, 0.75, 0.35), 0.35)
-		ring(pos, 150.0, Color(1, 1, 0.9), 0.2)
+		var k := 1.75 if e[4] == 1 else 1.0   # p4.9: a BIG arrow's blast (sim BIG_FX)
+		flash(pos, 5.0 * k, Color(1, 0.9, 0.6), 0.16, true)   # p4.6: a blast shows on LOW too
+		ring(pos, 230.0 * k, Color(1, 0.75, 0.35), 0.35)
+		ring(pos, 150.0 * k, Color(1, 1, 0.9), 0.2)
 		_burst("blast_fire", pos)
 		_burst("blast_sparks", pos)
 		_burst("blast_smoke", pos)

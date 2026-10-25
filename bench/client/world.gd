@@ -11,6 +11,7 @@ const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
 const FX = preload("res://client/fx.gd")
 const F3D = preload("res://client/fighter3d.gd")
+const PowersView = preload("res://client/powers_view.gd")
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
 	Color("a85ae8"), Color("f08a2c"), Color("35d6d0"), Color("f06aa8")]
 const FIGHTER_TEX := [preload("res://assets/fighter_p0.png"), preload("res://assets/fighter_p1.png"),
@@ -67,6 +68,8 @@ const VARIANTS := {
 	"t3-post": [3, {"post": false}, "T3 -post"],
 }
 const GRID_LIGHTS := 24
+const SMOKE_R0 := 230.0          # p4.9: the smoke loop was made for this reach (sim SMOKE_R before p4.9)
+const FIRE_W0 := 150.0           # and the ground fire loop for this width (sim FIRE_WIDTH)
 
 var level
 var tier := -1
@@ -119,6 +122,7 @@ var copies := 1
 var fighters: Array = []     # [sprite, material, plain tex, lit tex, ghost timer, ground tick when dead]
 var aim_pointer := Line2D.new()
 var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while the shot is armed
+var pview                        # p4.9: the power-ups (client/powers_view.gd), every look
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -354,6 +358,9 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		wm.set_shader_parameter("side", float(i))
 		wall.material = wm
 		threats.add_child(wall)
+	pview = PowersView.new()
+	threats.add_child(pview)
+	pview.setup(self, glow, add_mat, TEAM)
 	fx.prewarm(Vector2(960, 1200))
 
 # p4.3: your seat and the phase, from the game client before each render (the
@@ -387,6 +394,11 @@ func _render_ring(fl: Array, delta: float) -> void:
 	ring_glow.position = feet
 	ring_glow.scale = Vector2(1.5, 0.45) * k
 	ring_glow.modulate = Color(c.r, c.g, c.b, 0.5 + 0.15 * sin(time * 4.0))
+
+# p4.9: a snapshot event, for the effects (fx.gd) and the power-ups (powers_view.gd).
+func on_event(e: Array) -> void:
+	fx.on_event(e)
+	pview.on_event(e)
 
 # p4.8 (the deathcam): the camera's zoom (1: the whole arena) and where it looks.
 func set_view_zoom(z: float, at: Vector2) -> void:
@@ -586,6 +598,8 @@ func render(s: Dictionary, delta: float) -> void:
 	fighter_count = mini(fl.size(), fighters.size())
 	if tier == 4:
 		f3d.update(fl)
+	pview.show_view(s, delta, me)
+	var pw: Dictionary = s.get("powers", {})
 	# The game: slot = seat, so a fighter keeps its colour whatever seats are
 	# taken. The benchmark's copies (T5, T7) repeat the seats, so they go by index.
 	var by_seat := copies == 1
@@ -612,10 +626,26 @@ func render(s: Dictionary, delta: float) -> void:
 			spr.visible = false
 			fg.visible = false
 			continue
+		# p4.9: someone INVISIBLE is out of sight (your own fighter: faint), and standing in
+		# smoke you see nobody else; FREEZE tints the frozen blue, RAIN the slowed a little
+		var bits: int = int(pw.get(i, {}).get("bits", 0))
+		if i != me and f["state"] != P.F_DEAD and ((bits & P.PW_INVIS) != 0 or pview.blind):
+			spr.visible = false
+			fg.visible = false
+			continue
 		spr.visible = true
 		spr.position = Vector2(f["x"] + 18.0, f["y"] + 63.0)
 		fg.visible = f["state"] != P.F_DEAD
 		fg.position = Vector2(f["x"] + 18.0, f["y"] + 30.0)
+		var tint := Color.WHITE
+		if (bits & P.PW_FROZEN) != 0:
+			tint = Color(0.6, 0.85, 1.0)
+		elif (bits & P.PW_SLOW) != 0:
+			tint = Color(0.8, 0.88, 1.0)
+		elif (bits & P.PW_SPEED) != 0:
+			tint = Color(1.0, 1.0, 0.8)
+		tint.a = 0.35 if (bits & P.PW_INVIS) != 0 else 1.0
+		spr.modulate = tint
 		spr.flip_h = (f["flags"] & 1) == 0
 		var frame := _frame(f, slot, i)
 		spr.region_rect = Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128)
@@ -624,7 +654,15 @@ func render(s: Dictionary, delta: float) -> void:
 		slot[1].set_shader_parameter("burn", burn)
 		slot[1].set_shader_parameter("poison", poison)
 		var hit_flash: bool = (f["state"] == P.F_HURT or f["state"] == P.F_DEAD) and f["st"] < 4
-		slot[1].set_shader_parameter("flash", 1.0 if hit_flash or (f["state"] == P.F_DODGE and f["st"] < 2) else 0.0)
+		var zap: bool = pview.zapped(i) and int(time * 18.0) % 2 == 0   # p4.9: the electricity runs through the body
+		slot[1].set_shader_parameter("flash", 1.0 if hit_flash or zap or (f["state"] == P.F_DODGE and f["st"] < 2) else 0.0)
+		if zap:
+			spr.modulate = Color(0.6, 0.8, 1.0)
+		if parts["particles"] and (bits & P.PW_SPEED) != 0 and f["state"] == P.F_NORMAL and absf(f["vx"]) > 2.0:
+			slot[4] -= delta
+			if slot[4] <= 0.0:
+				slot[4] = 0.05
+				fx.ghost(FIGHTER_TEX[i % 8], spr.region_rect, spr.position + Vector2(0, -58), spr.flip_h, Color(1.0, 0.95, 0.4))
 		if parts["particles"] and f["state"] == P.F_DODGE:
 			slot[4] -= delta
 			if slot[4] <= 0.0:
@@ -853,6 +891,7 @@ func _render_arrows(al: Dictionary) -> void:
 		var spr: Sprite2D = e[0]
 		spr.position = Vector2(a["x"], a["y"])
 		spr.rotation = a["ang"]
+		spr.scale = Vector2(3.0, 3.0) if a.get("big", false) else Vector2.ONE   # p4.9 BIG ARROWS
 		var flying: bool = a["state"] == P.S_FLY
 		spr.get_child(0).visible = flying
 		if parts["particles"] and flying and e[1] == null:
@@ -951,6 +990,8 @@ func _render_zones(zl: Array) -> void:
 					var embers: Node2D = fx.take_loop("embers")
 					flames.global_position = pos
 					embers.global_position = pos
+					flames.scale = Vector2(maxf(1.0, z["size"] / FIRE_W0), 1.0)   # p4.9: a BIG arrow's wider fire
+					embers.scale = flames.scale
 					e[1] = flames
 					e[2] = embers
 				else:
@@ -990,6 +1031,7 @@ func _render_zones(zl: Array) -> void:
 			elif fxp:
 				var smoke: Node2D = fx.take_loop("smoke_cloud")
 				smoke.global_position = pos
+				smoke.scale = Vector2.ONE * (z["size"] / SMOKE_R0)   # p4.9: the cloud as big as the smoke reaches
 				e[1] = smoke
 			else:
 				var puff := Sprite2D.new()      # LOW: a soft grey cloud you cannot see through

@@ -241,7 +241,7 @@ func _process(delta: float) -> void:
 		var shot: Array = deathcam.step(delta)
 		if deathcam.playing:
 			for e in shot[1]:
-				world.fx.on_event(e)
+				world.on_event(e)
 			world.set_me(deathcam.winner, phase)
 			world.set_view_zoom(deathcam.zoom, deathcam.focus)
 			world.render(shot[0], delta)
@@ -249,7 +249,9 @@ func _process(delta: float) -> void:
 			world.set_view_zoom(1.0, Vector2(960, 540))
 	else:
 		for e in evs:
-			world.fx.on_event(e)
+			world.on_event(e)
+			if e[0] == P.E_PU_GET and e[3] == my_seat:
+				hud.power_banner(e[4])   # p4.9: you took a power-up: what it is and what it does
 		world.set_me(my_seat, phase)
 		world.render(view, delta)
 		deathcam.record(view, evs, delta)
@@ -549,6 +551,10 @@ func _on_message(m: Dictionary) -> void:
 		_say(str(m.get("text", "")), 4.0)
 	elif kind == "seats":
 		seats_msg = m
+		var seat_names: Array = []
+		for st in m.get("seats", []):
+			seat_names.append(str(st.get("name", "")))
+		world.pview.names = seat_names   # p4.9: a BIG power-up's warning says whom it came for
 		if auto_start and not start_sent and my_seat >= 0 and int(m.get("phase", 0)) == P.PH_LOBBY \
 				and int(m.get("people", 0)) + int(m.get("bots", 0)) >= 2:
 			start_sent = true

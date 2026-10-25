@@ -71,14 +71,14 @@ func arrows_at(snap: Dictionary, tick: int, me, my_seat: int, shown: Array, own_
 	var out := {}
 	var ages := {}
 	for a in sim.arrows:
-		out[a.id] = {"kind": a.kind, "state": a.state, "x": a.x, "y": a.y, "ang": a.ang, "owner": a.owner}
+		out[a.id] = {"kind": a.kind, "state": a.state, "x": a.x, "y": a.y, "ang": a.ang, "owner": a.owner, "big": a.big}
 		ages[a.id] = a.t
 	for id in stuck:
 		out[id] = stuck[id]
 	for a in own_arrows:   # shot after the snapshot's tick: not in it yet
 		var shot_at: int = tick - a.t
 		if shot_at > s:
-			out[OWN_ID + posmod(shot_at, 30000)] = {"kind": a.kind, "state": a.state, "x": a.x, "y": a.y, "ang": a.ang}
+			out[OWN_ID + posmod(shot_at, 30000)] = {"kind": a.kind, "state": a.state, "x": a.x, "y": a.y, "ang": a.ang, "big": a.big}
 	_slide(out, ages, shown, my_seat, delta)
 	return out
 
@@ -106,6 +106,7 @@ func _rebuild(snap: Dictionary, me, my_seat: int) -> void:
 		a.ang = d["ang"]
 		a.t = d["age"]
 		a.owner = d["owner"]
+		a.big = d.get("big", false)
 		owners[id] = a.owner
 		sim.arrows.append(a)
 	# the stoppers: you where the prediction has you, the others where the snapshot has them

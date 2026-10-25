@@ -4,11 +4,15 @@
 # a white frame on yours, grey when dead, "next round" for a late joiner.
 # The banners: ROUND N, FIGHT!, who won the round, who won the match, and the
 # draw clock in a round's last 10 seconds.
+# p4.9: under each card, chips for its power-ups (a BIG one with its seconds left);
+# when you take one, a banner in the middle: its picture, its name, what it does.
 extends CanvasLayer
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
 const LevelScript = preload("res://sim/level.gd")
+const PV = preload("res://client/powers_view.gd")
+const BANNER_S := 3.2
 const FIGHT_S := 0.9
 const CARD_W := 210.0
 const CARD_STEP := 228.0
@@ -31,6 +35,8 @@ var show_info := false
 var note := ""                 # a short line at the bottom (the look stepped down), for note_t seconds
 var note_t := 0.0
 var hidden := true
+var banner_kind := 0           # p4.9: the power-up you just took (its banner), for banner_t seconds
+var banner_t := 0.0
 var canvas := _Canvas.new()
 
 class _Canvas extends Control:
@@ -73,6 +79,11 @@ func match_end(m: Dictionary) -> void:
 	banner = "%s WINS THE MATCH" % str(m.get("name", "")).to_upper()
 	banner_color = World.TEAM[w % 8]
 
+# p4.9: you took a power-up: its banner in the middle for BANNER_S.
+func power_banner(kind: int) -> void:
+	banner_kind = kind
+	banner_t = BANNER_S
+
 # A short line at the bottom for secs seconds (P2: the look stepped down).
 func say(text: String, secs: float) -> void:
 	note = text
@@ -87,6 +98,7 @@ func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: 
 	hidden = lobby_shown
 	fight_t = maxf(0.0, fight_t - delta)
 	note_t = maxf(0.0, note_t - delta)
+	banner_t = maxf(0.0, banner_t - delta)
 	show_info = info
 	info_text = "%s · %.0f fps · ping %d ms" % [P.VERSION, fps, rtt]
 	canvas.queue_redraw()
@@ -161,6 +173,9 @@ func _paint(c: Control) -> void:
 			c.draw_colored_polygon(crown, Color(1.0, 0.82, 0.2))
 		if dead:
 			c.draw_rect(Rect2(x, CARD_Y, CARD_W, CARD_H), Color(0, 0, 0, 0.35))
+		var pw: Dictionary = snap.get("powers", {}).get(i, {})
+		if not pw.is_empty() and not waiting:
+			_chips(c, font, x, pw)
 	var left := int(snap.get("left", 0))
 	if phase == P.PH_ROUND_START:
 		_banner(c, font, "ROUND %d" % round_no, 110, Color.WHITE, 440)
@@ -176,6 +191,62 @@ func _paint(c: Control) -> void:
 	elif phase == P.PH_MATCH_END and banner != "":
 		_banner(c, font, banner, 90, banner_color, 440)
 		_banner(c, font, "THE LOBBY OPENS IN %d" % ceili(left / 60.0), 40, Color(0.85, 0.85, 0.9), 520)
+	if banner_t > 0.0 and banner_kind > 0:
+		_power_banner(c, font)
+
+# The power-up chips under a seat's card: its arrow kind, SHIELD, INFINITE, FLY,
+# BIG, then a BIG power-up with its seconds left, and FROZEN or SLOW.
+func _chips(c: Control, font: Font, x: float, pw: Dictionary) -> void:
+	var bits: int = pw["bits"]
+	var kind: int = pw["kind"]
+	var left := ceili(float(pw["left"]))
+	var list: Array = []
+	if kind > 0:
+		list.append([P.PU_SHORT[kind], PV.COLORS[kind]])
+	for pair in [[P.PW_SHIELD, P.PU_SHIELD], [P.PW_INF, P.PU_INF], [P.PW_FLY, P.PU_FLY], [P.PW_BIG, P.PU_BIG]]:
+		if bits & pair[0]:
+			list.append([P.PU_SHORT[pair[1]], PV.COLORS[pair[1]]])
+	for pair in [[P.PW_INVIS_ON, P.PU_INVIS], [P.PW_SPEED, P.PU_SPEED], [P.PW_UMBRELLA, P.PU_RAIN], [P.PW_SPIKES, P.PU_SPIKES]]:
+		if bits & pair[0]:
+			list.append(["%s %d" % [P.PU_SHORT[pair[1]], left], PV.COLORS[pair[1]]])
+	if bits & P.PW_FROZEN:
+		list.append(["FROZEN", PV.COLORS[P.PU_FREEZE]])
+	elif bits & P.PW_SLOW:
+		list.append(["SLOW", PV.COLORS[P.PU_RAIN]])
+	var cx := x
+	var cy := CARD_Y + CARD_H + 4.0
+	for item in list:
+		var w := font.get_string_size(item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 12.0
+		if cx + w > x + CARD_W + 2.0:
+			cx = x
+			cy += 25.0
+		var col: Color = item[1]
+		c.draw_rect(Rect2(cx, cy, w, 22), Color(col.darkened(0.55), 0.88))
+		c.draw_rect(Rect2(cx, cy, w, 22), Color(col, 0.95), false, 2.0)
+		c.draw_string(font, Vector2(cx + 6, cy + 17), item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col.lerp(Color.WHITE, 0.45))
+		cx += w + 4.0
+
+# The banner for the power-up you took: a card in the middle with its picture,
+# its name and what it does; it pops in, stays, and fades.
+func _power_banner(c: Control, font: Font) -> void:
+	var k := banner_t / BANNER_S
+	var a := clampf(banner_t / 0.5, 0.0, 1.0)
+	var pop := 1.0 + 0.25 * clampf((k - 0.85) / 0.15, 0.0, 1.0)
+	var col: Color = PV.COLORS.get(banner_kind, Color.WHITE)
+	var big := banner_kind >= P.PU_CATS
+	var name: String = ("BIG: " if big else "") + str(P.PU_NAMES.get(banner_kind, ""))
+	var help: String = P.PU_HELP.get(banner_kind, "")
+	var w := maxf(font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 60).x, font.get_string_size(help, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x) + 190.0
+	var r := Rect2(960.0 - w / 2.0, 250.0, w, 150.0)
+	c.draw_rect(r, Color(0.03, 0.03, 0.07, 0.82 * a))
+	c.draw_rect(r, Color(PV.GOLD if big else col, a), false, 4.0)
+	var ic := Vector2(r.position.x + 80.0, r.position.y + 75.0)
+	c.draw_circle(ic, 50.0 * pop, Color(col.darkened(0.2), a))
+	c.draw_arc(ic, 50.0 * pop, 0.0, TAU, 32, Color(1, 1, 1, a), 3.0)
+	PV.draw_icon(c, ic, banner_kind, 31.0 * pop, Color(0.08, 0.06, 0.12, a), 3.2 - banner_t)
+	c.draw_string_outline(font, Vector2(r.position.x + 150.0, r.position.y + 72.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, 7, Color(0, 0, 0, a))
+	c.draw_string(font, Vector2(r.position.x + 150.0, r.position.y + 72.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, Color(col.lerp(Color.WHITE, 0.35), a))
+	c.draw_string(font, Vector2(r.position.x + 150.0, r.position.y + 120.0), help, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(0.95, 0.95, 1.0, a))
 
 func _banner(c: Control, font: Font, text: String, size: int, col: Color, y: float) -> void:
 	c.draw_string_outline(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, 1920, size, maxi(4, size / 10), Color.BLACK)

@@ -344,16 +344,18 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	for i in na:
 		var id := b.get_u16()
 		var ks := b.get_u8()
-		if (ks >> 4) == P.S_STUCK:
-			arrows[id] = {"kind": ks & 15, "state": ks >> 4, "x": float(b.get_16()), "y": float(b.get_16()),
-				"ang": b.get_u8() * TAU / 256.0}
+		var st := (ks >> 4) & 3
+		var big := (ks & 0x40) != 0     # p4.9 BIG ARROWS
+		if st == P.S_STUCK:
+			arrows[id] = {"kind": ks & 15, "state": st, "x": float(b.get_16()), "y": float(b.get_16()),
+				"ang": b.get_u8() * TAU / 256.0, "big": big}
 		else:
 			var x := b.get_float()
 			var y := b.get_float()
 			var vx := b.get_float()
 			var vy := b.get_float()
-			arrows[id] = {"kind": ks & 15, "state": ks >> 4, "x": x, "y": y, "vx": vx, "vy": vy,
-				"ang": atan2(vy, vx), "age": b.get_u8(), "owner": b.get_u8()}
+			arrows[id] = {"kind": ks & 15, "state": st, "x": x, "y": y, "vx": vx, "vy": vy,
+				"ang": atan2(vy, vx), "age": b.get_u8(), "owner": b.get_u8(), "big": big}
 	var zones: Array = []
 	for i in nz:
 		var z := {"kind": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()), "size": float(b.get_u16()),
@@ -362,6 +364,7 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 		zones.append(z)
 	for i in ne:
 		events.append([s["tick"], [b.get_u8(), b.get_16(), b.get_16(), b.get_u8(), b.get_u8()]])
+	_read_powers(b, s)
 	s["fighters"] = fighters
 	s["by_id"] = by_id
 	s["arrows"] = arrows
@@ -375,6 +378,29 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 		have_clock = true
 	else:
 		tick_offset = lerpf(tick_offset, target, 0.05)
+
+# p4.9 the snapshot's power-up part (proto.gd), when there is one: s["powers"]
+# {seat: {bits, kind, left (s)}}, s["orbs"] [{state, kind, big, x, y, prog, for}],
+# s["cats"] [{owner, target, x, y}], s["rain"] {owner, left (s)}.
+func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
+	var powers := {}
+	var orbs: Array = []
+	var cats: Array = []
+	var rain := {"owner": P.NO_ONE, "left": 0.0}
+	if b.get_available_bytes() > 0 and b.get_u8() == P.PW_TAG:
+		for i in b.get_u8():
+			var seat := b.get_u8()
+			powers[seat] = {"bits": b.get_u16(), "kind": b.get_u8(), "left": b.get_u8() / 4.0}
+		for i in b.get_u8():
+			orbs.append({"state": b.get_u8(), "kind": b.get_u8(), "big": b.get_u8() != 0, "x": float(b.get_16()),
+				"y": float(b.get_16()), "prog": b.get_u8() / 255.0, "for": b.get_u8()})
+		for i in b.get_u8():
+			cats.append({"owner": b.get_u8(), "target": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16())})
+		rain = {"owner": b.get_u8(), "left": b.get_u8() / 4.0}
+	s["powers"] = powers
+	s["orbs"] = orbs
+	s["cats"] = cats
+	s["rain"] = rain
 
 # The draw delay follows the snapshot gaps of the last 5 s: their 99th
 # percentile plus half a tick, from 3 to 8 ticks, moving 2 ticks a second at most
@@ -473,11 +499,24 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 		if a["arrows"].has(id):
 			var aa: Dictionary = a["arrows"][id]
 			arrows[id] = {"kind": ab["kind"], "state": ab["state"], "x": _wlerp(aa["x"], ab["x"], t, W),
-				"y": _wlerp(aa["y"], ab["y"], t, H), "ang": ab["ang"]}
+				"y": _wlerp(aa["y"], ab["y"], t, H), "ang": ab["ang"], "big": ab.get("big", false)}
 		else:
 			arrows[id] = ab
+	# p4.9: the ghost cats glide between the two snapshots (by their order: they only go, never come mid-list)
+	var cats: Array = []
+	var ca: Array = a.get("cats", [])
+	for i in b.get("cats", []).size():
+		var cb: Dictionary = b["cats"][i]
+		if i < ca.size() and int(ca[i]["owner"]) == int(cb["owner"]):
+			var c := cb.duplicate()
+			c["x"] = _wlerp(ca[i]["x"], cb["x"], t, W)
+			c["y"] = _wlerp(ca[i]["y"], cb["y"], t, H)
+			cats.append(c)
+		else:
+			cats.append(cb)
 	return {"fighters": fighters, "arrows": arrows, "zones": b["zones"], "arena": b.get("arena", 0),
-		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false)}
+		"walls": lerpf(a.get("walls", 0.0), b.get("walls", 0.0), t), "walls_deadly": b.get("walls_deadly", false),
+		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {})}
 
 # The network numbers since the last call, for a bench card.
 func take_window() -> Dictionary:

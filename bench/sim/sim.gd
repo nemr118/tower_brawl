@@ -1326,7 +1326,7 @@ func _update_cats() -> void:
 		var dx := wrap_d(c.x, tgt.x + HALF_W, W)
 		var dy := wrap_d(c.y, tgt.y + MID_Y, H)
 		var d := maxf(1.0, sqrt(dx * dx + dy * dy))
-		var speed := minf(CAT_MAX, CAT_SPEED + c.t * CAT_ACCEL)
+		var speed := clampf(CAT_SPEED + c.t * CAT_ACCEL, CAT_SPEED, CAT_MAX)
 		c.vx = lerpf(c.vx, dx / d * speed, 0.12)
 		c.vy = lerpf(c.vy, dy / d * speed, 0.12)
 		c.x = fposmod(c.x + c.vx, W)
@@ -1468,6 +1468,42 @@ func _ensure_spots() -> void:
 			var sp := Vector2i(cx * 30 + 15, cy * 30)
 			if level.cell(cx, cy) != 0 and level.cell(cx, cy - 1) == 0 and level.stands(sp):
 				spots.append(Vector2(sp))
+
+# A test knob (the server's --pu-gallery): every power-up's look at once, for the
+# pictures and the prediction test. Seat 0 flies (and the rain slows it); seats 1..7
+# each get one (shield + bomb arrows, flying, spikes, rain, frozen, speed + big
+# arrows, invisible), orbs of several kinds wait (one warns),
+# and two ghost cats leave seat 1.
+func gallery() -> void:
+	_ensure_spots()
+	var looks := {0: [P.PU_FLY], 1: [P.PU_SHIELD, P.PU_BOMB], 2: [P.PU_FLY], 3: [P.PU_SPIKES], 4: [P.PU_RAIN], 6: [P.PU_SPEED, P.PU_BIG], 7: [P.PU_INVIS]}
+	for f in fighters:
+		for k in looks.get(f.id, []):
+			_give(f, k)
+		if f.id == 5:
+			f.freeze_t = 3600
+		if f.id == 2:
+			f.fly = true
+	var kinds := [P.PU_FIRE, P.PU_INF, P.PU_CATS, P.PU_FREEZE, P.PU_SMOKE]
+	for i in kinds.size():
+		var o := Orb.new()
+		_orb_serial += 1
+		o.serial = _orb_serial
+		o.kind = kinds[i]
+		o.big = kinds[i] >= P.PU_CATS
+		o.state = P.ORB_WARN if i == kinds.size() - 1 else P.ORB_LIVE
+		o.t = PU_WARN / 2 if o.state == P.ORB_WARN else 0
+		var sp: Vector2 = spots[(i * 37 + 11) % spots.size()]
+		o.x = sp.x
+		o.y = sp.y - ORB_UP
+		orbs.append(o)
+	var f1 := fighter(1)
+	if f1 != null:
+		_send_cats(f1)
+		if cats.size() > 2:
+			cats.resize(2)
+	for c in cats:
+		c.t = -600              # they take their time (the pictures)
 
 # The quarter seconds left of f's BIG power-up (the longest that runs), for the page.
 static func big_left(f: Fighter) -> int:

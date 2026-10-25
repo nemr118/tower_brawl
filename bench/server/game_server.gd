@@ -12,6 +12,7 @@
 # --bots N: how many bots fill the empty seats (0..7; the lobby can change it).
 # --power-arrows: the benchmark's arrow mix (fire, bomb, poison, smoke) for all.
 # --no-powerups: no power-up orbs (p4.9; the lobby's POWER-UPS switch starts ON).
+# --pu-gallery: a test knob: every round starts with every power-up's look (sim.gallery).
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
@@ -194,6 +195,7 @@ var events_ring: Array = []      # the last EVENTS_MAX tagged lines: {t, hhmm, t
 var stats := {}                  # "name" or "bot:name" -> the player's numbers tonight
 var stats_since := 0.0
 var stats_path := ""
+var pu_gallery := false          # --pu-gallery (a test knob: sim.gallery each round)
 var last_rec := {}               # the last report line (the host page shows its tick numbers)
 
 func _ready() -> void:
@@ -221,6 +223,7 @@ func _ready() -> void:
 	sim.respawn = false
 	sim.power_arrows = o.has("power-arrows")
 	sim.powerups = not o.has("no-powerups")
+	pu_gallery = o.has("pu-gallery")
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):
@@ -850,6 +853,8 @@ func _start_round() -> void:
 	if arena_pick == P.ARENA_MIX:
 		mix_i += 1
 	sim.start_round(seat_list)
+	if pu_gallery:
+		sim.gallery()
 	round_deaths = []
 	for s in seats:
 		var f = sim.fighter(s.i)
