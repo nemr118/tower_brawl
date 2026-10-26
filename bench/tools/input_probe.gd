@@ -627,9 +627,12 @@ func _arrows_in_the_present() -> void:
 		server.step()
 		server.take_events()
 		var pos := {}
+		var in_body := {}
 		for a in server.arrows:
 			if not a.dead:
 				pos[a.id] = Vector2(a.x, a.y)
+				if a.state == P.S_BODY:
+					in_body[a.id] = true
 		hist[server.tick] = pos
 		if server.tick % 2 != 0:
 			continue
@@ -642,7 +645,10 @@ func _arrows_in_the_present() -> void:
 		var flown: Dictionary = present.arrows_at(snaps[old], server.tick, null, -1, [], [], 0.0)
 		for id in flown:
 			var st0 := int(snaps[old]["arrows"].get(id, {}).get("state", P.S_STUCK))
-			if pos.has(id) and (st0 == P.S_FLY or st0 == P.S_FALL):   # in the air (p4.10: not one in a body)
+			# in the air (p4.10: not one in a body), and (p4.16) not one that met a fighter on the way: in a body
+			# now (p4.10's arrows stay alive in the body they hit; p4.16's route map sent the bench's bots into
+			# more of them: 66 of 1869 compared, the flight itself 98.2% exact)
+			if pos.has(id) and (st0 == P.S_FLY or st0 == P.S_FALL) and not in_body.has(id):
 				var e := Vector2(SimScript.wrap_d(pos[id].x, flown[id]["x"], 1920.0), SimScript.wrap_d(pos[id].y, flown[id]["y"], 1080.0)).length()
 				errs.append(e)
 		snaps.erase(old)

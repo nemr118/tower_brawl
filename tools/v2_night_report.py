@@ -174,16 +174,22 @@ def main():
         cancelled = max(r.get("shots_cancelled", 0) for r in rs)
         mouse = max(r.get("mouse_shots", 0) for r in rs)
         print(f"  {name}: {model(ua)} ({dev}, {rs[-1].get('screen', '?')}), {len(rs)} reports {when(rs[0]['t'])} to {when(rs[-1]['t'])}")
-        print(f"    look (pick/in use): " + ", ".join(f"{k} x{v}" for k, v in looks.most_common()) + (f"; stepped down {len(steps)} times" if steps else ""))
+        res = sorted({r.get("res") for r in rs if r.get("res")})   # p4.16: the arena's drawing size (1 full, 0.75 iPhones)
+        print(f"    look (pick/in use): " + ", ".join(f"{k} x{v}" for k, v in looks.most_common()) + (f"; stepped down {len(steps)} times" if steps else "")
+              + (f"; the arena drawn at {', '.join(str(x) for x in res)}" if res else ""))
         if fps:
             print(f"    frame rate in matches: a median {med(fps):.0f} fps, the lowest {min(fps):.0f}; slow frames a median {med(slow):.1f}%, the most {max(slow):.1f}%; "
                   f"the longest frame {max(r.get('frame_max_ms', 0) for r in rs):.0f} ms")
         if pings:
             print(f"    ping: a median {med(pings):.0f} ms, the most {max(pings)} ms; reconnects {reconnects}")
-        print(f"    shots let go: {armed} armed, {cancelled} let go inside the ring, {mouse} with the mouse"
+        taps = max(r.get("aim_taps", 0) for r in rs)   # p4.16: touches that never pulled (no bow)
+        print(f"    shots let go: {armed} armed, {cancelled} let go inside the ring, {mouse} with the mouse" + (f", {taps} touches that never pulled" if taps else "")
               + (f"; the server counted {server_shots[name]} shots for {name}" if name in server_shots else ""))
         if any("jumps" in r for r in rs):   # p4.15: how the stick is used
             stick = Counter(r.get("stick", "?") for r in rs).most_common(1)[0][0]
+            ctl = Counter(r.get("controls", "") for r in rs if r.get("controls"))   # p4.16: CLASSIC or BUTTONS
+            if ctl:
+                stick += ", controls " + ", ".join(f"{k} x{v}" for k, v in ctl.most_common())
             print(f"    the stick ({stick}): {max(r.get('jumps', 0) for r in rs)} jumps; dodges: "
                   f"{max(r.get('rim_dodges', 0) for r in rs)} from the stick's rim, {max(r.get('button_dodges', 0) for r in rs)} from the DODGE button")
         if any("eased" in r for r in rs):   # p4.16: Wi-Fi stalls (the warping)

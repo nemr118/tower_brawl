@@ -26,6 +26,7 @@ const MAX_T := 240
 
 var tries := 400
 var seed_value := 1
+var fails := 0
 
 func _init() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -45,7 +46,10 @@ func _init() -> void:
 	for new_rules in modes:
 		for pump in sticks_new:
 			_stick_row(new_rules, pump)
-	quit(0)
+	if "buttons_mode" in Sticks.new():
+		print("\nPart 3, the BUTTONS layout (p4.16)")
+		_buttons_part()
+	quit(0 if fails == 0 else 1)
 
 func _sim():
 	var sim = SimScript.new(0, 24, 7)
@@ -298,3 +302,93 @@ func _gesture_wall_jumps(new_rules: bool, pump: bool, wall: int, g: String) -> b
 			if e[0] == P.E_WALLJUMP:
 				return true
 	return false
+
+# ------------------------------------------------------------------ part 3
+# p4.16 BUTTONS: the real stick code with buttons_mode on. A tap on JUMP by a wall
+# jumps off it; the stick pushed up never jumps; pushed past its rim it follows the
+# thumb (no dodge); a quick tap on DODGE (down and up before a tick) still dodges.
+func _check(name: String, ok: bool, detail: String) -> void:
+	fails += 0 if ok else 1
+	print("  %s %s: %s" % ["PASS" if ok else "FAIL", name, detail])
+
+func _buttons_part() -> void:
+	var s = _sticks(true)
+	s.buttons_mode = true
+	var c := Vector2(400, 700)
+	# the stick up: no jump, B_UP only
+	_touch(s, c, true)
+	_drag(s, c + _at(90.0, 0.8))
+	var b: int = s.buttons()
+	_check("the stick pushed up does not jump", (b & P.B_JUMP) == 0 and (b & P.B_UP) != 0, "buttons %d" % b)
+	# past the rim: no dodge, the middle follows
+	var mid0: Vector2 = s.move_center
+	var dodged := false
+	for i in 6:
+		_drag(s, c + _at(0.0, 1.0 + 0.3 * (i + 1)))
+		if s.buttons() & P.B_DODGE:
+			dodged = true
+	_check("past the rim the stick follows, no dodge", not dodged and s.move_center.x > mid0.x + 100.0,
+		"the middle moved %.0f px, dodged %s" % [s.move_center.x - mid0.x, dodged])
+	_touch(s, c, false)
+	# JUMP: a press holds B_JUMP; a quick tap lasts TAP_TICKS
+	var jc: Vector2 = s._jump_center()
+	var e := InputEventScreenTouch.new()
+	e.index = 3
+	e.position = jc
+	e.pressed = true
+	s._touch(e)
+	e.pressed = false
+	s._touch(e)        # down and up before a tick
+	var held := 0
+	for i in 4:
+		if s.buttons() & P.B_JUMP:
+			held += 1
+	_check("a quick tap on JUMP still jumps", held >= 2, "B_JUMP on %d ticks" % held)
+	var corner := InputEventScreenTouch.new()
+	corner.index = 4
+	corner.position = Vector2(1915, 1075)
+	corner.pressed = true
+	s._touch(corner)
+	_check("the screen's corner beyond JUMP is JUMP too", s.jump_touch == 4, "jump_touch %d" % s.jump_touch)
+	corner.pressed = false
+	s._touch(corner)
+	# DODGE: a quick tap still dodges
+	var d := InputEventScreenTouch.new()
+	d.index = 5
+	d.position = s._dodge_center()
+	d.pressed = true
+	s._touch(d)
+	d.pressed = false
+	s._touch(d)
+	var dz := 0
+	for i in 4:
+		if s.buttons() & P.B_DODGE:
+			dz += 1
+	_check("a quick tap on DODGE still dodges", dz >= 2, "B_DODGE on %d ticks" % dz)
+	# a wall jump from a JUMP tap, sliding on the pit's left wall
+	var sim = _fresh(true, 165)
+	var f = sim.fighters[0]
+	f.x = 60
+	f.y = 820
+	f.vy = 2.0
+	f.on_ground = false
+	f.coyote = 0
+	var t2 = _sticks(true)
+	t2.buttons_mode = true
+	for i in 3:
+		sim.apply_input(f, t2.buttons(), 0)
+		sim.step()
+	sim.take_events()
+	var jt := InputEventScreenTouch.new()
+	jt.index = 6
+	jt.position = t2._jump_center()
+	jt.pressed = true
+	t2._touch(jt)
+	var wj := false
+	for i in 6:
+		sim.apply_input(f, t2.buttons(), 0)
+		sim.step()
+		for ev in sim.take_events():
+			if ev[0] == P.E_WALLJUMP:
+				wj = true
+	_check("a tap on JUMP by a wall jumps off it", wj, "wall jump %s" % wj)

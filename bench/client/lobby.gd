@@ -23,6 +23,7 @@ signal bots_changed(n: int)
 signal look_pressed
 signal arena_pressed
 signal arena_picked(n: int)       # 2026-10-26: a card in the arena picker (lobby_arenas.gd)
+signal controls_pressed           # p4.16: CONTROLS (CLASSIC or BUTTONS, kept on the device; phones only)
 signal bot_level_pressed
 signal power_pressed
 
@@ -42,6 +43,8 @@ const HELP_PC := [["k", "A"], ["k", "D"], ["t", "RUN"], ["-", ""], ["k", "W"], [
 	["t", "TO AIM, LET GO TO FIRE"]]
 const HELP_PHONE := [["t", "LEFT STICK RUNS, PUSH IT UP TO JUMP"], ["-", ""], ["t", "RIGHT THUMB: PULL BACK, LET GO TO FIRE"],
 	["-", ""], ["k", "DODGE"], ["t", "OR FLICK THE STICK"]]
+const HELP_BUTTONS := [["t", "LEFT STICK RUNS"], ["-", ""], ["k", "JUMP"], ["k", "DODGE"], ["t", "BOTTOM RIGHT"], ["-", ""],
+	["t", "RIGHT THUMB: PULL BACK, LET GO TO FIRE"]]   # p4.16: the BUTTONS layout
 # The frame's rows (y): the cards 244..608 (lobby_cards.gd), the status line,
 # the settings, the name and the big button, the controls line.
 const STATUS_Y := 616.0
@@ -69,6 +72,8 @@ var arena_pick: int = P.ARENA_MIX
 var power_btn = Art.Btn.new()
 var level_btn = Art.Btn.new()
 var look_btn = Art.Btn.new()
+var controls_btn = Art.Btn.new()  # p4.16: under LOOK, phones only
+var buttons_mode := false
 var bots_minus = Art.Btn.new()
 var bots_plus = Art.Btn.new()
 var notice_text := Label.new()
@@ -172,6 +177,10 @@ func _init() -> void:
 	root.add_child(corner)
 	_btn(look_btn, face.darkened(0.2), ink, 30, Rect2(1540, 18, 320, 72), 5, corner)
 	look_btn.pressed.connect(func(): look_pressed.emit())
+	_btn(controls_btn, face.darkened(0.2), ink, 30, Rect2(1540, 100, 320, 72), 5, corner)
+	controls_btn.pressed.connect(func(): controls_pressed.emit())
+	controls_btn.visible = false
+	set_controls(false)
 	root.add_child(count)
 	count.set_dress(pal)
 	root.add_child(arenas)            # on top of everything in the lobby
@@ -275,7 +284,16 @@ func set_look(name: String) -> void:
 
 func set_phone(on: bool) -> void:
 	phone = on
-	help = HELP_PHONE if on else HELP_PC
+	controls_btn.visible = on
+	help = (HELP_BUTTONS if buttons_mode else HELP_PHONE) if on else HELP_PC
+	dock.queue_redraw()
+
+# p4.16: the phone controls in use (game_client.gd): CLASSIC (the stick jumps and dodges) or BUTTONS.
+func set_controls(buttons: bool) -> void:
+	buttons_mode = buttons
+	controls_btn.say("", "CONTROLS: %s" % ("BUTTONS" if buttons else "CLASSIC"))
+	if phone:
+		help = HELP_BUTTONS if buttons else HELP_PHONE
 	dock.queue_redraw()
 
 # stuck_url: the game server's https address once the connection has failed for

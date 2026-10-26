@@ -546,14 +546,14 @@ func _on_report(c: Conn, d: Dictionary) -> void:
 	if why == "timer" and now - c.report_ms < 2000:
 		return
 	var r := {"why": why}
-	for k in ["device", "pick", "look", "stick"]:
+	for k in ["device", "pick", "look", "stick", "controls"]:
 		r[k] = str(d.get(k, "")).substr(0, 10)
 	r["ua"] = str(d.get("ua", "")).substr(0, 140)
 	r["screen"] = str(d.get("screen", "")).substr(0, 12)
-	for k in ["fps", "slow_pct", "frame_max_ms", "mem_mb", "tex_mb", "late_pct", "eased_px"]:
+	for k in ["fps", "slow_pct", "frame_max_ms", "mem_mb", "tex_mb", "late_pct", "eased_px", "res"]:
 		r[k] = snappedf(clampf(float(d.get(k, 0.0)), 0.0, 100000.0), 0.1)
 	for k in ["frames", "ping_ms", "reconnects", "step_downs", "shots_armed", "shots_cancelled", "mouse_shots", "errors_total",
-			"jumps", "rim_dodges", "button_dodges", "eased"]:
+			"jumps", "rim_dodges", "button_dodges", "eased", "aim_taps"]:
 		r[k] = clampi(int(d.get(k, 0)), 0, 100000000)
 	var errs: Array = []
 	var raw = d.get("errors", [])

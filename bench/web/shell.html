@@ -27,8 +27,20 @@ body {
 	touch-action: none;
 }
 
+/* p4.16: no browser gestures in the way of the thumbs: no long-press popup or magnifier, no
+   grey flash on a tap, no pull-to-refresh or rubber-band scroll. No selection on the game's
+   canvas only (on the whole page it can stop an iPhone typing into the name's hidden field). */
+html, body, #canvas {
+	-webkit-touch-callout: none;
+	-webkit-tap-highlight-color: transparent;
+	overscroll-behavior: none;
+}
+
 #canvas {
 	display: block;
+	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 #canvas:focus {

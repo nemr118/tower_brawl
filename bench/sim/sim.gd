@@ -45,6 +45,8 @@ const GRAVITY_HELD := 0.15 * S      # while jump is held on the way up
 const JUMP := 3.2 * S               # JUMP
 const JUMP_HBOOST := 0.5 * S        # JUMP_HBOOST
 const JUMP_BUFFER := 5              # a jump pressed this many ticks before landing still jumps
+const JUMP_BUFFER_TF := 6           # p4.16 (tf_moves): TowerFall's jump buffer (jumpBufferCounter 6)
+const DODGE_BUFFER := 6             # p4.16 (tf_moves): a dodge pressed this many ticks before it can go (the cooldown, a ledge hang) still goes
 const MAX_FALL := 2.8 * S           # MAX_FALL
 const FAST_FALL := 3.5 * S          # FAST_FALL
 const WALL_SLIDE_MAX := 1.6 * S     # WALLSTICK_MAX_FALL
@@ -267,6 +269,8 @@ class Fighter:
 	var shoot_cd: int = 0
 	var wj_t: int = 0
 	var stick_max: float = 2.25 # p4.15: this slide's top speed (WALLSTICK_START, rising to WALL_SLIDE_MAX)
+	var dodge_buf: int = 0      # p4.16: a dodge pressed too early waits this many more ticks,
+	var dodge_buf_btn: int = 0  # with the buttons (its way) it was pressed with
 	var ledge_t: int = 0
 	var rolling: bool = false
 	var in_smoke: bool = false
@@ -591,7 +595,7 @@ func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 		f.hold_jump = 2
 		if not (prev & P.B_JUMP):
 			f.want_jump = true
-			f.jump_buf = JUMP_BUFFER
+			f.jump_buf = JUMP_BUFFER_TF if tf_moves else JUMP_BUFFER
 	if f.mask:   # p4.12 GHOSTFACE: no bow (no stop to aim); the knife comes up while shoot is held, a let-go swings it
 		f.aiming = false
 		if buttons & P.B_SHOOT:
@@ -620,6 +624,9 @@ func apply_input(f: Fighter, buttons: int, aim: int) -> void:
 		elif f.state == P.F_NORMAL and f.dodge_cd == 0:
 			var d := Vector2(float(f.move_dir), (1.0 if buttons & P.B_DOWN else 0.0) - (1.0 if buttons & P.B_UP else 0.0))
 			_start_dodge(f, d)
+		elif tf_moves:
+			f.dodge_buf = DODGE_BUFFER   # p4.16: too early (the cooldown, a ledge hang, a knock): it goes when it can
+			f.dodge_buf_btn = buttons
 
 # ------------------------------------------------------------------ collision
 func box_hits_solid(x: int, y: int, w: int, h: int) -> bool:
@@ -761,6 +768,7 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 	f.dodge_t = 0
 	f.dodge_cd = 0
 	f.dodge_jump_t = 0
+	f.dodge_buf = 0
 	f.catch_t = 0
 	f.burn_t = 0
 	f.miasma_t = 0
@@ -858,6 +866,14 @@ func _update_fighter(f: Fighter) -> void:
 		f.coyote -= 1
 	if f.dodge_cd > 0:
 		f.dodge_cd -= 1
+	if f.dodge_buf > 0:
+		if f.state == P.F_NORMAL and f.dodge_cd == 0 and f.freeze_t == 0 and not frozen:
+			var bb := f.dodge_buf_btn   # (BACKWARDS swapped them already in apply_input)
+			f.dodge_buf = 0
+			_start_dodge(f, Vector2(float((1 if bb & P.B_RIGHT else 0) - (1 if bb & P.B_LEFT else 0)),
+				(1.0 if bb & P.B_DOWN else 0.0) - (1.0 if bb & P.B_UP else 0.0)))
+		else:
+			f.dodge_buf -= 1
 	if f.state == P.F_HURT:
 		f.dodge_t -= 1
 		if f.on_ground:
@@ -2536,6 +2552,8 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u8(f.wj_t)
 	buf.put_u8(f.ledge_t)
 	buf.put_double(f.stick_max)      # p4.15
+	buf.put_u8(f.dodge_buf)          # p4.16
+	buf.put_u8(f.dodge_buf_btn)
 	buf.put_u16(mini(f.burn_t, 65535))
 	buf.put_u16(mini(f.miasma_t, 65535))
 	buf.put_u8((1 if f.on_ground else 0) | (2 if f.aiming else 0) | (4 if f.want_jump else 0) \
@@ -2598,6 +2616,8 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.wj_t = buf.get_u8()
 	f.ledge_t = buf.get_u8()
 	f.stick_max = buf.get_double()
+	f.dodge_buf = buf.get_u8()
+	f.dodge_buf_btn = buf.get_u8()
 	f.burn_t = buf.get_u16()
 	f.miasma_t = buf.get_u16()
 	var b := buf.get_u8()

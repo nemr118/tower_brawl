@@ -41,9 +41,13 @@ const PV = preload("res://client/powers_view.gd")
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
+const CONTROLS_KEY := "towerbrawl_v2_controls"   # p4.16: CLASSIC or BUTTONS, kept on the device
 const LOOKS := ["low", "normal", "high"]
 const LOOK_TIER := {"low": 1, "normal": 2, "high": 3}
 const PICKS := ["auto", "low", "normal", "high"]   # p4.6: the LOOK button; a picked look is kept, AUTO steps down
+const PICKS_IOS := ["auto", "low", "normal"]      # p4.16: an iPhone or iPad ran HIGH at 15 to 17 fps (LOW 60): no HIGH there
+const IOS_RES := 0.75          # p4.16 (iPhones at 15 to 30 fps at the gathering): iPhones and iPads draw the arena at this
+                               # share of 1920 x 1080 (the picture scaled up to the screen); ?res=1 draws it full size
 const SLOW_MS := 33.4          # a frame slower than 30 fps counts as slow (p4.6; it was 20 ms)
 const SLOW_SHARE := 0.25       # more than this share of slow frames in STEP_S: one step down (p4.6; it was 5%)
 const STEP_S := 5.0            # (p4.6; it was 3 s: a few hitches from explosions stepped a phone down)
@@ -106,6 +110,8 @@ var status := ""
 var status_t := 0.0
 var look := "high"              # the look in use: low, normal, high
 var look_pick := "auto"         # p4.6: what the LOOK button picked (kept on the device): auto or a look
+var world_res := 1.0            # p4.16: the arena's drawing size, a share of 1920 x 1080 (IOS_RES, ?res=)
+var controls := "classic"       # p4.16: the phone controls (the lobby's CONTROLS; ?controls=buttons a test knob)
 var look_test := false         # look= gave a test look: no setting, no step-down
 var frame_gaps := PackedFloat32Array()   # the last STEP_S of frame gaps in a match (ms)
 var frame_sum := 0.0
@@ -125,20 +131,23 @@ func _ready() -> void:
 	display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	display.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(display)
+	world_res = clampf(float(opts.get("res", IOS_RES if _device() == "ios" else 1.0)), 0.5, 1.0)
 	sub = SubViewport.new()
-	sub.size = Vector2i(1920, 1080)
+	sub.size = Vector2i(roundi(1920 * world_res), roundi(1080 * world_res))
 	sub.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	sub.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
 	add_child(sub)
 	world = World.new()
 	sub.add_child(world)
-	world.setup(Vector2i(1920, 1080), false, 1.0)
+	world.setup(sub.size, false, 1.0)   # the camera zooms the 1920 x 1080 arena into it (p4.16: smaller on iPhones)
 	look_test = opts.has("look") and world.set_variant(str(opts["look"]))
 	if opts.has("bolt_s"):
 		world.pview.bolt_s = float(opts["bolt_s"])   # p4.9 a test knob: the bolt held for pictures
 	if not look_test:
 		look_pick = _storage_get(LOOK_KEY)
-		if not PICKS.has(look_pick):
+		if look_pick == "high" and not _picks().has("high"):
+			look_pick = "normal"   # p4.16: a HIGH kept from before, on an iPhone: NORMAL
+		if not _picks().has(look_pick):
 			look_pick = "auto"
 		look = _device_look() if look_pick == "auto" else look_pick
 		world.set_tier(LOOK_TIER[look])
@@ -153,6 +162,7 @@ func _ready() -> void:
 	lobby.start_pressed.connect(_on_start)
 	lobby.bots_changed.connect(_on_bots)
 	lobby.look_pressed.connect(_on_look)
+	lobby.controls_pressed.connect(_on_controls)
 	lobby.arena_pressed.connect(_on_arena)
 	lobby.arena_picked.connect(func(n): net.send({"kind": "arena", "n": n}))   # 2026-10-26: a card in the picker
 	lobby.bot_level_pressed.connect(_on_bot_level)
@@ -160,6 +170,11 @@ func _ready() -> void:
 	lobby.set_look(str(opts["look"]) if look_test else _look_label())
 	sticks = Sticks.new()
 	sticks.pump = str(opts.get("stick", "")) != "old"
+	controls = str(opts.get("controls", _storage_get(CONTROLS_KEY)))
+	if controls != "buttons":
+		controls = "classic"
+	sticks.buttons_mode = controls == "buttons"
+	lobby.set_controls(sticks.buttons_mode)
 	add_child(sticks)
 	deathcam = Deathcam.new()
 	add_child(deathcam)
@@ -199,7 +214,7 @@ func _ready() -> void:
 	_catch_page_errors()
 	get_viewport().size_changed.connect(_fit)
 	_fit()
-	print("🎮 [Client] %s, server %s, sticks %s, look %s" % [P.VERSION, server_url, "on" if sticks.active else "off",
+	print("🎮 [Client] %s, server %s, sticks %s, arena drawn at %.2f, look %s" % [P.VERSION, server_url, "on" if sticks.active else "off", world_res,
 		("%s (a test look)" % opts["look"]) if look_test else look])
 
 func _read_opts() -> Dictionary:
@@ -288,6 +303,8 @@ func _process(delta: float) -> void:
 	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
 	if not me.is_empty():
 		sticks.arrows_left = int(me["arrows"])
+	# p4.16 BUTTONS: the DODGE button's cooldown sweep, from your predicted fighter (sim.gd DODGE_COOLDOWN 25 ticks after a dodge)
+	sticks.dodge_wait = 1.0 if pred.me != null and pred.me.state == P.F_DODGE else (clampf(pred.me.dodge_cd / 25.0, 0.0, 1.0) if pred.me != null else 0.0)
 	if shoot_held and not me.is_empty() and not deathcam.playing:
 		aim_on = int(me["state"]) == P.F_NORMAL
 		var from := Vector2(me["x"] + 18.0, me["y"] + 28.0)
@@ -355,10 +372,21 @@ func _device_look() -> String:
 # The lobby's LOOK button (p4.6): AUTO, LOW, NORMAL, HIGH, kept on this device. A
 # picked look stays (the user: the look kept falling back to LOW after a round);
 # AUTO starts on the device's guess and may step down.
+# The lobby's CONTROLS button (p4.16, phones): CLASSIC (the stick jumps and dodges) or
+# BUTTONS (a JUMP and a DODGE button), kept on this device.
+func _on_controls() -> void:
+	controls = "classic" if controls == "buttons" else "buttons"
+	sticks.buttons_mode = controls == "buttons"
+	_storage_set(CONTROLS_KEY, controls)
+	lobby.set_controls(sticks.buttons_mode)
+	print("🎮 [Controls] %s, picked in the lobby" % controls.to_upper())
+	_send_report("look")
+
 func _on_look() -> void:
 	if look_test:
 		return
-	look_pick = PICKS[(PICKS.find(look_pick) + 1) % PICKS.size()]
+	var picks := _picks()
+	look_pick = picks[(picks.find(look_pick) + 1) % picks.size()]
 	look = _device_look() if look_pick == "auto" else look_pick
 	world.set_tier(LOOK_TIER[look])
 	_storage_set(LOOK_KEY, look_pick)
@@ -366,6 +394,10 @@ func _on_look() -> void:
 	_reset_frames(2.0)
 	print("🎮 [Look] %s, picked in the lobby" % _look_label())
 	_send_report("look")
+
+# The looks the LOOK button offers on this device (p4.16: no HIGH on an iPhone or iPad).
+func _picks() -> Array:
+	return PICKS_IOS if _device() == "ios" else PICKS
 
 func _look_label() -> String:
 	return ("AUTO · %s" % look.to_upper()) if look_pick == "auto" else look.to_upper()
@@ -463,11 +495,13 @@ func _send_report(why: String, errs: Array = []) -> void:
 		return
 	var win := get_viewport().get_visible_rect().size
 	net.send({"kind": "report", "why": why, "device": _device(), "ua": rep_ua, "screen": "%dx%d" % [int(win.x), int(win.y)],
-		"pick": "test" if look_test else look_pick, "look": look,
+		"pick": "test" if look_test else look_pick, "look": look, "res": world_res,
 		"fps": rep_frames * 1000.0 / rep_time if rep_time > 0.0 else 0.0,
 		"slow_pct": 100.0 * rep_slow / rep_frames if rep_frames > 0 else 0.0, "frame_max_ms": rep_max_ms, "frames": rep_frames,
 		"ping_ms": net.last_rtt, "reconnects": maxi(0, rep_opens - 1), "step_downs": rep_step_downs,
 		"shots_armed": sticks.shots_armed, "shots_cancelled": sticks.shots_cancelled, "mouse_shots": rep_mouse_shots,
+		"aim_taps": sticks.aim_taps,   # p4.16: right-side touches let go before they pulled (resting thumbs, taps)
+		"controls": controls,          # p4.16: CLASSIC or BUTTONS
 		"stick": "new" if sticks.pump else "old", "jumps": sticks.jumps, "rim_dodges": sticks.rim_dodges,
 		"button_dodges": sticks.button_dodges,   # p4.15: how the phone's stick is used
 		"mem_mb": Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0,   # p4.15: does a phone's memory

@@ -5,13 +5,20 @@
 # the thumb stays up (re-armed under JUMP_REARM_DEG); within DOWN_DEG of straight
 # down it holds down, and past the rim there it presses jump (down + jump: the
 # drop through a ledge); past the rim anywhere else it dodges that way. Right
-# half (p4.4, the user's pick): pull back to shoot. The thumb down draws the bow
-# (the fighter stands still on the ground); pulling it away aims the other way
+# half (p4.4, the user's pick): pull back to shoot. The thumb down and pulling (p4.16:
+# DRAW_MIN, so a resting thumb or a tap does nothing) draws the bow (the fighter stands
+# still on the ground); pulling it away aims the other way
 # (pull left, the arrow flies right); past the ring (ARM_RADIUS) the shot is
 # armed: the ring turns gold and "LET GO: ARROW!" shows, and letting go then
 # always fires. Let go inside the ring: no shot (B_CANCEL, sent until the next
 # touch so a skipped tick cannot lose it). A DODGE button sits at the right
 # edge. buttons() and aim_deg10() feed net.send_input.
+# p4.16 BUTTONS (the lobby's CONTROLS; the user's pick after the gathering's logs): the
+# stick only runs (its middle follows the thumb past the rim; no jump, no rim dodge),
+# a JUMP button in the bottom-right corner (held: a higher jump; with the stick down: a
+# drop through a ledge; its touch area runs to the screen's edges) and a DODGE button
+# up and to the left of it (the stick's way; its cooldown shows on it); the rest of the
+# right half pulls to shoot, as in CLASSIC.
 # p4.15 (the user: "hard to get the character to do exactly what you wanted"): with
 # the thumb up, two more ways to jump again, as a climb out of a pit needs: pump it
 # (down PUMP_DOWN of the reach from its highest, then up PUMP_UP) or swing it over
@@ -34,6 +41,12 @@ const PUMP_DOWN := 0.22           # p4.15: the thumb comes down this share of th
 const PUMP_UP := 0.15             # then up this share from its lowest: jump again
 const SWING := 0.3                # p4.15: the thumb leans a side when its direction's x is past this
 const SWING_GAP := 2              # a swing's jump: these ticks with jump up first, so the server sees a new press
+const SETTLE_MS := 60             # p4.16 (the let-go wobble): a let-go takes the aim the thumb held this long before,
+const SETTLE_SHARE := 0.25        # unless it moved more than this share of the ring since (a meant flick)
+const DRAW_MIN := 34.0            # p4.16: the bow comes up once the aim thumb has moved this far (about 2 mm on a phone)
+const JUMP_R := 125.0             # p4.16 BUTTONS: the JUMP button (about 15 mm across on a phone), bottom right
+const BDODGE_R := 95.0            # the DODGE button up and to the left of it
+const BTN_PAD := 36.0             # their touch areas reach this much further than drawn (JUMP's to the screen's edges too)
 const DODGE_R := 78.0
 const HIT_PAD := 16.0
 const GOLD := Color(1.0, 0.85, 0.3)
@@ -57,6 +70,11 @@ var aim_dir := Vector2.RIGHT
 var aim_set := false
 var aim_armed := false            # p4.4: the thumb is past the ring: letting go fires
 var aim_cancel := false           # p4.4: the last let-go was inside the ring: B_CANCEL until the next touch
+var aim_drawn := false            # p4.16: the thumb has pulled DRAW_MIN: the bow is up (a resting thumb or a tap: not)
+var aim_taps := 0                 # p4.16 (the phone report): right-side touches let go before they pulled
+var buttons_mode := false         # p4.16: the BUTTONS layout (game_client.gd: the lobby's CONTROLS, kept on the device)
+var jump_touch := -1              # BUTTONS: the touch on JUMP
+var dodge_wait := 0.0             # BUTTONS: the dodge's cooldown still to go, 0..1 (game_client.gd, from your predicted fighter)
 var arrows_left := 3              # the game client's count, for the ring (NO ARROWS)
 var shots_armed := 0              # p4.7 (the phone report): let go past the ring
 var shots_cancelled := 0          # and inside it
@@ -69,6 +87,7 @@ var _up_lo := 0.0                 # its lowest since a pump let go
 var _pumped := false              # a pump let go: the next jump needs a rise of PUMP_UP
 var _side := 0                    # the side the thumb leans to while this jump is held (-1, 0, 1)
 var _gap := 0
+var _aim_hist: Array = []         # p4.16: [msec, offset] of the aim thumb's last moves (the let-go wobble)
 var jumps := 0                    # p4.15 (the phone report): jumps the stick made,
 var rim_dodges := 0               # dodges from the stick's rim,
 var button_dodges := 0            # and from the DODGE button
@@ -84,6 +103,24 @@ func _init() -> void:
 	layer = 15
 	gfx.owner_layer = self
 	add_child(gfx)
+	visibility_changed.connect(_on_visibility)
+
+# p4.16: hidden (the lobby, the winner's screen), a lift is never seen: let go of every
+# touch so nothing stays held (a JUMP held into the next round).
+func _on_visibility() -> void:
+	if visible:
+		return
+	move_touch = -1
+	aim_touch = -1
+	dodge_touch = -1
+	jump_touch = -1
+	move_offset = Vector2.ZERO
+	move_dir = Vector2.ZERO
+	in_down = false
+	in_jump = false
+	aim_armed = false
+	aim_drawn = false
+	aim_offset = Vector2.ZERO
 
 func fit(w: Vector2) -> void:
 	win = w
@@ -105,13 +142,35 @@ func _input(event: InputEvent) -> void:
 		_drag(event)
 
 func _dodge_center() -> Vector2:
+	if buttons_mode:
+		return Vector2(win.x - 400.0 * k, win.y - 360.0 * k)
 	return Vector2(win.x - 118.0 * k, win.y * 0.42)
+
+func _dodge_r() -> float:
+	return BDODGE_R if buttons_mode else DODGE_R
+
+func _jump_center() -> Vector2:
+	return Vector2(win.x - 200.0 * k, win.y - 200.0 * k)
+
+# BUTTONS: a touch on JUMP: its circle and a pad, or the corner beyond it.
+func _on_jump(p: Vector2) -> bool:
+	var c := _jump_center()
+	return buttons_mode and (p.distance_to(c) <= (JUMP_R + BTN_PAD) * k or (p.x >= c.x and p.y >= c.y))
+
+func _on_dodge(p: Vector2) -> bool:
+	var pad := BTN_PAD if buttons_mode else HIT_PAD
+	return p.distance_to(_dodge_center()) <= (_dodge_r() + pad) * k
 
 func _touch(e: InputEventScreenTouch) -> void:
 	var p: Vector2 = e.position
 	if e.pressed:
-		if dodge_touch == -1 and p.distance_to(_dodge_center()) <= (DODGE_R + HIT_PAD) * k:
+		if jump_touch == -1 and _on_jump(p):
+			jump_touch = e.index      # p4.16 BUTTONS: JUMP, held for a higher jump; a quick tap still jumps
+			jump_tap = TAP_TICKS
+			jumps += 1
+		elif dodge_touch == -1 and _on_dodge(p):
 			dodge_touch = e.index
+			dodge_tap = TAP_TICKS     # p4.16: a quick tap (down and up between two ticks) still dodges
 			button_dodges += 1
 		elif p.x < win.x * 0.5 and move_touch == -1:
 			move_touch = e.index
@@ -124,6 +183,8 @@ func _touch(e: InputEventScreenTouch) -> void:
 			aim_center = p
 			aim_armed = false
 			aim_cancel = false
+			aim_drawn = false
+			_aim_hist.clear()
 			_aim(p)
 	else:
 		if e.index == move_touch:
@@ -135,16 +196,22 @@ func _touch(e: InputEventScreenTouch) -> void:
 			_pumped = false
 			_gap = 0
 		elif e.index == aim_touch:
+			_settle_aim()
 			aim_touch = -1          # let go: the next tick sends no shoot bit: past the ring it fires,
-			aim_cancel = not aim_armed   # inside it B_CANCEL lowers the bow
-			if aim_armed:
+			aim_cancel = aim_drawn and not aim_armed   # inside it B_CANCEL lowers the bow
+			if not aim_drawn:
+				aim_taps += 1       # p4.16: the bow never came up: nothing to fire or lower
+			elif aim_armed:
 				shots_armed += 1
 			else:
 				shots_cancelled += 1
+			aim_drawn = false
 			aim_armed = false
 			aim_offset = Vector2.ZERO
 		elif e.index == dodge_touch:
 			dodge_touch = -1
+		elif e.index == jump_touch:
+			jump_touch = -1
 	gfx.queue_redraw()
 
 func _drag(e: InputEventScreenDrag) -> void:
@@ -173,6 +240,14 @@ func _move(p: Vector2) -> void:
 	var up := -off.y / (MOVE_RADIUS * k)                    # how high the thumb is, a share of the reach
 	var side := int(signf(dir.x)) if absf(dir.x) >= SWING else 0
 	in_down = up_deg <= -(90.0 - DOWN_DEG)
+	if buttons_mode:
+		# p4.16 BUTTONS: the stick only runs (and points a dodge); past the rim its middle
+		# follows the thumb, so turning round is always a short move
+		in_jump = false
+		if dist > MOVE_RADIUS * k:
+			move_center = p - dir * MOVE_RADIUS * k
+			move_offset = dir * MOVE_RADIUS * k
+		return
 	if up_deg >= JUMP_DEG:
 		if _jump_armed:
 			_jump_now(up, side)
@@ -222,11 +297,34 @@ func _jump_now(up: float, side: int) -> void:
 func _aim(p: Vector2) -> void:
 	var off := p - aim_center
 	var dist := off.length()
+	var now := Time.get_ticks_msec()
+	_aim_hist.append([now, off])
+	while _aim_hist.size() > 2 and now - int(_aim_hist[0][0]) > 300:
+		_aim_hist.pop_front()
 	aim_offset = off.limit_length(AIM_RADIUS * k)
 	if dist > AIM_RADIUS * k * NOISE:
 		aim_dir = -off / dist   # pull back: the arrow flies the other way
 		aim_set = true
 	aim_armed = dist >= ARM_RADIUS * k
+	if dist >= DRAW_MIN * k:
+		aim_drawn = true
+
+# p4.16 (the let-go wobble): as a thumb lifts off the glass its touch point slides a
+# little, and the shot took that last point. A let-go takes the aim the thumb held
+# SETTLE_MS before, unless the thumb moved more than SETTLE_SHARE of the ring since
+# (a flick meant as the aim). The ring's arming counts from there too.
+func _settle_aim() -> void:
+	if _aim_hist.size() < 2:
+		return
+	var now := Time.get_ticks_msec()
+	var last: Vector2 = _aim_hist[-1][1]
+	for i in range(_aim_hist.size() - 1, -1, -1):
+		if now - int(_aim_hist[i][0]) >= SETTLE_MS:
+			var off: Vector2 = _aim_hist[i][1]
+			if (last - off).length() <= SETTLE_SHARE * ARM_RADIUS * k and off.length() > AIM_RADIUS * k * NOISE:
+				aim_dir = -off.normalized()
+				aim_armed = aim_armed or off.length() >= ARM_RADIUS * k
+			return
 
 # The buttons this physics tick (proto B_*). A tap lasts TAP_TICKS ticks.
 func buttons() -> int:
@@ -246,11 +344,11 @@ func buttons() -> int:
 	if _gap > 0:
 		_gap -= 1                       # p4.15: a swing's jump: jump up first, then the new press
 	else:
-		if in_jump or jump_tap > 0:
+		if in_jump or jump_tap > 0 or jump_touch != -1:
 			b |= P.B_JUMP
 		if jump_tap > 0:
 			jump_tap -= 1
-	if aim_touch != -1:
+	if aim_touch != -1 and aim_drawn:   # p4.16: only once the thumb pulls (a thumb at rest roots nobody)
 		b |= P.B_SHOOT
 	elif aim_cancel:
 		b |= P.B_CANCEL
@@ -279,9 +377,10 @@ func _paint(n: Node2D) -> void:
 	var mr := MOVE_RADIUS * k
 	var ma := 0.9 if mlive else 0.45
 	_base(n, mc, mr, ma)
-	n.draw_arc(mc, mr + RIM_PAD * k, 0.0, TAU, 64, Color(1.0, 1.0, 1.0, 0.2 * ma), 1.0 * k, true)
-	var j := deg_to_rad(JUMP_DEG)
-	n.draw_arc(mc, mr - 4.0 * k, -PI + j, -j, 24, Color(GOLD, (0.9 if in_jump else 0.5) * ma), 3.0 * k, true)
+	if not buttons_mode:   # the rim that dodges, and the arc that jumps (CLASSIC only)
+		n.draw_arc(mc, mr + RIM_PAD * k, 0.0, TAU, 64, Color(1.0, 1.0, 1.0, 0.2 * ma), 1.0 * k, true)
+		var j := deg_to_rad(JUMP_DEG)
+		n.draw_arc(mc, mr - 4.0 * k, -PI + j, -j, 24, Color(GOLD, (0.9 if in_jump else 0.5) * ma), 3.0 * k, true)
 	var d := deg_to_rad(DOWN_DEG)
 	n.draw_arc(mc, mr - 4.0 * k, PI * 0.5 - d, PI * 0.5 + d, 12, Color(BLUE, (0.9 if in_down else 0.5) * ma), 3.0 * k, true)
 	var mcol := Color(1.0, 1.0, 1.0, 0.85 * ma)
@@ -290,11 +389,13 @@ func _paint(n: Node2D) -> void:
 	elif in_down:
 		mcol = Color(BLUE, 0.9)
 	_thumb(n, mc + (move_offset if mlive else Vector2.ZERO), mcol, ma)
-	n.draw_string(font, mc + Vector2(-mr, -mr - 14.0 * k), "MOVE · up jumps · down + rim drops · rim dodges", HORIZONTAL_ALIGNMENT_LEFT, -1, int(20 * k), Color(1, 1, 1, 0.35))
+	n.draw_string(font, mc + Vector2(-mr, -mr - 14.0 * k), "MOVE · down + JUMP drops" if buttons_mode else "MOVE · up jumps · down + rim drops · rim dodges",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, int(20 * k), Color(1, 1, 1, 0.35))
 	# right: pull back to shoot (p4.4). The ring is the arming line; armed, it turns
 	# gold (or red with an empty quiver) and says what letting go will do.
 	var alive := aim_touch != -1
-	var ac := aim_center if alive else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
+	var rest := Vector2(win.x - 720.0 * k, win.y - 600.0 * k) if buttons_mode else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
+	var ac := aim_center if alive else rest
 	var ring := ARM_RADIUS * k
 	var aa := 0.9 if alive else 0.45
 	var armed := alive and aim_armed
@@ -326,9 +427,26 @@ func _paint(n: Node2D) -> void:
 			say_size = 30
 	n.draw_string_outline(font, ac + Vector2(-ring * 2.0, -ring - 18.0 * k), say, HORIZONTAL_ALIGNMENT_CENTER, ring * 4.0, int(say_size * k), int(5 * k), Color(0, 0, 0, 0.8 if alive else 0.0))
 	n.draw_string(font, ac + Vector2(-ring * 2.0, -ring - 18.0 * k), say, HORIZONTAL_ALIGNMENT_CENTER, ring * 4.0, int(say_size * k), say_col)
-	# the dodge button
+	# the dodge button (BUTTONS: up and to the left of JUMP, its cooldown a dark sweep)
 	var dc := _dodge_center()
+	var dr := _dodge_r() * k
 	var held := dodge_touch != -1
-	n.draw_circle(dc, DODGE_R * k, Color(1.0, 0.85, 0.3, 0.7) if held else Color(0.12, 0.14, 0.2, 0.55))
-	n.draw_arc(dc, DODGE_R * k, 0.0, TAU, 48, Color(1, 1, 1, 0.95 if held else 0.55), 2.0 * k, true)
-	n.draw_string(font, dc + Vector2(-DODGE_R * k, 9.0 * k), "DODGE", HORIZONTAL_ALIGNMENT_CENTER, DODGE_R * 2.0 * k, int(26 * k), Color(1, 1, 1, 0.95))
+	n.draw_circle(dc, dr, Color(1.0, 0.85, 0.3, 0.7) if held else Color(0.12, 0.14, 0.2, 0.55))
+	if buttons_mode and dodge_wait > 0.0:
+		var pts := PackedVector2Array([dc])
+		for i in 33:
+			pts.append(dc + Vector2.from_angle(-PI * 0.5 + TAU * dodge_wait * i / 32.0) * dr)
+		n.draw_colored_polygon(pts, Color(0.0, 0.0, 0.0, 0.55))
+	n.draw_arc(dc, dr, 0.0, TAU, 48, Color(1, 1, 1, 0.95 if held else 0.55), 2.0 * k, true)
+	var dcol := Color(1, 1, 1, 0.5 if buttons_mode and dodge_wait > 0.0 else 0.95)
+	n.draw_string(font, dc + Vector2(-dr, 9.0 * k), "DODGE", HORIZONTAL_ALIGNMENT_CENTER, dr * 2.0, int(26 * k), dcol)
+	if buttons_mode:   # JUMP, bottom right
+		var jc := _jump_center()
+		var jr := JUMP_R * k
+		var jheld := jump_touch != -1
+		n.draw_circle(jc, jr, Color(GOLD, 0.75) if jheld else Color(0.12, 0.14, 0.2, 0.55))
+		n.draw_arc(jc, jr, 0.0, TAU, 64, Color(1, 1, 1, 0.95 if jheld else 0.6), 3.0 * k, true)
+		var tip := jc + Vector2(0.0, -jr * 0.42)   # an up arrow over the word
+		n.draw_colored_polygon(PackedVector2Array([tip + Vector2(0.0, -14.0 * k), tip + Vector2(16.0 * k, 4.0 * k), tip + Vector2(-16.0 * k, 4.0 * k)]),
+			Color(1, 1, 1, 0.85))
+		n.draw_string(font, jc + Vector2(-jr, 12.0 * k), "JUMP", HORIZONTAL_ALIGNMENT_CENTER, jr * 2.0, int(34 * k), Color(1, 1, 1, 0.95))
