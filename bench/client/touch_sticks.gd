@@ -12,6 +12,10 @@
 # always fires. Let go inside the ring: no shot (B_CANCEL, sent until the next
 # touch so a skipped tick cannot lose it). A DODGE button sits at the right
 # edge. buttons() and aim_deg10() feed net.send_input.
+# p4.15 (the user: "hard to get the character to do exactly what you wanted"): with
+# the thumb up, two more ways to jump again, as a climb out of a pit needs: pump it
+# (down PUMP_DOWN of the reach from its highest, then up PUMP_UP) or swing it over
+# the top to the other side. Before, only dipping under JUMP_DEG jumped again.
 extends CanvasLayer
 
 const P = preload("res://sim/proto.gd")
@@ -26,6 +30,10 @@ const JUMP_DEG := 45.0
 const JUMP_REARM_DEG := 35.0
 const DOWN_DEG := 30.0
 const TAP_TICKS := 2
+const PUMP_DOWN := 0.22           # p4.15: the thumb comes down this share of the reach from its highest: jump lets go,
+const PUMP_UP := 0.15             # then up this share from its lowest: jump again
+const SWING := 0.3                # p4.15: the thumb leans a side when its direction's x is past this
+const SWING_GAP := 2              # a swing's jump: these ticks with jump up first, so the server sees a new press
 const DODGE_R := 78.0
 const HIT_PAD := 16.0
 const GOLD := Color(1.0, 0.85, 0.3)
@@ -55,6 +63,15 @@ var shots_cancelled := 0          # and inside it
 var dodge_touch := -1
 var jump_tap := 0
 var dodge_tap := 0
+var pump := true                  # p4.15's pump and swing (false: p4.14's stick; ?stick=old, tools/pit_probe.gd)
+var _up_hi := 0.0                 # the thumb's highest (a share of the reach) since this jump went off
+var _up_lo := 0.0                 # its lowest since a pump let go
+var _pumped := false              # a pump let go: the next jump needs a rise of PUMP_UP
+var _side := 0                    # the side the thumb leans to while this jump is held (-1, 0, 1)
+var _gap := 0
+var jumps := 0                    # p4.15 (the phone report): jumps the stick made,
+var rim_dodges := 0               # dodges from the stick's rim,
+var button_dodges := 0            # and from the DODGE button
 var gfx := _Gfx.new()
 
 class _Gfx extends Node2D:
@@ -95,6 +112,7 @@ func _touch(e: InputEventScreenTouch) -> void:
 	if e.pressed:
 		if dodge_touch == -1 and p.distance_to(_dodge_center()) <= (DODGE_R + HIT_PAD) * k:
 			dodge_touch = e.index
+			button_dodges += 1
 		elif p.x < win.x * 0.5 and move_touch == -1:
 			move_touch = e.index
 			move_center = p
@@ -114,6 +132,8 @@ func _touch(e: InputEventScreenTouch) -> void:
 			move_dir = Vector2.ZERO
 			in_down = false
 			in_jump = false
+			_pumped = false
+			_gap = 0
 		elif e.index == aim_touch:
 			aim_touch = -1          # let go: the next tick sends no shoot bit: past the ring it fires,
 			aim_cancel = not aim_armed   # inside it B_CANCEL lowers the bow
@@ -146,17 +166,37 @@ func _move(p: Vector2) -> void:
 		in_jump = false
 		_jump_armed = true
 		_rim_armed = true
+		_pumped = false
 		return
 	move_dir = dir
 	var up_deg := rad_to_deg(atan2(-dir.y, absf(dir.x)))   # +90 straight up, -90 straight down
+	var up := -off.y / (MOVE_RADIUS * k)                    # how high the thumb is, a share of the reach
+	var side := int(signf(dir.x)) if absf(dir.x) >= SWING else 0
 	in_down = up_deg <= -(90.0 - DOWN_DEG)
 	if up_deg >= JUMP_DEG:
-		in_jump = true
 		if _jump_armed:
-			_jump_armed = false
-			jump_tap = TAP_TICKS
+			_jump_now(up, side)
+		elif not pump:
+			in_jump = true
+		elif _pumped:
+			_up_lo = minf(_up_lo, up)
+			if up - _up_lo >= PUMP_UP:
+				_jump_now(up, side)        # pumped back up: jump again
+		else:
+			in_jump = true
+			_up_hi = maxf(_up_hi, up)
+			if _side == 0:
+				_side = side
+			if _up_hi - up >= PUMP_DOWN:
+				in_jump = false            # pumped down: jump lets go
+				_pumped = true
+				_up_lo = up
+			elif side != 0 and _side != 0 and side != _side:
+				_jump_now(up, side)        # swung over the top: jump again
+				_gap = SWING_GAP
 	else:
 		in_jump = false
+		_pumped = false
 		if up_deg < JUMP_REARM_DEG:
 			_jump_armed = true
 	if dist >= (MOVE_RADIUS + RIM_PAD) * k:
@@ -166,8 +206,18 @@ func _move(p: Vector2) -> void:
 				jump_tap = TAP_TICKS      # down + jump: the drop through a ledge
 			else:
 				dodge_tap = TAP_TICKS
+				rim_dodges += 1
 	elif share <= RIM_REARM:
 		_rim_armed = true
+
+func _jump_now(up: float, side: int) -> void:
+	in_jump = true
+	_jump_armed = false
+	_pumped = false
+	jump_tap = TAP_TICKS
+	_up_hi = up
+	_side = side
+	jumps += 1
 
 func _aim(p: Vector2) -> void:
 	var off := p - aim_center
@@ -193,10 +243,13 @@ func buttons() -> int:
 				b |= P.B_UP
 			elif move_dir.y > 0.38:
 				b |= P.B_DOWN
-	if in_jump or jump_tap > 0:
-		b |= P.B_JUMP
-	if jump_tap > 0:
-		jump_tap -= 1
+	if _gap > 0:
+		_gap -= 1                       # p4.15: a swing's jump: jump up first, then the new press
+	else:
+		if in_jump or jump_tap > 0:
+			b |= P.B_JUMP
+		if jump_tap > 0:
+			jump_tap -= 1
 	if aim_touch != -1:
 		b |= P.B_SHOOT
 	elif aim_cancel:

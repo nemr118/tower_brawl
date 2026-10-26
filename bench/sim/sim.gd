@@ -48,7 +48,13 @@ const JUMP_BUFFER := 5              # a jump pressed this many ticks before land
 const MAX_FALL := 2.8 * S           # MAX_FALL
 const FAST_FALL := 3.5 * S          # FAST_FALL
 const WALL_SLIDE_MAX := 1.6 * S     # WALLSTICK_MAX_FALL
+const WALLSTICK_START := 0.5 * S    # p4.15 WALLSTICK_START: a slide starts this slow (more time to jump off),
+const WALLSTICK_ADD := 0.01 * S     # WALLSTICK_ADD: and speeds up by this a tick to WALL_SLIDE_MAX
 const WALLJUMP_X := 2.0 * S
+const WALLJUMP_REACH := 9           # p4.15 WALLJUMP_CHECK 2 px: a wall this close, either side, takes a jump
+const WALLJUMP_FLOOR := 22          # but not with a floor this close below (5 px): that jump is the ground's
+const DODGE_WJ_EARLY := 12          # DODGE_WALLJUMP_LIMIT: a jump off a wall with dodge_t at least this is the super one
+const LEDGE_REACH := 37             # p4.15: a ledge grab takes a fighter this far under the hang (TowerFall: 7 px; p4.14: 18)
 const DODGE_SPEED := 5.5 * S        # DODGE_SPEED
 const DODGE_SLIDE_MULT := 1.4       # DODGE_SLIDE_SPEED_MULT: a dodge along the ground is faster
 const DODGE_DECAY := 0.85           # DODGE_MULT per frame
@@ -260,6 +266,7 @@ class Fighter:
 	var dropping: int = 0       # just dropped through a ledge: ledges are air for these ticks
 	var shoot_cd: int = 0
 	var wj_t: int = 0
+	var stick_max: float = 2.25 # p4.15: this slide's top speed (WALLSTICK_START, rising to WALL_SLIDE_MAX)
 	var ledge_t: int = 0
 	var rolling: bool = false
 	var in_smoke: bool = false
@@ -358,6 +365,8 @@ var arrow_cap: int = 24
 var respawn := true             # the benchmark: a death respawns after 1 s. The game: one life a round
 var power_arrows := true        # the benchmark's arrow mix. The game: plain arrows unless --power-arrows
 var frozen := false             # the round's first moment: nobody moves, nobody shoots
+var tf_moves := true            # p4.15 TowerFall's easier wall moves (a jump near a wall, the slow start of a slide,
+                                # a jump off a wall in a dodge, a longer ledge reach); off: p4.14's (tools/pit_probe.gd)
 var walls_start := 0            # the game: the purple walls come this many ticks after FIGHT (0: never, the benchmark)
 var play_t := 0                 # ticks since FIGHT (counts while not frozen; start_round sets 0)
 var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the arena (0 or below: not there)
@@ -679,12 +688,34 @@ func _line_blocked(x: float, y: float, dx: float, dy: float) -> bool:
 # the height of the fighter's head while it slides down (TowerFall's ledge grab).
 func _ledge_top(f: Fighter) -> int:
 	var cx := floori((f.x + (BODY_W if f.wall > 0 else -1)) / 30.0)
-	for cy in range(floori((f.y - 6) / 30.0), floori((f.y + 24) / 30.0) + 1):
+	var reach := LEDGE_REACH if tf_moves else 18
+	for cy in range(floori((f.y - (reach + 6 if tf_moves else 6)) / 30.0), floori((f.y + 24) / 30.0) + 1):
 		if level.cell(cx, cy) == 1 and level.cell(cx, cy - 1) != 1:
 			var top := cy * 30
-			if f.y + 6 >= top - 4 and f.y + 6 <= top + 24 and not box_hits_solid(f.x, top + 6, BODY_W, BODY_H):
+			if f.y + 6 >= top - 4 and f.y <= top + reach and not box_hits_solid(f.x, top + 6, BODY_W, BODY_H):
 				return top
 	return -1
+
+# p4.15 (TowerFall's CanWallJump): the side of a wall within WALLJUMP_REACH px, the left
+# first, held toward or not; with floor_check, none with a floor within WALLJUMP_FLOOR
+# px below (that jump is the ground's).
+func _wall_near(f: Fighter, floor_check: bool) -> int:
+	if floor_check and box_hits_solid(f.x, f.y + WALLJUMP_FLOOR, BODY_W, BODY_H):
+		return 0
+	if box_hits_solid(f.x - WALLJUMP_REACH, f.y, BODY_W, BODY_H):
+		return -1
+	if box_hits_solid(f.x + WALLJUMP_REACH, f.y, BODY_W, BODY_H):
+		return 1
+	return 0
+
+func _wall_jump(f: Fighter, side: int) -> void:
+	f.vy = -JUMP
+	f.vx = -side * WALLJUMP_X
+	f.facing = -side
+	f.wj_t = 12
+	f.stick_max = WALLSTICK_START
+	_event(P.E_WALLJUMP, f.x + (BODY_W if side > 0 else 0), f.y + MID_Y, f.id, 1 if side > 0 else 0)
+	f.wall = 0
 
 func _hurt(f: Fighter, vx: float, vy: float) -> void:
 	if f.state == P.F_DEAD:
@@ -818,6 +849,7 @@ func _update_fighter(f: Fighter) -> void:
 	f.on_ground = _on_ground(f)
 	if f.on_ground:
 		f.coyote = COYOTE_TICKS
+		f.stick_max = WALLSTICK_START
 		if not was_ground:
 			_event(P.E_LAND, f.x + HALF_W, f.y + BODY_H, f.id, clampi(int(absf(f.vy)), 0, 255))
 	elif f.coyote > 0:
@@ -855,7 +887,27 @@ func _update_fighter(f: Fighter) -> void:
 			f.vy *= DODGE_DECAY
 		if f.dodge_jump_t > 0:
 			f.dodge_jump_t -= 1
-		if f.want_jump and f.dodge_jump_t > 0 and (f.on_ground or f.coyote > 0):
+		var dodge_wall := _wall_near(f, false) if tf_moves and f.want_jump and f.catch_t == 0 else 0
+		if dodge_wall != 0:
+			# p4.15 (TowerFall's DodgeWallJump): a jump off a wall in a dodge. Early in the
+			# dodge, the super one: up and away at the dodge's speed, and the dodge goes on;
+			# later, a plain jump off the wall, and the dodge is over.
+			f.want_jump = false
+			f.rolling = false
+			if f.dodge_t >= DODGE_WJ_EARLY:
+				f.vx = -dodge_wall * DODGE_SPEED * 0.70710678
+				f.vy = -DODGE_SPEED * 0.70710678
+				f.dodge_t = DODGE_TICKS
+				f.facing = -dodge_wall
+				f.wj_t = 12
+				f.stick_max = WALLSTICK_START
+				_event(P.E_WALLJUMP, f.x + (BODY_W if dodge_wall > 0 else 0), f.y + MID_Y, f.id, 1 if dodge_wall > 0 else 0)
+			else:
+				f.state = P.F_NORMAL
+				f.state_t = 0
+				f.dodge_cd = DODGE_COOLDOWN
+				_wall_jump(f, dodge_wall)
+		elif f.want_jump and f.dodge_jump_t > 0 and (f.on_ground or f.coyote > 0):
 			# a jump in the first ticks of a ground dodge: out of the dodge and up
 			f.want_jump = false
 			f.state = P.F_NORMAL
@@ -871,6 +923,11 @@ func _update_fighter(f: Fighter) -> void:
 			f.state = P.F_NORMAL
 			f.state_t = 0
 			f.dodge_cd = DODGE_COOLDOWN
+		if tf_moves and f.want_jump and f.state == P.F_DODGE:
+			if f.jump_buf <= 0:
+				f.want_jump = false   # p4.15: a jump pressed in a dodge waits JUMP_BUFFER ticks, as on foot
+			else:
+				f.jump_buf -= 1
 	elif f.fly:
 		_fly(f)
 	else:
@@ -908,7 +965,11 @@ func _update_fighter(f: Fighter) -> void:
 		if not f.on_ground:
 			var g := GRAVITY_HELD if (f.hold_jump > 0 and f.vy <= S) else GRAVITY
 			var target := MAX_FALL
-			if f.wall != 0 and f.vy > 0.0:
+			if f.wall != 0 and tf_moves:
+				if f.vy > 0.0:
+					target = f.stick_max    # p4.15: a slide starts slow and speeds up (TowerFall's sticky wall)
+				f.stick_max = move_toward(f.stick_max, WALL_SLIDE_MAX, WALLSTICK_ADD)
+			elif f.wall != 0 and f.vy > 0.0:
 				target = WALL_SLIDE_MAX
 			elif f.drop_t > 0 and f.vy > 0.0:
 				target = FAST_FALL
@@ -926,15 +987,12 @@ func _update_fighter(f: Fighter) -> void:
 				f.coyote = 0
 				f.on_ground = false
 				_event(P.E_JUMP, f.x + HALF_W, f.y + BODY_H, f.id, 0)
-			elif f.wall != 0:
-				f.vy = -JUMP
-				f.vx = -f.wall * WALLJUMP_X
-				f.facing = -f.wall
-				f.wj_t = 12
-				_event(P.E_WALLJUMP, f.x + (BODY_W if f.wall > 0 else 0), f.y + MID_Y, f.id, 1 if f.wall > 0 else 0)
-				f.wall = 0
 			else:
-				jumped = false
+				var side := _wall_near(f, true) if tf_moves else f.wall   # p4.15: a wall near, held toward or not
+				if side != 0:
+					_wall_jump(f, side)
+				else:
+					jumped = false
 			if jumped or f.jump_buf <= 0:
 				f.want_jump = false
 			else:
@@ -2473,6 +2531,7 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u8(f.dropping)
 	buf.put_u8(f.wj_t)
 	buf.put_u8(f.ledge_t)
+	buf.put_double(f.stick_max)      # p4.15
 	buf.put_u16(mini(f.burn_t, 65535))
 	buf.put_u16(mini(f.miasma_t, 65535))
 	buf.put_u8((1 if f.on_ground else 0) | (2 if f.aiming else 0) | (4 if f.want_jump else 0) \
@@ -2534,6 +2593,7 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.dropping = buf.get_u8()
 	f.wj_t = buf.get_u8()
 	f.ledge_t = buf.get_u8()
+	f.stick_max = buf.get_double()
 	f.burn_t = buf.get_u16()
 	f.miasma_t = buf.get_u16()
 	var b := buf.get_u8()
