@@ -52,7 +52,7 @@
 # skip (p4.8: a seated player ends the match's end, the deathcam's montage, for everyone: the lobby),
 # report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
 # step_downs, shots_armed, shots_cancelled, mouse_shots, errors [], errors_total; p4.15: stick, jumps, rim_dodges,
-# button_dodges, mem_mb, tex_mb} (p4.7: a phone's own
+# button_dodges, mem_mb, tex_mb; p4.16: late_pct, eased, eased_px} (p4.7: a phone's own
 # numbers every 30 s and at a look change or a page error; logged as a "client" line, kept for /state). From the server: welcome {seat, version, name, phase},
 # version_error {server, yours}, full, note {text}, seats {phase, round, goal,
 # bots, bots_wanted, bot_level, power, people, arena (the pick), arena_now (the round's,
@@ -548,10 +548,10 @@ func _on_report(c: Conn, d: Dictionary) -> void:
 		r[k] = str(d.get(k, "")).substr(0, 10)
 	r["ua"] = str(d.get("ua", "")).substr(0, 140)
 	r["screen"] = str(d.get("screen", "")).substr(0, 12)
-	for k in ["fps", "slow_pct", "frame_max_ms", "mem_mb", "tex_mb"]:
+	for k in ["fps", "slow_pct", "frame_max_ms", "mem_mb", "tex_mb", "late_pct", "eased_px"]:
 		r[k] = snappedf(clampf(float(d.get(k, 0.0)), 0.0, 100000.0), 0.1)
 	for k in ["frames", "ping_ms", "reconnects", "step_downs", "shots_armed", "shots_cancelled", "mouse_shots", "errors_total",
-			"jumps", "rim_dodges", "button_dodges"]:
+			"jumps", "rim_dodges", "button_dodges", "eased"]:
 		r[k] = clampi(int(d.get(k, 0)), 0, 100000000)
 	var errs: Array = []
 	var raw = d.get("errors", [])

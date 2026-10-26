@@ -469,6 +469,8 @@ func _send_report(why: String, errs: Array = []) -> void:
 		"button_dodges": sticks.button_dodges,   # p4.15: how the phone's stick is used
 		"mem_mb": Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0,   # p4.15: does a phone's memory
 		"tex_mb": Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0,   # stay flat (the iPhone white screen)
+		"late_pct": 100.0 * net.starved_frames / maxf(1.0, net.sampled_frames),   # p4.16 (the warping): frames with no newer
+		"eased": net.eased, "eased_px": net.eased_max,   # snapshot, and the others' jumps eased out (Wi-Fi stalls)
 		"errors": errs, "errors_total": rep_errors})
 	rep_t = 0.0
 	rep_frames = 0

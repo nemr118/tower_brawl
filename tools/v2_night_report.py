@@ -185,6 +185,12 @@ def main():
             stick = Counter(r.get("stick", "?") for r in rs).most_common(1)[0][0]
             print(f"    the stick ({stick}): {max(r.get('jumps', 0) for r in rs)} jumps; dodges: "
                   f"{max(r.get('rim_dodges', 0) for r in rs)} from the stick's rim, {max(r.get('button_dodges', 0) for r in rs)} from the DODGE button")
+        if any("eased" in r for r in rs):   # p4.16: Wi-Fi stalls (the warping)
+            late = [r.get("late_pct", 0.0) for r in rs if r.get("frames", 0) >= 30]
+            print(f"    the others: no newer snapshot on a median {med(late) if late else 0:.1f}% of frames (the most {max(late) if late else 0:.1f}%); "
+                  f"{max(r.get('eased', 0) for r in rs)} jumps eased out, the biggest {max(r.get('eased_px', 0) for r in rs):.0f} px")
+            if late and max(late) > 2.0:
+                look_at.append(f"{name}'s {model(ua)} waited for snapshots on {max(late):.1f}% of frames (Wi-Fi stalls: the warping)")
         mems = [(r["mem_mb"], r.get("tex_mb", 0.0)) for r in rs if r.get("mem_mb", 0) > 0]
         if mems:   # p4.15: the iPhone white screen was memory that grew every match
             print(f"    memory: {mems[0][0]:.0f} MB at the first report, the most {max(m for m, _ in mems):.0f} MB, the last {mems[-1][0]:.0f} MB; "

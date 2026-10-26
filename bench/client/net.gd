@@ -23,6 +23,10 @@ const ADJUST_EVERY := 4        # a slow change adds or skips one tick every 4 (0
 const JUMP_TICKS := 20         # the clock is further off than this: jump (the first sync, a stall)
 const W := 1920.0
 const H := 1080.0
+const GLIDE_MAX := 6.0         # p4.16 (the warping): no newer snapshot: the others go on at their last speed this many ticks at most
+const EASE_S := 0.1            # p4.16: a jump in where another fighter is drawn (snapshots late, then all at once) eases out over this
+const EASE_MAX := 220.0        # a bigger jump is a real one (a bed, a locker): drawn at once
+const STEP_MAX := 26.0         # the fastest a fighter moves in a tick (the big jump off a wall in a dodge: 24.75 px)
 # the events whose a is a fighter (proto.gd); E_EXPLODE's a is the shooter, not the one hurt
 const FIGHTER_EVENTS := [P.E_JUMP, P.E_LAND, P.E_DODGE, P.E_SHOOT, P.E_DEATH, P.E_CATCH, P.E_PICKUP,
 	P.E_SPAWN, P.E_WALLJUMP, P.E_HURT, P.E_LEDGE, P.E_DRYFIRE]
@@ -68,6 +72,18 @@ var margin_log := PackedInt32Array()   # every margin T_OWN reported (the probes
 # the test knob: lag and jitter in ms
 var lag_ms := 0.0
 var jitter_ms := 0.0
+var stall_ms := 0.0            # p4.16 a test knob: every stall_every_ms the packets got wait stall_ms (a Wi-Fi power-save hiccup)
+var stall_every_ms := 3000.0
+var _stall_until := 0.0
+var _next_stall := 0.0
+var smooth_others := true      # p4.16: the glide and the ease (false: p4.15's drawing; tools/play_probe.gd --warps --smooth=0)
+var _ease := {}                # p4.16: fighter id -> [the ease still to fade, its spot last frame before the ease, the round]
+var _last_sample_ms := 0.0
+var _last_rt := 0.0
+var sampled_frames := 0        # p4.16 (the warping): frames sample() drew,
+var starved_frames := 0        # and those with no newer snapshot to glide to (the others stood still)
+var eased := 0                 # p4.16: jumps of the others eased out (late snapshots), and the biggest, px
+var eased_max := 0.0
 var _in_q: Array = []          # [due ms, packet, was a string]
 var _out_q: Array = []         # [due ms, PackedByteArray or String]
 var _in_due := 0.0
@@ -110,12 +126,15 @@ func poll() -> void:
 	if st != WebSocketPeer.STATE_OPEN:
 		return
 	var t := now_ms()
-	var lagged := lag_ms > 0.0 or jitter_ms > 0.0
+	var lagged := lag_ms > 0.0 or jitter_ms > 0.0 or stall_ms > 0.0
+	if stall_ms > 0.0 and t >= _next_stall:
+		_stall_until = t + stall_ms
+		_next_stall = t + stall_every_ms
 	while ws.get_available_packet_count() > 0:
 		var pkt := ws.get_packet()
 		var was_text := ws.was_string_packet()
 		if lagged:
-			_in_due = maxf(_in_due, t + lag_ms * 0.5 + randf() * jitter_ms)
+			_in_due = maxf(_in_due, maxf(t + lag_ms * 0.5 + randf() * jitter_ms, _stall_until))
 			_in_q.append([_in_due, pkt, was_text])
 		else:
 			_on_packet(pkt, was_text)
@@ -497,6 +516,16 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 	var span: float = b["tick"] - a["tick"]
 	var t := clampf((rt - a["tick"]) / span, 0.0, 1.0) if span > 0.0 else 1.0
 	var newest_snap: Dictionary = snaps[snaps.size() - 1]
+	sampled_frames += 1
+	var starve: float = rt - float(newest_snap["tick"])
+	if starve > 0.0:
+		starved_frames += 1
+	var now := now_ms()
+	var fade := exp(-clampf((now - _last_sample_ms) / 1000.0, 0.0, 0.1) / EASE_S) if _last_sample_ms > 0.0 else 0.0
+	var step_max := STEP_MAX * clampf(rt - _last_rt, 1.0, 4.0)
+	_last_sample_ms = now
+	_last_rt = rt
+	var rnd: int = int(newest_snap.get("round", 0))
 	var fighters: Array = []
 	for fb_raw in b["fighters"]:
 		var fb: Dictionary = fb_raw
@@ -515,6 +544,10 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 		if smooth:
 			f["x"] = _wlerp(fa["x"], fb["x"], t, W)
 			f["y"] = _wlerp(fa["y"], fb["y"], t, H)
+		if smooth_others:
+			if starve > 0.0 and int(f["state"]) != P.F_DEAD:
+				_glide_on(f, minf(starve, GLIDE_MAX))
+			_ease_out(f, step_max, fade, rnd)
 		fighters.append(f)
 	var arrows := {}
 	for id in b["arrows"]:
@@ -554,6 +587,48 @@ func sample(rt: float, own_id: int = -1, own: Dictionary = {}) -> Dictionary:
 		"powers": b.get("powers", {}), "orbs": b.get("orbs", []), "cats": cats, "rain": b.get("rain", {}), "ghosts": ghosts,
 		"hazards": b.get("hazards", {}), "pet": _glide(a.get("pet", {}), b.get("pet", {}), t), "bats": _glide(a.get("bats", {}), b.get("bats", {}), t),
 		"candies": _glide_list(a.get("candies", []), b.get("candies", []), t)}
+
+# p4.16 (the warping): no snapshot newer than the render clock yet (Wi-Fi held them
+# back): the fighter goes on at the speed the newest one gave it, g ticks, instead of
+# standing still (a dodge slows as it does in the sim).
+func _glide_on(f: Dictionary, g: float) -> void:
+	var k := g
+	if int(f["state"]) == P.F_DODGE:
+		k = (1.0 - pow(0.85, g)) / 0.15
+	f["x"] = fposmod(f["x"] + float(f["vx"]) * k, W)
+	f["y"] = fposmod(f["y"] + float(f["vy"]) * k, H)
+
+# p4.16: when the drawn spot would jump further than a fighter can move (late
+# snapshots coming all at once), it moves the most it can now and the rest eases out
+# over EASE_S. A death, a new round, or a jump over EASE_MAX (a bed, a locker) is drawn
+# at once.
+func _ease_out(f: Dictionary, step_max: float, fade: float, rnd: int) -> void:
+	var id: int = f["id"]
+	var to := Vector2(f["x"], f["y"])
+	var st: Array = _ease.get(id, [Vector2.ZERO, to, rnd])
+	var e: Vector2 = st[0] * fade
+	if int(f["state"]) == P.F_DEAD or st[2] != rnd:
+		e = Vector2.ZERO
+	else:
+		var d := Vector2(_wd(st[1].x, to.x, W), _wd(st[1].y, to.y, H))
+		var n := d.length()
+		if n >= EASE_MAX:
+			e = Vector2.ZERO
+		elif n > step_max:
+			e -= d * (1.0 - step_max / n)
+			eased += 1
+			eased_max = maxf(eased_max, n)
+	_ease[id] = [e if e.length() >= 0.5 else Vector2.ZERO, to, rnd]
+	f["x"] = fposmod(to.x + e.x, W)
+	f["y"] = fposmod(to.y + e.y, H)
+
+static func _wd(a: float, b: float, size: float) -> float:
+	var d := b - a
+	if d > size * 0.5:
+		d -= size
+	elif d < -size * 0.5:
+		d += size
+	return d
 
 # p4.13: the candies between two snapshots (by place in the list, when both have the same ones).
 func _glide_list(la: Array, lb: Array, t: float) -> Array:

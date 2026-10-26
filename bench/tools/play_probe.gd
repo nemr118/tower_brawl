@@ -4,7 +4,7 @@
 #   godot --headless --path bench --script res://tools/play_probe.gd -- \
 #       --server=ws://127.0.0.1:8091 --name=Probe [--bots=N] [--arena=N] [--bot-level=N] [--start] [--idle]
 #       [--move] [--watch=SECONDS] [--token=abc] [--lag=MS] [--jitter=MS]
-#       [--predict [--exact=PCT]] [--shooter] [--catcher[=old]]
+#       [--predict [--exact=PCT]] [--shooter] [--catcher[=old]] [--warps [--stall=MS --stall-every=MS]]
 # --start: press START once seated (the lobby needs 2 fighters: bots or others).
 # --arena=N: the lobby's ARENA once seated (-1 MIX, 1 THE KEEP, 2 THE BRIDGES, 0
 #   the bench); the move proof's local copy runs on the round's arena (G5).
@@ -21,6 +21,12 @@
 #   random buttons in every round (held 4 to 30 ticks: runs, jumps, drops,
 #   dodges, shots), START again in each lobby; at the end a line says how big the
 #   server's corrections were. --exact=95: fail unless 95% of them are 0 px.
+# --warps (p4.16, the warping the user saw at the gathering): 60 frames a second, the
+#   other fighters drawn as the page draws them (net.sample at the render clock);
+#   a jump of over WARP_PX between two frames (not a wrap, a death or a new round)
+#   counts as a warp. At the end: the warps, the biggest, and the share of frames
+#   the others stood still for want of a newer snapshot. --stall=MS --stall-every=MS:
+#   net.gd's test knob, the packets got wait MS every so often (Wi-Fi power save).
 # --shooter / --catcher: the catch test (P2 step 3), two people, no bots (a server
 #   with --arena bench --spots 2,3 puts them on the bench arena's two ledge ends
 #   that face each other: the new arenas have no spawn spots in a clear line). The
@@ -84,6 +90,12 @@ func _init() -> void:
 	net = Net.new()
 	net.lag_ms = float(opts.get("lag", 0))
 	net.jitter_ms = float(opts.get("jitter", 0))
+	net.stall_ms = float(opts.get("stall", 0))
+	net.stall_every_ms = float(opts.get("stall-every", 3000))
+	mode_warps = opts.has("warps")
+	net.smooth_others = str(opts.get("smooth", "1")) != "0"
+	if mode_warps:
+		Engine.max_fps = 60   # a phone's frames
 	net.open(url, str(opts.get("name", "Probe")), str(opts.get("token", "")))
 	started_ms = Time.get_ticks_msec()
 	print("🧪 [PlayProbe] %s connecting to %s (version %s)" % [opts.get("name", "Probe"), url, P.VERSION])
@@ -98,6 +110,8 @@ func _process(_delta: float) -> bool:
 		pred.reconcile(o)
 	if mode_catcher != "":
 		_catch_events()
+	if mode_warps and phase == P.PH_PLAY:
+		_watch_warps()
 	var s: Dictionary = net.newest()
 	if not s.is_empty():
 		if s["phase"] != phase:
@@ -339,6 +353,8 @@ func _finish(timed_out: bool) -> void:
 	_clock_line()
 	if mode_predict:
 		_predict_line()
+	if mode_warps:
+		_warps_line()
 	if mode_catcher != "":
 		_catch_line()
 	if watch_s > 0.0 and not mode_idle and not mode_predict and not mode_shooter and mode_catcher == "":
@@ -376,6 +392,44 @@ func _clock_line() -> void:
 		int(net.lag_ms), int(net.jitter_ms), net.last_rtt, n, net.late_total, 100.0 * net.late_total / maxf(1.0, n),
 		m[0] if m.size() > 0 else 0, m[m.size() / 2] if m.size() > 0 else 0, m[m.size() - 1] if m.size() > 0 else 0,
 		" ".join(parts), net.clock_changes, net.clock_jumps, net.delay_ticks])
+
+# p4.16: the others as the page draws them, frame by frame (--warps).
+const WARP_PX := 40.0
+var mode_warps := false
+var warp_last := {}         # seat -> [x, y, state, round]
+var warps := 0
+var warps_big := 0          # over twice WARP_PX
+var warp_max := 0.0
+var warp_frames := 0
+
+func _watch_warps() -> void:
+	var v: Dictionary = net.sample(net.render_tick(), seat)
+	if v.is_empty():
+		return
+	warp_frames += 1
+	var rnd: int = int(net.newest().get("round", 0))
+	for f in v["fighters"]:
+		var id: int = int(f["id"])
+		if id == seat:
+			continue
+		var cur := [float(f["x"]), float(f["y"]), int(f["state"]), rnd]
+		if warp_last.has(id):
+			var o: Array = warp_last[id]
+			if o[3] == rnd and o[2] != P.F_DEAD and cur[2] != P.F_DEAD:
+				var d := Vector2(SimScript.wrap_d(o[0], cur[0], 1920.0), SimScript.wrap_d(o[1], cur[1], 1080.0)).length()
+				if d > WARP_PX:
+					warps += 1
+					warp_max = maxf(warp_max, d)
+					if d > WARP_PX * 2.0:
+						warps_big += 1
+		warp_last[id] = cur
+
+func _warps_line() -> void:
+	print("🧪 [PlayProbe] warps (%s): %d jumps of the others over %d px in %d frames (%.1f a minute), %d over %d px; the biggest %.0f px; no newer snapshot on %.1f%% of frames, %d jumps eased out (the biggest %.0f px); lag %d jitter %d stall %d every %d ms; draw delay %.1f ticks" % [
+		"glide and ease" if net.smooth_others else "p4.15's drawing", warps, int(WARP_PX), warp_frames, warps * 3600.0 / maxf(1.0, warp_frames),
+		warps_big, int(WARP_PX * 2.0), warp_max,
+		100.0 * net.starved_frames / maxf(1.0, net.sampled_frames), net.eased, net.eased_max, int(net.lag_ms), int(net.jitter_ms), int(net.stall_ms),
+		int(net.stall_every_ms), net.delay_ticks])
 
 # P2: the server's corrections to my predicted fighter (client/predict.gd): each
 # T_OWN in a round compared with where the prediction had me on its tick.
