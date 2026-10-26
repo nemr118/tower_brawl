@@ -135,3 +135,13 @@ The browser:
 [T16] https://github.com/NoelFB/Celeste/blob/master/Source/Player/Player.cs ·
 [T17] https://towerfall.wiki.gg/wiki/Advanced_techniques ·
 [T18] https://developer.android.com/develop/ui/views/haptics/haptics-principles
+
+## What the night's logs said (2026-10-25, pulled 2026-10-26)
+The ROG's `v2_server.jsonl` and journal (`playtest_logs/2026-10-26_rog/`), read with `tools/v2_night_report.py` and a few one-off counts.
+- **The frame rate is the biggest controls problem on iPhones.** In matches, a median of: Player 1's iPhone 16 fps on HIGH (picked by hand, so AUTO never stepped down) but 60 fps on LOW; Brooks's iPhone 15 fps; the 2532 x 1170 iPhones 22 and 30 fps even on LOW; Mhamm's iPad 16 fps on NORMAL; one iPhone 60 fps on LOW. The Androids: 36 fps (the user's, HIGH) and 43 fps (Andrew's, HIGH). At 15 to 20 fps a touch takes two or three times as long to show, and a fast move jumps 25 to 100 px between frames.
+- **Sessions got slower as they went on:** the user's Android 50 fps in its first third, 33 in its last; Mhamm's iPad 25 to 14 fps in 20 minutes. That fits the leaks p4.15 fixed; the phone report now carries memory (`mem_mb`, `tex_mb`) to confirm it.
+- **The warping:** every phone had snapshot gaps over 133 ms in 0.5% to 5% of its 5-second windows (the worst 165 to 734 ms), about one visible warp a minute with p4.14's drawing. p4.16's glide and ease hide those. The ROG's own Wi-Fi power save was already off (NetworkManager `wifi.powersave = 2`); the pings were a median 47 ms, 90% under 73 ms (7 to 17 ms at home): the gathering's Wi-Fi ("Starlink"), two hops.
+- **Kids let go inside the ring a lot:** 20% to 37% of their right-thumb touches ended with no arrow (Andrew 25 of 124, Player 4 20 of 61, Player 5 11 of 30, Player 1 16 of 70); the user 4% (9 of 233).
+- **The night:** 31 matches, 257 rounds (THE HAUNTED HOUSE 129, THE BOILER ROOM 102, THE KEEP 13, THE BRIDGES 13); the server's worst tick 10.6 ms; 0.45% of the inputs late. 56 candies opened: GHOSTFACE 18, PUMPKIN HEAD 8, TINY 7, BACKWARDS 2.
+- **Page errors:** "Invalid polygon data, triangulation failed" (an iPhone, 4 times: a drawn shape that crosses itself), "Could not create render target" (an Android), "Too many packets in queue" (an iPhone whose page sat in the background), "Script error." (an iPhone).
+- **What this changes in the ranking above:** performance first (a slow phone makes every control feel mushy), then the small fixes and the bow only on a pull; the BUTTONS layout is worth judging again once the phones run near 60 fps.

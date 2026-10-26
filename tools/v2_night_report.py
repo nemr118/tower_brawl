@@ -17,9 +17,10 @@ import sys
 import time
 from collections import Counter, defaultdict
 
-CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "poison", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes"}
+CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "poison", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes",
+          10: "a furnace", 11: "GHOSTFACE's knife"}
 BIG = {"GHOST CATS", "RAIN", "INVISIBLE", "FREEZE", "SPIKED SHIELD", "SUPER SPEED"}   # p4.9's BIG power-ups
-ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE"}
+ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE", 4: "THE BOILER ROOM"}
 
 
 def when(t):
