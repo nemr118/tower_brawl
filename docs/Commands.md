@@ -20,7 +20,7 @@ godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws:
 tools/deploy_rog.sh   # the ROG as server
 tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>   # a night's logs
 ```
-Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `stick=old`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
+Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `stick=old`, `controls=buttons`, `res=1`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
 
 ## The old game: editor and server
 ```bash
@@ -53,14 +53,14 @@ Knobs: `--seed`, `--die-rate`, `--ai-difficulty 0.3`, `--no-state`; `.harness_lo
 ## Headless clients (the old game)
 ```bash
 godot --headless --path . -- --autojoin --ai=sniper   # or: tbbot add sniper
-./venv/bin/python tools/soak_report.py --dir playtest_logs/<f>   # an old bot soak
+./venv/bin/python tools/soak_report.py --dir playtest_logs/<f>   # a soak
 ```
 Console lines: `📈 [NetStats]`, `🎮 [Layout]`, `🏹 [Quiver]`, `📼 [Replay]` ([[tape]]), `🧭 [BotNav]`, `🏃 [Speed]` (25), `🪤 [JumpTrap]` (20).
 
-## The deck and the logs (the old game)
+## The deck and logs (old game)
 ```bash
-tbdash   # = tools/watch_server.py; --no-controls --plain --once
+tbdash   # tools/watch_server.py; --no-controls --plain --once
 ./venv/bin/python tools/stats_table.py --list   # client_stats.jsonl's matches; --match 3, --by-round, --summary --last 3, --from/--to
 grep "\[GATE\]\|\[TAPE\]\|\[NET\]" server.log | tail   # tags: JOIN LEAVE MATCH ROUND KILL NET GATE TAPE
 ```
-`server.log`, `debug.log`: `.1` at 50 MB; `client_stats.jsonl` at 10 MB. Keys: [[deck]].
+`server.log`, `debug.log`: `.1` at 50 MB; `client_stats.jsonl` 10 MB. [[deck]].

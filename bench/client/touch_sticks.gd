@@ -394,7 +394,7 @@ func _paint(n: Node2D) -> void:
 	# right: pull back to shoot (p4.4). The ring is the arming line; armed, it turns
 	# gold (or red with an empty quiver) and says what letting go will do.
 	var alive := aim_touch != -1
-	var rest := Vector2(win.x - 720.0 * k, win.y - 600.0 * k) if buttons_mode else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
+	var rest := Vector2(win.x - 640.0 * k, win.y - 470.0 * k) if buttons_mode else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
 	var ac := aim_center if alive else rest
 	var ring := ARM_RADIUS * k
 	var aa := 0.9 if alive else 0.45
