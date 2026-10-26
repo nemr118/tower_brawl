@@ -181,6 +181,16 @@ def main():
             print(f"    ping: a median {med(pings):.0f} ms, the most {max(pings)} ms; reconnects {reconnects}")
         print(f"    shots let go: {armed} armed, {cancelled} let go inside the ring, {mouse} with the mouse"
               + (f"; the server counted {server_shots[name]} shots for {name}" if name in server_shots else ""))
+        if any("jumps" in r for r in rs):   # p4.15: how the stick is used
+            stick = Counter(r.get("stick", "?") for r in rs).most_common(1)[0][0]
+            print(f"    the stick ({stick}): {max(r.get('jumps', 0) for r in rs)} jumps; dodges: "
+                  f"{max(r.get('rim_dodges', 0) for r in rs)} from the stick's rim, {max(r.get('button_dodges', 0) for r in rs)} from the DODGE button")
+        mems = [(r["mem_mb"], r.get("tex_mb", 0.0)) for r in rs if r.get("mem_mb", 0) > 0]
+        if mems:   # p4.15: the iPhone white screen was memory that grew every match
+            print(f"    memory: {mems[0][0]:.0f} MB at the first report, the most {max(m for m, _ in mems):.0f} MB, the last {mems[-1][0]:.0f} MB; "
+                  f"textures {mems[0][1]:.0f} to {max(t for _, t in mems):.0f} MB")
+            if max(m for m, _ in mems) > mems[0][0] + 150:
+                look_at.append(f"{name}'s {model(ua)} memory grew from {mems[0][0]:.0f} MB to {max(m for m, _ in mems):.0f} MB (the white screen?)")
         for e, n in errors.most_common(5):
             print(f"    page error x{n}: {e}")
         if steps:

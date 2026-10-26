@@ -23,6 +23,7 @@
 #   benchmark page instead, with its own options)  lag=MS jitter=MS (a test
 #   knob: every packet sent and got waits MS/2, plus up to jitter, client/net.gd)
 #   slow=MS (a test knob: every frame takes at least MS, for the step-down)
+#   stick=old (p4.15: the phone stick as in p4.14: no pump or swing jumps, to compare)
 # ==============================================================================
 extends Node
 
@@ -156,6 +157,7 @@ func _ready() -> void:
 	lobby.power_pressed.connect(_on_power)
 	lobby.set_look(str(opts["look"]) if look_test else _look_label())
 	sticks = Sticks.new()
+	sticks.pump = str(opts.get("stick", "")) != "old"
 	add_child(sticks)
 	deathcam = Deathcam.new()
 	add_child(deathcam)
@@ -463,6 +465,10 @@ func _send_report(why: String, errs: Array = []) -> void:
 		"slow_pct": 100.0 * rep_slow / rep_frames if rep_frames > 0 else 0.0, "frame_max_ms": rep_max_ms, "frames": rep_frames,
 		"ping_ms": net.last_rtt, "reconnects": maxi(0, rep_opens - 1), "step_downs": rep_step_downs,
 		"shots_armed": sticks.shots_armed, "shots_cancelled": sticks.shots_cancelled, "mouse_shots": rep_mouse_shots,
+		"stick": "new" if sticks.pump else "old", "jumps": sticks.jumps, "rim_dodges": sticks.rim_dodges,
+		"button_dodges": sticks.button_dodges,   # p4.15: how the phone's stick is used
+		"mem_mb": Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0,   # p4.15: does a phone's memory
+		"tex_mb": Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / 1048576.0,   # stay flat (the iPhone white screen)
 		"errors": errs, "errors_total": rep_errors})
 	rep_t = 0.0
 	rep_frames = 0
