@@ -8,20 +8,19 @@ tags: [handoff, commands]
 godot --headless --path bench res://server/game_server.tscn -- --bots 7  # wss 8091; --arena mix|keep|bridges|3, --bot-level easy|normal|hard, --soak, --no-tls, --goal N, --walls-s N, --port, --out, --spots 2,3, --admin-port 8092, --no-powerups, --pu-gallery, --hw-gallery, --boiler-demo
 godot --path bench -- --server=wss://192.168.4.21:8091  # the game in a window
 tools/v2_build.sh --title "Short Title"   # check, bump, export build/web/v2/, patch page; --phase 5 = p5.1; `none` re-exports
-godot --headless --path bench --script res://tools/check_scripts.gd  # the check: scripts, scenes
-godot --headless --path bench --script res://tools/input_probe.gd  # the sim rules; power_probe.gd -- --matches=6 --arena=3: the power-ups
+godot --headless --path bench --script res://tools/check_scripts.gd  # the check
+godot --headless --path bench --script res://tools/input_probe.gd  # the sim rules; power_probe.gd -- --matches=6 --arena=3: the power-ups; pit_probe.gd: the pit
 godot --headless --path bench --script res://tools/arena_probe.gd -- --png=/tmp/maps --rounds=200   # the arena rules, routes, bot rounds; --layout=N --quick --list; --write-routes after a map change
 godot --headless --path bench --script res://tools/bot_probe.gd -- --rounds=200 --level=easy,normal,hard   # the bots; --catch, --reach, --kid, --deaths=<f>
 godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws://127.0.0.1:8091 --name=Me --start --bots=7 --move --watch=300   # a headless person; --lag=60 --jitter=30, --predict, --arena=N, --bot-level=N, --shooter/--catcher
 ./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --start --bots 0  # 7 fake players
 ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot [--phone [--ios]] [--watch 20] [--look-tap] [--extra "look=t1"]  # pictures; v2_power_shots.py --look t1 --lobby-shot --bolt-s 5
 ./venv/bin/python tools/v2_soak_report.py --file <v2_server.jsonl> --map   # a soak's checks
-./venv/bin/python tools/v2_host_check.py   # the host port
-./venv/bin/python tools/v2_pull_check.py   # pull-back shots
+./venv/bin/python tools/v2_host_check.py   # the host port; v2_pull_check.py: pull-back shots
 tools/deploy_rog.sh   # the ROG as server
 tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>   # a night's logs
 ```
-Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
+Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?bench` = the old benchmark page; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `stick=old`). Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl` (round lines). The laptop: `tools/towerbrawl-v2.service`.
 
 ## The old game: editor and server
 ```bash
