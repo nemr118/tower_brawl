@@ -229,6 +229,20 @@ body {
 
 		<div id="status">
 			<img id="status-splash" class="$GODOT_SPLASH_CLASSES" src="$GODOT_SPLASH" alt="">
+			<script>
+				// 2026-10-26: the loading picture by the season, as the lobby's dress (client/lobby_art.gd
+				// pick_dress): the Halloween one (the export's) from 1 October to 2 November, else the castle
+				// at sunset (bench/web/page/splash_castle.png, copied by tools/v2_build.sh). ?dress=castle or
+				// ?dress=halloween picks one for a picture.
+				(function () {
+					const q = window.location.search;
+					const d = new Date();
+					let hw = d.getMonth() === 9 || (d.getMonth() === 10 && d.getDate() <= 2);
+					if (q.indexOf('dress=castle') >= 0) { hw = false; }
+					if (q.indexOf('dress=halloween') >= 0) { hw = true; }
+					if (!hw) { document.getElementById('status-splash').src = 'splash_castle.png'; }
+				}());
+			</script>
 			<progress id="status-progress"></progress>
 			<div id="status-notice"></div>
 		</div>

@@ -34,6 +34,10 @@ const SWITCHES := {
 	# p4.14 the platforms' detail (client/dress_view.gd), code-drawn (ComfyUI changed their shapes):
 	"hh_dress": true,          # THE HAUNTED HOUSE: cobwebs, cracks, candles, skulls, purple moss, roots
 	"boiler_dress": true,      # THE BOILER ROOM: rivet rows, rust drips, oil stains, hazard stripes
+	# 2026-10-26 ComfyUI pictures the user picked (tools/comfy/: run_cards.py, run_tricks.py, run_backdrops.py;
+	# castle_backdrop above now shows run_backdrops.py's k1, assets/bg_castle_far.png):
+	"arena_cards": true,       # the lobby's ARENA button shows the pick's painting and opens a picker of painted cards (client/lobby_arenas.gd)
+	"trick_art": true,         # a candy's trick shows its own badge (PUMPKIN HEAD, BACKWARDS, TINY, GHOSTFACE: assets/trick_icons.png)
 }
 
 static var _off := {}

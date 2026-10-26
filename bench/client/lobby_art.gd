@@ -209,6 +209,8 @@ static func keycap_words(c: CanvasItem, x: float, base_y: float, key: String, si
 class Btn extends Button:
 	var caption := ""
 	var value := ""
+	var thumb: Texture2D = null    # 2026-10-26: a small picture at the left (the ARENA button: the pick's painting)
+	var thumb_src := Rect2()
 	var size_px := 40
 	var cap_px := 0          # the caption's size (0: 62% of size_px)
 	var glyph := 0
@@ -304,6 +306,15 @@ class Btn extends Button:
 		var icon_w := 0.0
 		if glyph in [1, 2, 3, 4] and value != "":
 			icon_w = size_px * 0.9
+		var cap_x := 0.0
+		if thumb != null:
+			var th := h - top - bottom - 18.0
+			var tr := Rect2(16.0, top + 9.0, th * 16.0 / 9.0, th)
+			draw_rect(tr.grow(3.0), Color(0, 0, 0, 0.55))
+			draw_texture_rect_region(thumb, tr, thumb_src, Color(1, 1, 1, 0.45 if off else 1.0))
+			draw_rect(tr.grow(1.5), Color(edge, 0.9), false, 3.0)
+			icon_w = tr.size.x + 14.0
+			cap_x = icon_w
 		var label := value
 		var fs := size_px
 		var room := w - 40.0 - icon_w - (34.0 if glyph == 5 else 0.0)
@@ -316,7 +327,7 @@ class Btn extends Button:
 		if caption != "":
 			var cs := cap_px if cap_px > 0 else int(size_px * 0.62)
 			vy = mid + fs * 0.52
-			draw_string(BODY, Vector2(0, mid - fs * 0.42), caption, HORIZONTAL_ALIGNMENT_CENTER, w - (28.0 if glyph == 5 else 0.0), cs,
+			draw_string(BODY, Vector2(cap_x, mid - fs * 0.42), caption, HORIZONTAL_ALIGNMENT_CENTER, w - cap_x - (28.0 if glyph == 5 else 0.0), cs,
 				Color(col, col.a * 0.72))
 		draw_string_outline(DISPLAY, Vector2(x0, vy), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 5, Color(edge, 0.85 if not off else 0.3))
 		draw_string(DISPLAY, Vector2(x0, vy), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)

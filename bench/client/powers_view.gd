@@ -15,6 +15,8 @@ const SimScript = preload("res://sim/sim.gd")
 const GhostfaceScript = preload("res://client/ghostface.gd")
 const Polish = preload("res://client/polish.gd")
 const ICONS2 := preload("res://assets/pu_icons.png")   # p4.13 polish "icons2": ComfyUI's power-up pictures (64 px a cell, kind - 1)
+const TRICKS2 := preload("res://assets/trick_icons.png")   # 2026-10-26 polish "trick_art": the candy tricks' badges (64 px a cell)
+const TRICK_ICON := 100           # the tricks' icon kinds (the page's own, never sent): + 0 PUMPKIN HEAD, + 1 BACKWARDS, + 2 TINY; GHOSTFACE is P.PU_MASK
 const COLORS := {P.PU_FIRE: Color(1.0, 0.55, 0.15), P.PU_BOMB: Color(1.0, 0.32, 0.25), P.PU_POISON: Color(0.72, 0.4, 1.0),
 	P.PU_SMOKE: Color(0.8, 0.82, 0.88), P.PU_SHIELD: Color(0.35, 0.85, 1.0), P.PU_INF: Color(1.0, 0.85, 0.3),
 	P.PU_FLY: Color(0.95, 0.97, 1.0), P.PU_BIG: Color(0.5, 1.0, 0.45), P.PU_CATS: Color(0.55, 1.0, 0.6),
@@ -234,7 +236,7 @@ func on_event(e: Array) -> void:
 		var b: int = e[4]
 		cp["trick"] = b > 0 and b < 4
 		cp["word"] = ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"][clampi(b, 0, 4)]
-		cp["icon"] = [P.PU_TRICK, P.PU_PUMPKIN, P.PU_TRICK, P.PU_TRICK, P.PU_MASK][clampi(b, 0, 4)]
+		cp["icon"] = [P.PU_TRICK, TRICK_ICON, TRICK_ICON + 1, TRICK_ICON + 2, P.PU_MASK][clampi(b, 0, 4)]
 	elif type == P.E_CANDY_DROP:  # p4.13 a candy out of a body, or from the sky
 		rings.append([pos, 44.0, COLORS[P.PU_TRICK], 0.3, 0.3])
 	elif type == P.E_CANDY_GET:   # someone opens one: a burst of wrapper bits, and a big badge
@@ -428,7 +430,7 @@ func _draw_candy_pop(cp: Dictionary) -> void:
 		var a0 := t * 2.0 + i * TAU / 8.0
 		draw_arc(at, r + 3.0, a0, a0 + TAU / 8.0, 6, Color(CANDY_COLS[i % 2], a), 5.0)
 	var icon: int = cp["icon"]
-	draw_circle(at, r, Color(disc(COLORS.get(icon, Color.WHITE)), a))
+	draw_circle(at, r, Color(disc(COLORS.get(P.PU_TRICK if icon >= TRICK_ICON else icon, Color.WHITE)), a))
 	draw_icon(self, at, icon, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
 	var top := "TRICK!" if cp["trick"] else ("BOO!" if icon == P.PU_MASK else "TREAT!")
 	_text_c(at + Vector2(0, -r - 12.0), top, 16, Color(1.0, 0.75, 0.3, a))
@@ -504,6 +506,16 @@ static func disc(col: Color) -> Color:
 	return col.darkened(0.62) if Polish.on("icons2") else col.darkened(0.25)
 
 static func draw_icon(ci: CanvasItem, c: Vector2, kind: int, s: float, col: Color, tt: float) -> void:
+	if kind >= TRICK_ICON or kind == P.PU_MASK:   # 2026-10-26: a candy trick's badge (and GHOSTFACE's), bobbing like the others
+		if Polish.on("trick_art"):
+			var cell := 3 if kind == P.PU_MASK else clampi(kind - TRICK_ICON, 0, 2)
+			var th := s * 1.25
+			var tbob := sin(tt * 3.0 + kind) * s * 0.05
+			ci.draw_texture_rect_region(TRICKS2, Rect2(c + Vector2(-th, -th + tbob), Vector2(th, th) * 2.0),
+				Rect2(cell * 64, 0, 64, 64), Color(1, 1, 1, col.a))
+			return
+		if kind >= TRICK_ICON:   # the switch off: the icons p4.13 used for them
+			kind = P.PU_PUMPKIN if kind == TRICK_ICON else P.PU_TRICK
 	if kind >= 1 and kind <= 17 and Polish.on("icons2"):   # p4.13: ComfyUI's picture, bobbing a little
 		var half := s * 1.25
 		var bob := sin(tt * 3.0 + kind) * s * 0.05

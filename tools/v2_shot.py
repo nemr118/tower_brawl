@@ -27,6 +27,7 @@ ap.add_argument("--ios", action="store_true", help="with --phone: an iPhone's us
 ap.add_argument("--extra", default="", help="more page options, a=1&b=2")
 ap.add_argument("--watch", type=float, default=0.0, help="after the fight shots, wait this long and shoot <out>_late.png")
 ap.add_argument("--look-tap", action="store_true", help="tap the lobby's LOOK button once, then reload the page (the pick is kept)")
+ap.add_argument("--lobby-tap", default="", help="X,Y in the 1920 x 1080 design: tap there in the lobby and shoot <out>_lobby_tap.png, then tap it again (2026-10-26: the ARENA picker is 320,732)")
 ap.add_argument("--port", type=int, default=9334)
 ap.add_argument("--wait", type=float, default=9.0, help="seconds for the page to load and join")
 ap.add_argument("--round-wait", type=float, default=4.3, help="seconds from START to the round shot (3 s countdown + the ROUND banner; less on a slow page)")
@@ -135,6 +136,13 @@ if a.look_tap:
     cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('fs-gate'); if(g){g.click(); g.remove();} return 'ok'})()")
     drain(1.0)
     shot("lobby_reload")
+if a.lobby_tap:
+    lx, ly = (float(v) for v in a.lobby_tap.split(","))
+    tap(lx, ly)
+    drain(1.0)
+    shot("lobby_tap")
+    tap(960, 1060)      # a tap at the bottom edge: a picker or a menu closes
+    drain(0.8)
 tap(1230, 854)          # START (lobby.gd since 2026-10-25: the big button at 920..1860 x 798..952)
 drain(a.round_wait)     # 3 s countdown + the ROUND 1 banner
 shot("round")

@@ -118,6 +118,7 @@ open(path, "w").write(text.replace(old, new))
 PY
 # p4.13: the Home Screen icon and manifest (an iPhone added to the Home Screen opens the game full screen)
 cp bench/web/pwa/manifest.json bench/web/pwa/icon-180.png bench/web/pwa/icon-512.png "$OUT/"
+cp bench/web/page/splash_castle.png "$OUT/"   # 2026-10-26: the loading picture outside the Halloween season (bench/web/shell.html)
 
 ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
 ip=${ip:-127.0.0.1}

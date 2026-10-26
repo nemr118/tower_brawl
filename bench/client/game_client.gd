@@ -37,6 +37,7 @@ const Lobby = preload("res://client/lobby.gd")
 const Sticks = preload("res://client/touch_sticks.gd")
 const Predict = preload("res://client/predict.gd")
 const Present = preload("res://client/present.gd")
+const PV = preload("res://client/powers_view.gd")
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
@@ -153,6 +154,7 @@ func _ready() -> void:
 	lobby.bots_changed.connect(_on_bots)
 	lobby.look_pressed.connect(_on_look)
 	lobby.arena_pressed.connect(_on_arena)
+	lobby.arena_picked.connect(func(n): net.send({"kind": "arena", "n": n}))   # 2026-10-26: a card in the picker
 	lobby.bot_level_pressed.connect(_on_bot_level)
 	lobby.power_pressed.connect(_on_power)
 	lobby.set_look(str(opts["look"]) if look_test else _look_label())
@@ -272,7 +274,8 @@ func _process(delta: float) -> void:
 			if e[0] == P.E_PU_GET and e[3] == my_seat:
 				hud.power_banner(e[4])   # p4.9: you took a power-up: what it is and what it does
 			elif e[0] == P.E_TRICK and e[3] == my_seat and e[4] > 0 and e[4] < 4:   # p4.12: a trick: the small card
-				hud.power_banner(P.PU_TRICK, ["", "PUMPKIN HEAD", "BACKWARDS", "TINY"][e[4]], ["", "no shooting", "left is right!", "so small"][e[4]])
+				hud.power_banner(P.PU_TRICK, ["", "PUMPKIN HEAD", "BACKWARDS", "TINY"][e[4]], ["", "no shooting", "left is right!", "so small"][e[4]],
+					PV.TRICK_ICON + e[4] - 1)
 			elif e[0] == P.E_GHOST and e[3] == my_seat:
 				hud.say("GHOST: fly anywhere, let go of shoot to BOO", 5.0)
 		world.set_me(my_seat, phase)

@@ -15,6 +15,7 @@
 # --pu-gallery: a test knob: every round starts with every power-up's look (sim.gallery).
 # --pin-demo: a test knob: at FIGHT seat 7 is pinned to a wall, seat 6 carried (sim.pin_demo).
 # --hw-gallery: a test knob: at FIGHT the Halloween looks (GHOSTFACE, the tricks, the cat, bats; sim.hw_gallery).
+# --candy-trick N: a test knob: every candy gives N (0 a treat, 1 PUMPKIN HEAD, 2 BACKWARDS, 3 TINY, 4 GHOSTFACE).
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
 # --spots 2,3: a test knob: the first fighter always starts on spawn spot 2, the
@@ -286,6 +287,7 @@ func _ready() -> void:
 	pu_gallery = o.has("pu-gallery")
 	pin_demo = o.has("pin-demo")
 	hw_gallery = o.has("hw-gallery")
+	sim.candy_trick = int(o.get("candy-trick", -1))
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):

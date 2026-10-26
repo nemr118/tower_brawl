@@ -22,6 +22,7 @@ signal start_pressed
 signal bots_changed(n: int)
 signal look_pressed
 signal arena_pressed
+signal arena_picked(n: int)       # 2026-10-26: a card in the arena picker (lobby_arenas.gd)
 signal bot_level_pressed
 signal power_pressed
 
@@ -32,6 +33,8 @@ const Bg = preload("res://client/lobby_bg.gd")
 const Logo = preload("res://client/lobby_logo.gd")
 const Cards = preload("res://client/lobby_cards.gd")
 const Count = preload("res://client/lobby_count.gd")
+const Arenas = preload("res://client/lobby_arenas.gd")
+const Polish = preload("res://client/polish.gd")
 const LEVEL_NAMES := ["OLD", "EASY", "NORMAL", "HARD"]   # sim/brain.gd NAMES
 # The controls line: [kind, words]; kind "k" a key cap, "t" words, "-" a gap.
 const HELP_PC := [["k", "A"], ["k", "D"], ["t", "RUN"], ["-", ""], ["k", "W"], ["t", "OR"], ["k", "SPACE"], ["t", "JUMP"], ["-", ""],
@@ -61,6 +64,8 @@ var name_cap := Label.new()
 var main_btn = Art.Btn.new()      # JOIN, START, the countdown, MATCH ON, CONNECTING
 var leave_btn = Art.Btn.new()
 var arena_btn = Art.Btn.new()
+var arenas = Arenas.new()         # 2026-10-26 polish "arena_cards": the picker the ARENA button opens
+var arena_pick: int = P.ARENA_MIX
 var power_btn = Art.Btn.new()
 var level_btn = Art.Btn.new()
 var look_btn = Art.Btn.new()
@@ -133,7 +138,7 @@ func _init() -> void:
 	var face: Color = pal["button"]
 	var ink: Color = pal["text"]
 	_btn(arena_btn, face, ink, 40, Rect2(60, SET_Y, 520, SET_H), 5)
-	arena_btn.pressed.connect(func(): arena_pressed.emit())
+	arena_btn.pressed.connect(_on_arena_btn)
 	_btn(power_btn, face, ink, 40, Rect2(596, SET_Y, 360, SET_H), 5)
 	power_btn.pressed.connect(func(): power_pressed.emit())
 	_btn(bots_minus, face.lightened(0.08), ink, 54, Rect2(1250, SET_Y + 8, 86, SET_H - 16), 6)
@@ -169,7 +174,16 @@ func _init() -> void:
 	look_btn.pressed.connect(func(): look_pressed.emit())
 	root.add_child(count)
 	count.set_dress(pal)
+	root.add_child(arenas)            # on top of everything in the lobby
+	arenas.picked.connect(func(n): arena_picked.emit(n))
 	visibility_changed.connect(_on_visibility)
+
+# The ARENA button: the picker of painted cards (polish "arena_cards"), or the next arena as before.
+func _on_arena_btn() -> void:
+	if Polish.on("arena_cards"):
+		arenas.open(arena_pick)
+	else:
+		arena_pressed.emit()
 
 func _btn(b, face: Color, ink: Color, fsize: int, r: Rect2, icon: int, parent: Control = null) -> void:
 	b.setup(face, ink, fsize)
@@ -284,6 +298,13 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	arena_btn.say("ARENA" if pick != P.ARENA_MIX or now < 0 else "ARENA · NEXT: %s" % LevelScript.name_of(now),
 		"MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick))
 	arena_btn.disabled = not can_set
+	if Polish.on("arena_cards") and (arena_btn.thumb == null or pick != arena_pick):
+		arena_btn.thumb = Arenas.SHEET   # the pick's painting at the button's left
+		arena_btn.thumb_src = Arenas.src(pick)
+		arena_btn.queue_redraw()
+	arena_pick = pick
+	if not can_set and arenas.visible:
+		arenas.close()
 	power_btn.say("POWER-UPS", "ON" if int(m.get("power", 0)) != 0 else "OFF")
 	power_btn.disabled = not can_set
 	bots_minus.disabled = not can_set or bots_wanted <= 0

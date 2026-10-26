@@ -41,6 +41,7 @@ var winner_seat := 0           # the match's winner and name (match_end), for th
 var winner_name := ""
 var end_t := 0.0               # seconds since the winner's screen came up
 var banner_kind := 0           # p4.9: the power-up you just took (its banner), for banner_t seconds
+var banner_icon := 0           # the picture on that banner (banner_kind's, or a candy trick's badge)
 var banner_name := ""          # p4.12: a name and a tip in place of the power-up's own (the tricks)
 var banner_tip := ""
 var banner_t := 0.0
@@ -92,8 +93,9 @@ func match_end(m: Dictionary) -> void:
 
 # p4.9: you took a power-up: its banner for BANNER_S (p4.12: a small card under the
 # cards at the top; name and tip: words in place of the power-up's own, for a trick).
-func power_banner(kind: int, name := "", tip := "") -> void:
+func power_banner(kind: int, name := "", tip := "", icon := -1) -> void:
 	banner_kind = kind
+	banner_icon = icon if icon >= 0 else kind   # 2026-10-26: a candy trick's own badge (powers_view.gd TRICK_ICON)
 	banner_name = name
 	banner_tip = tip
 	banner_t = BANNER_S
@@ -270,7 +272,7 @@ func _power_banner(c: Control, font: Font) -> void:
 	var ic := Vector2(r.position.x + 29.0, r.position.y + 26.0)
 	c.draw_circle(ic, 19.0 * pop, Color(PV.disc(col), a))
 	c.draw_arc(ic, 19.0 * pop, 0.0, TAU, 24, Color(PV.GOLD if big else Color.WHITE, a), 2.0)
-	PV.draw_icon(c, ic, banner_kind, 12.0 * pop, Color(0.08, 0.06, 0.12, a), BANNER_S - banner_t)
+	PV.draw_icon(c, ic, banner_icon, 12.0 * pop, Color(0.08, 0.06, 0.12, a), BANNER_S - banner_t)
 	var x := r.position.x + 58.0
 	c.draw_string_outline(font, Vector2(x, r.position.y + 36.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, 5, Color(0, 0, 0, a))
 	c.draw_string(font, Vector2(x, r.position.y + 36.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(col.lerp(Color.WHITE, 0.35), a))

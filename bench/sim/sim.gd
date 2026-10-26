@@ -383,6 +383,8 @@ var bats_hold := false          # a test knob (hw_gallery): the swarm stays wher
 var candies: Array = []         # p4.13: {x, y (its middle), vx, vy, t, rest, sky}
 var candy_t := -1               # play ticks to the next candy from the sky
 var candy_drop := CANDY_DROP    # a body's chance to drop one (the probe sets 1.0)
+var candy_trick := -1           # 2026-10-26 a test knob (the server's --candy-trick N, for pictures): every candy gives
+                                # 0 a treat, 1 PUMPKIN HEAD, 2 BACKWARDS, 3 TINY, 4 GHOSTFACE (-1: chance, as always)
 var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
                                 # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
@@ -1709,6 +1711,8 @@ func _give(f: Fighter, kind: int) -> void:
 # banner follow), or one of the silly tricks for a moment.
 func _trick_or_treat(f: Fighter) -> void:
 	var r := rng.randf()
+	if candy_trick >= 0:
+		r = [MASK_CHANCE, 1.0, 1.0, 1.0, 0.0][clampi(candy_trick, 0, 4)]
 	if r < MASK_CHANCE:
 		f.mask = true
 		f.drawn = false
@@ -1725,7 +1729,7 @@ func _trick_or_treat(f: Fighter) -> void:
 			treat = P.PU_SHIELD
 		_give(f, treat)
 	else:
-		f.trick = 1 + rng.randi() % 3
+		f.trick = candy_trick if candy_trick >= 1 and candy_trick <= 3 else 1 + rng.randi() % 3
 		f.trick_t = TRICK_TICKS[f.trick]
 		f.drawn = false
 		f.aiming = false
