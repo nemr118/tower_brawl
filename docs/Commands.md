@@ -12,11 +12,11 @@ godot --headless --path bench --script res://tools/check_scripts.gd  # the check
 godot --headless --path bench --script res://tools/input_probe.gd  # the sim rules; power_probe.gd -- --matches=6 --arena=3: the power-ups; pit_probe.gd: the pit
 godot --headless --path bench --script res://tools/arena_probe.gd -- --png=/tmp/maps --rounds=200   # the arena rules, routes, bot rounds; --layout=N --quick --list; --write-routes after a map change
 godot --headless --path bench --script res://tools/bot_probe.gd -- --rounds=200 --level=easy,normal,hard   # the bots; --catch, --reach, --kid, --deaths=<f>
-godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws://127.0.0.1:8091 --name=Me --start --bots=7 --move --watch=300   # a headless person; --lag=60 --jitter=30, --predict, --arena=N, --bot-level=N, --shooter/--catcher
+godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws://127.0.0.1:8091 --name=Me --start --bots=7 --move --watch=300   # a headless person; --lag=60 --jitter=30, --predict, --warps --stall=150, --arena=N, --bot-level=N, --shooter/--catcher
 ./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --start --bots 0  # 7 fake players
 ./venv/bin/python tools/v2_shot.py --out /tmp/v2shot [--phone [--ios]] [--watch 20] [--look-tap] [--extra "look=t1"]  # pictures; v2_power_shots.py --look t1 --lobby-shot --bolt-s 5
-./venv/bin/python tools/v2_soak_report.py --file <v2_server.jsonl> --map   # a soak's checks
-./venv/bin/python tools/v2_host_check.py   # the host port; v2_pull_check.py: pull-back shots
+./venv/bin/python tools/v2_soak_report.py --file <v2_server.jsonl> --map   # a soak
+./venv/bin/python tools/v2_host_check.py   # host port; v2_pull_check.py: pull shots
 tools/deploy_rog.sh   # the ROG as server
 tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>   # a night's logs
 ```
