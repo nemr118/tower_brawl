@@ -252,6 +252,49 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 const engine = new Engine(GODOT_CONFIG);
 
+// ---- Tower Brawl: back in the game by itself (the iPhone white screen, after p4.14) ----
+// When the phone takes the game's drawing away (the WebGL context is lost: low on
+// memory, or the page was in the background) or the game stops with an error, the
+// page cannot draw again: Godot itself only shows an alert. So the page reloads
+// itself, with the saved name and ?join, and the game seats the player again. At
+// most once a minute, so a phone that cannot run the game never loops (then
+// Godot's alert says to reload by hand).
+(function () {
+	const canvas = document.getElementById('canvas');
+	let going = false;
+	function comeBack(why) {   // true: the page is reloading
+		let last = 0;
+		try { last = Number(sessionStorage.getItem('tb_reload_t') || 0); } catch (e) { /* no storage: still reload */ }
+		if (going || Date.now() - last < 60000) {
+			console.log('[shell] ' + why + ': no reload (one less than a minute ago)');
+			return going;
+		}
+		going = true;
+		try { sessionStorage.setItem('tb_reload_t', String(Date.now())); } catch (e) { /* fine */ }
+		const q = new URLSearchParams(window.location.search);
+		let name = '';
+		try { name = localStorage.getItem('towerbrawl_v2_name') || ''; } catch (e) { /* fine */ }
+		if (name !== '') {
+			q.set('name', name);
+			q.set('join', '1');
+		}
+		console.log('[shell] ' + why + ': reloading the page');
+		window.location.replace(window.location.pathname + '?' + q.toString());
+		return true;
+	}
+	canvas.addEventListener('webglcontextlost', function (ev) {
+		if (comeBack('the WebGL context was lost')) {
+			ev.preventDefault();
+			ev.stopImmediatePropagation();   // this runs before Godot's own listener: no alert
+		}
+	}, false);
+	window.addEventListener('error', function (ev) {
+		if (/Aborted\(|out of memory/i.test(String(ev.message))) {
+			comeBack('the game stopped (' + ev.message + ')');
+		}
+	});
+}());
+
 (function () {
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');

@@ -84,6 +84,7 @@ func _init() -> void:
 	layer = 18                    # over the HUD (10) and the sticks (15), under the lobby (20)
 	gfx.owner_layer = self
 	gfx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gfx.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR   # the KILL! pop's letters shrink by a scale: smooth, not blocky
 	add_child(gfx)
 
 func fit(w: Vector2) -> void:
@@ -370,14 +371,21 @@ func _paint(n: Control) -> void:
 	if last:
 		_center(n, font, off.y + size.y - 120.0 * sc, off.x, size.x, "MATCH POINT", int(64 * sc), Color(1.0, 0.85, 0.3))
 	_center(n, font, off.y + size.y - 70.0 * sc, off.x, size.x, "%s got %s" % [wn, _name(int(c["victim"]))], int(36 * sc), col)
-	# the pop: KILL! (FINAL KILL on the last) at the kill, big then settling, fading
+	# the pop: KILL! (FINAL KILL on the last) at the kill, big then settling, fading.
+	# The letters keep ONE size and the pop shrinks them with a scale. Why: a font
+	# keeps a sheet of letters for every size it is drawn at, until the page closes
+	# (above 64 px a sheet is 1024 x 1024: 2 MB in the page and 2 MB on the GPU). A
+	# size that changed every frame made up to 95 sheets in one montage, and an
+	# iPhone's page ran out of memory after 2 or 3 matches (the white screen).
 	if punch < POP_S:
 		var k := punch / POP_S
 		var at := off + ((pop_at - focus) * zoom + Vector2(960.0, 540.0)) * sc
 		var word2 := "FINAL KILL" if last else "KILL!"
-		var size2 := int((96.0 - 30.0 * k) * sc * (1.3 if last else 1.0))
+		var size2 := int(96.0 * sc * (1.3 if last else 1.0))
 		var sw := font.get_string_size(word2, HORIZONTAL_ALIGNMENT_LEFT, -1, size2).x
-		_text(n, font, at + Vector2(-sw / 2.0, -90.0 * sc - 40.0 * k * sc), word2, size2, Color(1.0, 0.86, 0.3, 1.0 - k * k))
+		n.draw_set_transform((at + Vector2(0.0, -90.0 * sc - 40.0 * k * sc)).floor(), 0.0, Vector2.ONE * (96.0 - 30.0 * k) / 96.0)
+		_text(n, font, Vector2(-sw / 2.0, 0.0), word2, size2, Color(1.0, 0.86, 0.3, 1.0 - k * k))
+		n.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if t_play < TITLE_S:
 		var a := clampf((TITLE_S - t_play) / 0.4, 0.0, 1.0)
 		_center(n, font, off.y + 200.0 * sc, off.x, size.x, "%s WINS THE MATCH" % wn.to_upper(), int(80 * sc), Color(col, a))

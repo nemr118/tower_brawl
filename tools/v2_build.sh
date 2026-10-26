@@ -98,6 +98,24 @@ mv "$OUT/index.pck" "$OUT/index_$NEW.pck"
 sed -i "s/\"executable\":\"index\"/\"executable\":\"index\",\"mainPack\":\"index_$NEW.pck\"/" "$OUT/index.html"
 sed -i "s/\"index\.pck\"/\"index_$NEW.pck\"/g" "$OUT/index.html"
 [[ "$(grep -c mainPack "$OUT/index.html")" == "1" ]] || { echo "✗ mainPack injection failed in $OUT/index.html" >&2; exit 1; }
+# The GL number fix (the iPhone white screen, after p4.14). The web export's GL layer
+# (emscripten, in index.js) gives every GL object a number from ONE counter that
+# never goes back, and fills each table with empty slots up to that number. The game
+# makes and frees about 200 GL objects a frame (buffers and vertex arrays for the
+# shapes it draws), so the tables grew by megabytes a minute and never shrank, until
+# an iPhone's page ran out of memory. The new getNewId hands out the lowest free number of that table (as a GL
+# driver on a PC does), so a table is only as long as what is alive in it.
+GETID_OLD='getNewId:table=>{var ret=GL.counter++;for(var i=table.length;i<ret;i++){table[i]=null}return ret}'
+GETID_NEW='getNewId:table=>{var n=table.length,s=table.tbNext|0,i;if(s<1||s>n)s=1;for(i=s;i<n&&table[i]!=null;i++);if(i>=n){for(i=1;i<s&&table[i]!=null;i++);if(i>=s)i=n<1?1:n}for(var j=table.length;j<i;j++)table[j]=null;if(i>=table.length)table[i]=null;table.tbNext=i+1;if(i>=GL.counter)GL.counter=i+1;return i}'
+python3 - "$OUT/index.js" "$GETID_OLD" "$GETID_NEW" <<'PY' \
+  || { echo "✗ $OUT/index.js: emscripten's getNewId is not the one we patch (a new Godot?): see the GL number fix in tools/v2_build.sh" >&2; exit 1; }
+import sys
+path, old, new = sys.argv[1:]
+text = open(path).read()
+if text.count(old) != 1:
+    sys.exit(1)
+open(path, "w").write(text.replace(old, new))
+PY
 # p4.13: the Home Screen icon and manifest (an iPhone added to the Home Screen opens the game full screen)
 cp bench/web/pwa/manifest.json bench/web/pwa/icon-180.png bench/web/pwa/icon-512.png "$OUT/"
 
