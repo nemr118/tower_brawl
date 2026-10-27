@@ -298,6 +298,7 @@ func _process(delta: float) -> void:
 		deathcam.record(view, evs, delta)
 	if not deathcam.playing and not match_msg.is_empty():
 		hud.match_end(match_msg)   # after the montage (or with none): the winner's screen
+		print("🏆 [Winner] %s: the winner's screen" % str(match_msg.get("name", "")))   # p4.17 (v2_shot.py --until)
 		match_msg = {}
 	var aim_on := false
 	var me: Dictionary = own if predicting else (s["by_id"].get(my_seat, {}) if not s.is_empty() else {})
@@ -642,6 +643,7 @@ func _on_message(m: Dictionary) -> void:
 			net.send({"kind": "start"})
 	elif kind == "round_end":
 		hud.round_end(m)
+		print("🏁 [Round] %s" % ("DRAW" if bool(m.get("draw", false)) else "%s wins the round" % str(m.get("name", ""))))
 	elif kind == "match_end":
 		var seat_names: Array = []
 		for st in seats_msg.get("seats", []):
@@ -650,6 +652,7 @@ func _on_message(m: Dictionary) -> void:
 		deathcam.can_skip = my_seat >= 0
 		if not opts.has("nocam"):   # p4.13 test knob ?nocam: straight to the winner's screen (pictures)
 			deathcam.start(int(m.get("winner", -1)), seat_names)   # p4.8: the winner's kills first, if any
+			print("🎬 [Replay] %s's kills: %s" % [str(m.get("name", "")), "on" if deathcam.playing else "none"])   # p4.17 (v2_shot.py --until)
 
 func _say(text: String, secs: float) -> void:
 	status = text

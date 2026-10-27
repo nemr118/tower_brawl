@@ -36,6 +36,9 @@ const Cards = preload("res://client/lobby_cards.gd")
 const Count = preload("res://client/lobby_count.gd")
 const Arenas = preload("res://client/lobby_arenas.gd")
 const Polish = preload("res://client/polish.gd")
+const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
+const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
+enum { IC_BOTS, IC_LEVEL, IC_LOOK, IC_CONTROLS, IC_LEAVE, IC_CROWN }
 const LEVEL_NAMES := ["OLD", "EASY", "NORMAL", "HARD"]   # sim/brain.gd NAMES
 # The controls line: [kind, words]; kind "k" a key cap, "t" words, "-" a gap.
 const HELP_PC := [["k", "A"], ["k", "D"], ["t", "RUN"], ["-", ""], ["k", "W"], ["t", "OR"], ["k", "SPACE"], ["t", "JUMP"], ["-", ""],
@@ -180,6 +183,13 @@ func _init() -> void:
 	_btn(controls_btn, face.darkened(0.2), ink, 30, Rect2(1540, 100, 320, 72), 5, corner)
 	controls_btn.pressed.connect(func(): controls_pressed.emit())
 	controls_btn.visible = false
+	if Polish.on("ui_icons"):
+		power_btn.pic = PU_ICONS
+		power_btn.pic_src = Rect2(13 * 64, 0, 64, 64)
+		for pair in [[level_btn, IC_LEVEL], [leave_btn, IC_LEAVE], [look_btn, IC_LOOK], [controls_btn, IC_CONTROLS]]:
+			pair[0].pic = UI_ICONS
+			pair[0].pic_src = Rect2(pair[1] * 128, 0, 128, 128)
+		leave_btn.glyph = 0            # the door in place of the back arrow
 	set_controls(false)
 	root.add_child(count)
 	count.set_dress(pal)
@@ -459,11 +469,16 @@ func _bots_box(c: Control, txt: Color, edge: Color) -> void:
 	var face: Color = pal["button"]
 	c.draw_style_box(Art.box(face.darkened(0.35), face.darkened(0.7), 16, 3, 3, Color(0, 0, 0, 0.45), 10), bx)
 	var on := seated
-	c.draw_string(Art.BODY, Vector2(bx.position.x + 22, bx.position.y + 34), "BOTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 26,
+	var ix := 0.0                    # p4.17: the robot's room at the left (polish "ui_icons")
+	if Polish.on("ui_icons"):
+		c.draw_texture_rect_region(UI_ICONS, Rect2(bx.position.x + 12, bx.position.y + 16, 64, 64), Rect2(IC_BOTS * 128, 0, 128, 128),
+			Color(1, 1, 1, 1.0 if on else 0.45))
+		ix = 66.0
+	c.draw_string(Art.BODY, Vector2(bx.position.x + 22 + ix, bx.position.y + 34), "BOTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 26,
 		Color(txt, 0.72 if on else 0.4))
-	Art.text(c, Art.DISPLAY, Vector2(bx.position.x + 22, bx.position.y + 76), str(bots_now), 46, Color(txt, 1.0 if on else 0.45), 5, edge)
-	c.draw_string(Art.BODY, Vector2(bx.position.x + 78, bx.position.y + 74), "· %s" % cards.level_name if bots_now > 0 else "NONE",
-		HORIZONTAL_ALIGNMENT_LEFT, 170, 26, Color(txt, 0.6 if on else 0.35))
+	Art.text(c, Art.DISPLAY, Vector2(bx.position.x + 22 + ix, bx.position.y + 76), str(bots_now), 46, Color(txt, 1.0 if on else 0.45), 5, edge)
+	c.draw_string(Art.BODY, Vector2(bx.position.x + 78 + ix, bx.position.y + 74), "· %s" % cards.level_name if bots_now > 0 else "NONE",
+		HORIZONTAL_ALIGNMENT_LEFT, minf(170.0, 1244.0 - (bx.position.x + 78 + ix)), 26, Color(txt, 0.6 if on else 0.35))
 
 # The controls line: key caps and words.
 func _help_line(c: Control, txt: Color) -> void:

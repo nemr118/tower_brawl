@@ -21,6 +21,8 @@ signal skip_pressed
 
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
+const Banner = preload("res://client/hud_banner.gd")   # p4.17: WINS THE MATCH and MATCH POINT in the banners' style
+const Polish = preload("res://client/polish.gd")
 const REC_HZ := 20.0
 const KEEP_S := 3.0               # a clip's run-up
 const AFTER_S := 0.8              # and what follows the kill
@@ -86,6 +88,9 @@ func _init() -> void:
 	gfx.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	gfx.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR   # the KILL! pop's letters shrink by a scale: smooth, not blocky
 	add_child(gfx)
+	title_box.mouse_filter = Control.MOUSE_FILTER_IGNORE   # p4.17: the banner's 1920 x 1080 design on the replay's frame
+	add_child(title_box)
+	title_box.add_child(title_fx)
 
 func fit(w: Vector2) -> void:
 	win = w
@@ -216,7 +221,38 @@ func stop() -> void:
 	gfx.queue_redraw()
 
 # One frame of the montage: [the view to draw, the events of the frames passed].
+var title_box := Control.new()
+var title_fx = Banner.new()
+
+# p4.17 (polish "banners2"): NAME WINS THE MATCH over the first moments (fading as
+# before), then MATCH POINT on the last kill, in the round banners' style.
+func _title_banner(delta: float) -> void:
+	var on := playing and Polish.on("banners2") and not segs.is_empty()
+	title_box.visible = on
+	if not on:
+		return
+	var sc := minf(win.x / 1920.0, win.y / 1080.0)
+	title_box.position = (win - Vector2(1920.0, 1080.0) * sc) / 2.0
+	title_box.scale = Vector2.ONE * sc
+	var sg: Dictionary = segs[clampi(seg_i, 0, segs.size() - 1)]
+	var last: bool = int(sg["n"]) == int(sg["of"])
+	var col: Color = World.TEAM[winner % 8].lightened(0.25)
+	var main: Array = []
+	var rib := ""
+	var extra: Array = []
+	var fade := clampf(ending / FADE_S, 0.0, 1.0) if ending >= 0.0 else 1.0   # the replay's fade to black takes the words too
+	if t_play < TITLE_S:
+		main = [_name(winner).to_upper(), 112, col.lerp(Color.WHITE, 0.55), col, col.darkened(0.6), 190,
+			clampf((TITLE_S - t_play) / 0.4, 0.0, 1.0) * fade]
+		rib = "WINS THE MATCH"
+		if last:
+			extra.append(["MATCH POINT", 56, Color(1.0, 0.85, 0.3), 960])
+	elif last:
+		main = ["MATCH POINT", 76, Color(1.0, 0.95, 0.6), Color(1.0, 0.62, 0.12), Color(0.45, 0.2, 0.02), 960, fade]
+	title_fx.set_banner(main, rib, extra, delta)
+
 func step(delta: float) -> Array:
+	_title_banner(delta)
 	if not playing:
 		return [{}, []]
 	t_play += delta
@@ -368,7 +404,8 @@ func _paint(n: Control) -> void:
 	var wn := _name(winner)
 	var col: Color = World.TEAM[winner % 8].lightened(0.25)
 	var last: bool = int(sg["n"]) == int(sg["of"])
-	if last:
+	var banners2 := Polish.on("banners2")
+	if last and not banners2:
 		_center(n, font, off.y + size.y - 120.0 * sc, off.x, size.x, "MATCH POINT", int(64 * sc), Color(1.0, 0.85, 0.3))
 	_center(n, font, off.y + size.y - 70.0 * sc, off.x, size.x, "%s got %s" % [wn, _name(int(c["victim"]))], int(36 * sc), col)
 	# the pop: KILL! (FINAL KILL on the last) at the kill, big then settling, fading.
@@ -386,7 +423,7 @@ func _paint(n: Control) -> void:
 		n.draw_set_transform((at + Vector2(0.0, -90.0 * sc - 40.0 * k * sc)).floor(), 0.0, Vector2.ONE * (96.0 - 30.0 * k) / 96.0)
 		_text(n, font, Vector2(-sw / 2.0, 0.0), word2, size2, Color(1.0, 0.86, 0.3, 1.0 - k * k))
 		n.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	if t_play < TITLE_S:
+	if t_play < TITLE_S and not banners2:
 		var a := clampf((TITLE_S - t_play) / 0.4, 0.0, 1.0)
 		_center(n, font, off.y + 200.0 * sc, off.x, size.x, "%s WINS THE MATCH" % wn.to_upper(), int(80 * sc), Color(col, a))
 	if flash > 0.0:

@@ -11,6 +11,8 @@
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
+const AwardArt = preload("res://client/award_art.gd")   # p4.17: the award's picture on the card (polish "award_badges")
+const Polish = preload("res://client/polish.gd")
 const World = preload("res://client/world.gd")
 const P = preload("res://sim/proto.gd")
 const HALO := preload("res://assets/fx_halo.png")
@@ -424,6 +426,16 @@ func _words(n: Control, xfs: Array) -> void:
 			else:
 				n.draw_string(body, Vector2(rr.position.x, 24), aw[1], HORIZONTAL_ALIGNMENT_CENTER, rr.size.x, views[i]["why_size"],
 					Color(1.0, 0.95, 0.85, 0.95))
+	# p4.17: the award's picture in a round badge beside the fighter (polish "award_badges")
+	if Polish.on("award_badges"):
+		for i in N:
+			if views[i].is_empty() or not views[i].has("award") or not AwardArt.ORDER.has(str(views[i]["award"][0])):
+				continue
+			_at(n, xfs[i])
+			var bc := Vector2(W * 0.5 - 38.0, FEET - 52.0)
+			n.draw_circle(bc, 33.0, Color(0.08, 0.05, 0.12, 0.92))
+			AwardArt.draw(n, str(views[i]["award"][0]), Rect2(bc - Vector2(28, 28), Vector2(56, 56)))
+			n.draw_arc(bc, 33.0, 0.0, TAU, 32, Color(1.0, 0.8, 0.25), 3.0, true)
 	# the tags' words, the crowns' counts
 	for i in N:
 		if views[i].is_empty() or views[i]["tag"] == "":

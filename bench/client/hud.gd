@@ -13,6 +13,9 @@ const World = preload("res://client/world.gd")
 const LevelScript = preload("res://sim/level.gd")
 const PV = preload("res://client/powers_view.gd")
 const Winner = preload("res://client/winner_view.gd")   # the winner's screen (2026-10-25)
+const Banner = preload("res://client/hud_banner.gd")    # p4.17: the round's big words in the lobby title's style
+const Art = preload("res://client/lobby_art.gd")
+const Polish = preload("res://client/polish.gd")
 const BANNER_S := 2.6
 const FIGHT_S := 0.9
 const CARD_W := 210.0
@@ -53,17 +56,26 @@ class _Canvas extends Control:
 		if hud != null:
 			hud._paint(self)
 
+var banner_fx = Banner.new()
+var title_pal: Dictionary = {}
+var round_name := ""               # p4.17: the round's winner (the big line) and a draw
+var round_draw := false
+var view := Rect2(0, 0, 1920, 1080)   # p4.17: the part of the 1920 x 1080 design the window shows (the winner's backdrop fills it)
+
 func _init() -> void:
 	layer = 10
 	canvas.hud = self
 	canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	canvas.size = Vector2(1920, 1080)
 	add_child(canvas)
+	add_child(banner_fx)            # p4.17, over the canvas
+	title_pal = Art.DRESSES[Art.pick_dress()]
 
 func fit(win: Vector2) -> void:
 	var k := win.y / 1080.0
 	scale = Vector2.ONE * k
 	offset = Vector2((win.x - 1920.0 * k) * 0.5, 0.0)
+	view = Rect2(960.0 - win.x / (2.0 * k), 0.0, win.x / k, 1080.0)
 
 func on_phase(ph: int, rnd: int) -> void:
 	phase = ph
@@ -74,6 +86,8 @@ func on_phase(ph: int, rnd: int) -> void:
 		banner = ""
 
 func round_end(m: Dictionary) -> void:
+	round_draw = bool(m.get("draw", false))
+	round_name = str(m.get("name", "")).to_upper()
 	if bool(m.get("draw", false)):
 		banner = "DRAW"
 		banner_color = Color(0.8, 0.8, 0.8)
@@ -121,6 +135,35 @@ func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: 
 	show_info = info
 	info_text = "%s · %.0f fps · ping %d ms" % [P.VERSION, fps, rtt]
 	canvas.queue_redraw()
+	banner_fx.visible = not lobby_shown and Polish.on("banners2")
+	if banner_fx.visible:
+		var sp := _banner_spec()
+		banner_fx.set_banner(sp[0], sp[1], sp[2], delta)
+
+# p4.17 (polish "banners2"): the round's words for hud_banner.gd: the big line
+# [text, size, top colour, bottom colour, rim colour, y], the ribbon's words, the small lines.
+func _banner_spec() -> Array:
+	var main: Array = []
+	var rib := ""
+	var extra: Array = []
+	var left := int(snap.get("left", 0))
+	if phase == P.PH_ROUND_START:
+		main = ["ROUND %d" % round_no, 124, title_pal["logo_top"], title_pal["logo_bot"], title_pal["logo_rim"], 430]
+		rib = LevelScript.name_of(int(snap.get("arena", 0)))
+		extra.append(["GET READY", 36, Color(0.88, 0.88, 0.95), 600])
+	elif phase == P.PH_PLAY:
+		if fight_t > 0.0:
+			main = ["FIGHT!", 160, Color(1.0, 0.93, 0.5), Color(1.0, 0.22, 0.06), Color(0.45, 0.04, 0.02), 470]
+		if left > 0 and left <= 600:
+			extra.append(["DRAW IN %d" % ceili(left / 60.0), 40, Color(1.0, 0.85, 0.5), 1000])
+	elif phase == P.PH_ROUND_END and banner != "":
+		var col: Color = banner_color
+		if round_draw:
+			main = ["DRAW", 112, Color(0.95, 0.95, 1.0), Color(0.62, 0.62, 0.7), Color(0.25, 0.25, 0.3), 430]
+		else:
+			main = [round_name, 112, col.lerp(Color.WHITE, 0.55), col, col.darkened(0.6), 430]
+			rib = "WINS THE ROUND"
+	return [main, rib, extra]
 
 # The seats with the most points (1 or more): they wear the crown.
 func _leaders() -> Array:
@@ -196,7 +239,9 @@ func _paint(c: Control) -> void:
 		if not pw.is_empty() and not waiting:
 			_chips(c, font, x, pw)
 	var left := int(snap.get("left", 0))
-	if phase == P.PH_ROUND_START:
+	if Polish.on("banners2") and phase != P.PH_MATCH_END:
+		pass                              # p4.17: hud_banner.gd draws them
+	elif phase == P.PH_ROUND_START:
 		_banner(c, font, "ROUND %d" % round_no, 110, Color.WHITE, 440)
 		_banner(c, font, LevelScript.name_of(int(snap.get("arena", 0))), 52, Color(1.0, 0.85, 0.5), 522)
 		_banner(c, font, "GET READY", 36, Color(0.85, 0.85, 0.9), 590)
@@ -208,7 +253,7 @@ func _paint(c: Control) -> void:
 	elif phase == P.PH_ROUND_END and banner != "":
 		_banner(c, font, banner, 78, banner_color, 440)
 	elif phase == P.PH_MATCH_END and banner != "":
-		Winner.paint(c, end_t, winner_seat, winner_name, awards, left)   # client/winner_view.gd (2026-10-25)
+		Winner.paint(c, end_t, winner_seat, winner_name, awards, left, view)   # client/winner_view.gd (2026-10-25)
 	if banner_t > 0.0 and banner_kind > 0:
 		_power_banner(c, font)
 

@@ -5,6 +5,12 @@
 # MATCH; on the right the awards slide in one by one as cards (the award in
 # gold, who in their colour, why); at the bottom THE LOBBY OPENS IN N with a bar
 # that runs out. t: seconds since the screen came up. Its look and fonts: lobby_art.gd.
+# p4.17 (the user: "Let's make it look great"; ComfyUI, tools/comfy/run_winner.py): a
+# painted backdrop fills the window (a castle terrace with fireworks, or the spooky one
+# in the Halloween dress; polish "winner_backdrop"); the winner's painted hero, a hooded
+# archer in their colour, rises up behind the podium in place of the fighter (polish
+# "winner_portrait"); a painted crown on the podium (polish "ui_icons"). The pictures load
+# when first needed and only the winner's hero is kept (the iPhones' memory).
 extends RefCounted
 
 const Art = preload("res://client/lobby_art.gd")
@@ -15,15 +21,38 @@ const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
 const FIGHTER := 3.0              # the fighter: 3 x its 128 px frame
 const END_S := 12.0               # the match's end (game_server.gd MATCH_END_TICKS / 60): the bar's full length
+const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17: cell 5 the crown (tools/comfy/make_assets.py ICONS)
+const HERO := Vector2(540, 720)   # p4.17: the hero's picture (assets/heroes/hero_<seat>.png), its bottom at the podium's
 
-static func paint(c: Control, t: float, seat: int, who: String, awards: Array, left_ticks: int) -> void:
+static var _backdrop: Texture2D = null
+static var _hero: Texture2D = null
+static var _hero_seat := -1
+
+static func _hero_tex(seat: int) -> Texture2D:
+	if _hero_seat != posmod(seat, 8):
+		_hero_seat = posmod(seat, 8)
+		_hero = load("res://assets/heroes/hero_%d.png" % _hero_seat)
+	return _hero
+
+# view: the part of the design the window shows (the backdrop fills it).
+static func paint(c: Control, t: float, seat: int, who: String, awards: Array, left_ticks: int, view := Rect2(0, 0, 1920, 1080)) -> void:
 	Art.fonts_ready()
 	var col: Color = World.TEAM[posmod(seat, 8)]
 	var gold := Color(1.0, 0.84, 0.3)
 	var edge := Color(0.03, 0.01, 0.05)
 	var a := clampf(t / 0.35, 0.0, 1.0)
-	# the arena dims
-	c.draw_rect(Rect2(-600, -100, 3120, 1300), Color(0.01, 0.0, 0.03, 0.66 * a))
+	var hero := Polish.on("winner_portrait")
+	var words_y := 230.0 if hero else 280.0   # p4.17: the words a little higher, over the hero's hood
+	# the arena dims (p4.17: or the painted backdrop comes in over it)
+	if Polish.on("winner_backdrop"):
+		if _backdrop == null:
+			_backdrop = load("res://assets/winner_%s.png" % ("spooky" if Art.pick_dress() == "halloween" else "castle"))
+		var bs := Vector2(_backdrop.get_width(), _backdrop.get_height())
+		bs *= maxf(view.size.x / bs.x, view.size.y / bs.y)
+		c.draw_texture_rect(_backdrop, Rect2(view.get_center() - bs * 0.5, bs), false, Color(1, 1, 1, a))
+		c.draw_rect(view.grow(8.0), Color(0.01, 0.0, 0.03, 0.28 * a))
+	else:
+		c.draw_rect(Rect2(-600, -100, 3120, 1300), Color(0.01, 0.0, 0.03, 0.66 * a))
 	# light rays in the winner's colour, turning slowly
 	for k in 14:
 		var a0 := t * 0.25 + TAU * k / 14.0
@@ -32,12 +61,25 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 		c.draw_colored_polygon(PackedVector2Array([MID + Vector2(0, -150), MID + Vector2(0, -150) + Vector2(cos(a0), sin(a0)) * r,
 			MID + Vector2(0, -150) + Vector2(cos(a1), sin(a1)) * r]), Color(col.r, col.g, col.b, 0.075 * a))
 	c.draw_texture_rect(HALO, Rect2(MID.x - 330, MID.y - 560, 660, 620), false, Color(col.r, col.g, col.b, 0.55 * a))
+	var pod := Rect2(MID.x - 220, MID.y, 440, 140) if hero else Rect2(MID.x - 170, MID.y, 340, 140)   # p4.17: wider before the hero
+	# p4.17: the hero rises up behind the podium (nothing of it shows under the podium), then breathes
+	if hero:
+		var ht := _hero_tex(seat)
+		var rise := 1.0 - Art.ease_out_back(t / 0.5)
+		var hb := sin(t * 2.4) * 5.0 if t > 0.5 else 0.0
+		var hr := Rect2(MID.x - HERO.x * 0.5 + 20.0, pod.end.y - HERO.y + rise * 560.0 + hb, HERO.x, HERO.y)
+		var cut := maxf(0.0, hr.end.y - pod.end.y)
+		if cut < HERO.y:
+			hr.size.y -= cut
+			c.draw_texture_rect_region(ht, hr, Rect2(0, 0, ht.get_width(), ht.get_height() * hr.size.y / HERO.y), Color(1, 1, 1, a))
 	# the podium
-	var pod := Rect2(MID.x - 170, MID.y, 340, 140)
 	c.draw_style_box(Art.box(col.darkened(0.55), col.darkened(0.8), 10, 3, 6, Color(0, 0, 0, 0.5), 14), pod)
 	c.draw_rect(Rect2(pod.position.x + 6, pod.position.y + 4, pod.size.x - 12, 16), col.lightened(0.1))
-	Art.crown(c, Vector2(MID.x, MID.y + 98), 2.6, gold)
-	# the fighter drops in, lands, then raises the bow and breathes
+	if Polish.on("ui_icons"):
+		c.draw_texture_rect_region(UI_ICONS, Rect2(MID.x - 52, MID.y + 28, 104, 104), Rect2(5 * 128, 0, 128, 128))
+	else:
+		Art.crown(c, Vector2(MID.x, MID.y + 98), 2.6, gold)
+	# the fighter drops in, lands, then raises the bow and breathes (p4.17: when the hero is off)
 	var drop := 1.0 - Art.ease_out(t / 0.4)
 	var frame := 9 if t < 0.4 else (27 if t < 0.55 else (10 if int(t * 0.8) % 3 != 2 else int(t * 2.0) % 2))
 	var fs := 128.0 * FIGHTER
@@ -47,8 +89,9 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 	for k in 24:
 		var an := TAU * k / 24.0
 		ell.append(MID + Vector2(cos(an) * 110.0, sin(an) * 20.0))
-	c.draw_colored_polygon(ell, Color(0, 0, 0, 0.5 * a))
-	c.draw_texture_rect_region(World.FIGHTER_TEX[posmod(seat, 8)], dst, Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128))
+	if not hero:
+		c.draw_colored_polygon(ell, Color(0, 0, 0, 0.5 * a))
+		c.draw_texture_rect_region(World.FIGHTER_TEX[posmod(seat, 8)], dst, Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128))
 	# confetti
 	for k in 70:
 		var sp := 90.0 + (k % 7) * 26.0
@@ -60,7 +103,7 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 	# the words over the winner
 	var pop := Art.ease_out_back((t - 0.25) / 0.45)
 	if pop > 0.0:
-		c.draw_set_transform(Vector2(MID.x, 280), 0.0, Vector2.ONE * (0.6 + 0.4 * pop))
+		c.draw_set_transform(Vector2(MID.x, words_y), 0.0, Vector2.ONE * (0.6 + 0.4 * pop))
 		Art.text(c, Art.DISPLAY, Vector2(-420, -100), "WINNER!", 66, gold, 9, edge, HORIZONTAL_ALIGNMENT_CENTER, 840)
 		var ns := Art.fit_size(Art.DISPLAY, who.to_upper(), 124, 800, 40)
 		Art.text(c, Art.DISPLAY, Vector2(-420, 20), who.to_upper(), ns, col.lightened(0.25), 12, edge, HORIZONTAL_ALIGNMENT_CENTER, 840)

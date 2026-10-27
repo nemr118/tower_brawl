@@ -28,6 +28,12 @@ ap.add_argument("--extra", default="", help="more page options, a=1&b=2")
 ap.add_argument("--watch", type=float, default=0.0, help="after the fight shots, wait this long and shoot <out>_late.png")
 ap.add_argument("--look-tap", action="store_true", help="tap the lobby's LOOK button once, then reload the page (the pick is kept)")
 ap.add_argument("--lobby-tap", default="", help="X,Y in the 1920 x 1080 design: tap there in the lobby and shoot <out>_lobby_tap.png, then tap it again (2026-10-26: the ARENA picker is 320,732)")
+ap.add_argument("--burst", type=float, default=0.0, help="SECS: after START, every frame the page draws for SECS s (the browser's screencast: "
+                "<out>_burst/NNN.jpg) in place of round/fight/fight2 (p4.17: the banners' pop; one PNG shot takes about 3 s)")
+ap.add_argument("--until", action="append", default=[], help="TEXT@D1,D2: wait for a page console line with TEXT, then shoot <out>_<word>_<D>.png D s after it; "
+                "TEXT@cast:SECS: every frame for SECS s after it (<out>_<word>/NNN.jpg). Again for the next --until "
+                "(p4.17: '[Round]@cast:3', '[Winner]@3,15' = the winner's screen, then the lobby with the awards)")
+ap.add_argument("--until-timeout", type=float, default=150.0, help="seconds to wait for each --until line")
 ap.add_argument("--port", type=int, default=9334)
 ap.add_argument("--wait", type=float, default=9.0, help="seconds for the page to load and join")
 ap.add_argument("--round-wait", type=float, default=4.3, help="seconds from START to the round shot (3 s countdown + the ROUND banner; less on a slow page)")
@@ -88,6 +94,36 @@ def drain(secs):
             console.append(" ".join(str(x.get("value", x.get("description", ""))) for x in args))
     ws.settimeout(40)
 
+def _console(m):
+    if m.get("method") == "Runtime.consoleAPICalled":
+        args = m["params"].get("args", [])
+        console.append(" ".join(str(x.get("value", x.get("description", ""))) for x in args))
+
+# Every frame the page draws for secs seconds, as JPEGs in <out>_<name>/ (000.jpg, 001.jpg, ...).
+def cast(name, secs):
+    d = f"{a.out}_{name}"
+    os.makedirs(d, exist_ok=True)
+    _id[0] += 1
+    ws.send(json.dumps({"id": _id[0], "method": "Page.startScreencast", "params": {"format": "jpeg", "quality": 88, "everyNthFrame": 1}}))
+    end = time.time() + secs
+    n = 0
+    ws.settimeout(0.5)
+    while time.time() < end:
+        try:
+            m = json.loads(ws.recv())
+        except websocket.WebSocketTimeoutException:
+            continue
+        _console(m)
+        if m.get("method") == "Page.screencastFrame":
+            with open(f"{d}/{n:03d}.jpg", "wb") as f:
+                f.write(base64.b64decode(m["params"]["data"]))
+            n += 1
+            _id[0] += 1
+            ws.send(json.dumps({"id": _id[0], "method": "Page.screencastFrameAck", "params": {"sessionId": m["params"]["sessionId"]}}))
+    ws.settimeout(40)
+    cmd("Page.stopScreencast")
+    print("cast", name, n, "frames", flush=True)
+
 def shot(name):
     r = cmd("Page.captureScreenshot", format="png")
     with open(f"{a.out}_{name}.png", "wb") as f:
@@ -144,12 +180,34 @@ if a.lobby_tap:
     tap(960, 1060)      # a tap at the bottom edge: a picker or a menu closes
     drain(0.8)
 tap(1230, 854)          # START (lobby.gd since 2026-10-25: the big button at 920..1860 x 798..952)
-drain(a.round_wait)     # 3 s countdown + the ROUND 1 banner
-shot("round")
-drain(2.5)              # FIGHT
-shot("fight")
-drain(4.0)
-shot("fight2")
+if a.burst > 0:
+    cast("burst", a.burst)
+else:
+    drain(a.round_wait)     # 3 s countdown + the ROUND 1 banner
+    shot("round")
+    drain(2.5)              # FIGHT
+    shot("fight")
+    drain(4.0)
+    shot("fight2")
+seen = len(console)      # the next --until looks from here (the line after the last one that matched)
+for u in a.until:
+    text, _, ds = u.partition("@")
+    word = "".join(ch for ch in text.lower() if ch.isalnum()) or "until"
+    t_end = time.time() + a.until_timeout
+    while time.time() < t_end and not any(text in c for c in console[seen:]):
+        drain(0.25)
+    hit = next((i for i in range(seen, len(console)) if text in console[i]), -1)
+    if hit < 0:
+        print("no console line with", repr(text), "in", a.until_timeout, "s", flush=True)
+        break
+    seen = hit + 1
+    if ds.startswith("cast:"):
+        cast(word, float(ds[5:]))
+        continue
+    t0 = time.time()
+    for d in [float(v) for v in ds.split(",") if v.strip()]:
+        drain(max(0.0, t0 + d - time.time()))
+        shot(f"{word}_{d:g}")
 if a.watch > 0:
     drain(a.watch)
     shot("late")

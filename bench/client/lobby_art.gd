@@ -211,6 +211,8 @@ class Btn extends Button:
 	var value := ""
 	var thumb: Texture2D = null    # 2026-10-26: a small picture at the left (the ARENA button: the pick's painting)
 	var thumb_src := Rect2()
+	var pic: Texture2D = null      # p4.17: a square picture at the left (polish "ui_icons": assets/ui_icons.png)
+	var pic_src := Rect2()
 	var size_px := 40
 	var cap_px := 0          # the caption's size (0: 62% of size_px)
 	var glyph := 0
@@ -314,6 +316,12 @@ class Btn extends Button:
 			draw_texture_rect_region(thumb, tr, thumb_src, Color(1, 1, 1, 0.45 if off else 1.0))
 			draw_rect(tr.grow(1.5), Color(edge, 0.9), false, 3.0)
 			icon_w = tr.size.x + 14.0
+			cap_x = icon_w
+		elif pic != null:
+			var ih := h - top - bottom - 14.0
+			var ir := Rect2(12.0, top + 7.0, ih, ih)
+			draw_texture_rect_region(pic, ir, pic_src, Color(1, 1, 1, 0.45 if off else 1.0))
+			icon_w = ih + 8.0
 			cap_x = icon_w
 		var label := value
 		var fs := size_px

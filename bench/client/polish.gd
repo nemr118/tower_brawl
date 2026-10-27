@@ -38,6 +38,12 @@ const SWITCHES := {
 	# castle_backdrop above now shows run_backdrops.py's k1, assets/bg_castle_far.png):
 	"arena_cards": true,       # the lobby's ARENA button shows the pick's painting and opens a picker of painted cards (client/lobby_arenas.gd)
 	"trick_art": true,         # a candy's trick shows its own badge (PUMPKIN HEAD, BACKWARDS, TINY, GHOSTFACE: assets/trick_icons.png)
+	# p4.17 (the user: "Let's make it look great")
+	"banners2": true,          # ROUND N, FIGHT!, WINS THE ROUND in the lobby title's style: gradient, rim, glow, a pop (client/hud_banner.gd)
+	"award_badges": true,      # the lobby's seat cards: the award's ComfyUI picture in a round badge beside the fighter (client/lobby_cards.gd)
+	"winner_backdrop": true,   # the winner's screen: a painted castle terrace with fireworks (spooky in October) fills the window (client/winner_view.gd)
+	"winner_portrait": true,   # the winner's screen: their painted hooded archer, in their colour, rises behind the podium in place of the fighter
+	"ui_icons": true,          # pictures on the lobby's buttons (POWER-UPS, BOTS, BOT LEVEL, LEAVE, LOOK, CONTROLS) and a painted crown on the podium
 }
 
 static var _off := {}
