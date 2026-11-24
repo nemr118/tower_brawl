@@ -15,6 +15,7 @@ const PowersView = preload("res://client/powers_view.gd")
 const ThemeView = preload("res://client/theme_view.gd")
 const EdgesView = preload("res://client/edges_view.gd")
 const BoilerView = preload("res://client/boiler_view.gd")
+const TableView = preload("res://client/table_view.gd")   # p4.18 THE BIG TABLE (a helper's)
 const BarnView = preload("res://client/barn_view.gd")    # p4.18 THE HARVEST BARN (a helper's)
 const Polish = preload("res://client/polish.gd")         # the polish of 2026-10-25: a switch for each new look piece
 const Season = preload("res://client/season.gd")   # p4.18
@@ -145,6 +146,7 @@ var replaying := false           # p4.9: the deathcam's montage plays (nobody is
 var edges                        # p4.11: the arena's shapes stand out (client/edges_view.gd: halo behind, light on top)
 var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd), theme "nightmare"
 var barn                         # THE HARVEST BARN's look (client/barn_view.gd), theme "barn"
+var table                        # THE BIG TABLE's look (client/table_view.gd), theme "table"
 var dress                        # polish: the castle arenas' dressing, over the tiles (client/dress_view.gd)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
@@ -399,6 +401,10 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	add_child(boiler)
 	move_child(boiler, edges.get_index())   # behind the tiles (it may add parts to other layers in setup)
 	boiler.setup(self)
+	table = TableView.new()
+	add_child(table)
+	move_child(table, edges.get_index())    # behind the tiles, as the boiler's
+	table.setup(self)
 	barn = BarnView.new()
 	add_child(barn)
 	move_child(barn, edges.get_index())    # behind the tiles, like the boiler's
@@ -547,10 +553,14 @@ func _apply_theme() -> void:
 			move_child(dress, boiler.front.get_index() + 1)
 		else:
 			move_child(dress, tiles_lit.get_index() + 1)
+	if table != null:
+		table.leave()                 # before the other looks: the table puts back what it hid
 	if boiler != null:
 		boiler.set_theme(level)
 	if barn != null:
 		barn.set_theme(level)     # after the boiler's: each puts back what it hid
+	if table != null:
+		table.set_theme(level)        # after them: on THE BIG TABLE it hides the castle's parts
 
 # p4.18: the season changed (the lobby's SEASON button, or the first seats message): the
 # arena takes its look again.

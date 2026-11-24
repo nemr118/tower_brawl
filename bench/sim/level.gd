@@ -19,7 +19,7 @@ const EMPTY := 0
 const SOLID := 1
 const LEDGE := 2
 const BENCH := 0
-const PLAY := [1, 2, 3, 4, 5]    # the arenas the lobby offers (MIX takes them in turn, by the season: mix_for); the bench is the test arena
+const PLAY := [1, 2, 3, 4, 5, 6]    # the arenas the lobby offers (MIX takes them in turn, by the season: mix_for); the bench is the test arena
 
 # [x, y, w, h, kind, mirror] in cells
 const PIECES := [
@@ -271,6 +271,54 @@ const LAYOUTS := [
 		"############....################################....############",
 		"############....################################....############"
 	]},
+	# The Big Table (Thanksgiving): the fighters are tiny and the arena is a dinner table
+	# seen from the side. The roast turkey on its platter in the middle (its two shoulders
+	# are the drumsticks), a tall candlestick on each side of it (pillars for wall jumps, a
+	# wax tray on both sides near the top), the gravy boat in the air on the left over two
+	# plates (a tiered stand), the pie on its cake stand on the right, the lamp hanging in
+	# the middle of the top, and a fork, a knife or a spoon for every other ledge. The floor
+	# is the tablecloth. The torches: a and b sit over the two candles, c under the lamp, d
+	# over the roast, e over the gravy boat, f over the pie, g and h light the room behind
+	# (client/table_view.gd puts the flames, the lamp's light and the steam there; the
+	# pictures are made by tools/make_table_art.py, which reads this map).
+	{"name": "THE BIG TABLE", "theme": "table", "map": [
+		"############....################################....############",
+		"############....################################....############",
+		"##............................................................##",
+		"##............................................................##",
+		"##............................................................##",
+		"##............................................................##",
+		"##......g..............................................h......##",
+		"##............................................................##",
+		"##..........................########..........................##",
+		"##.......................6..########...7......................##",
+		"##..................=======....c.....=======..................##",
+		"##............................................................##",
+		"##............................................................##",
+		"##............................................................##",
+		".........======...=======..............=======...======.........",
+		"................................................................",
+		"................................................................",
+		"................................................................",
+		"##=======.................============.................=======##",
+		"##..............a..............................b..............##",
+		"##.....4.e......##............................##..............##",
+		"##..########==..##............................##..............##",
+		"##....######....##..========........========..##....========..##",
+		"##.....####.....##............................##..............##",
+		"##............==##==........................==##==............##",
+		"##..............##..............d.............##.......f5.....##",
+		"##..............##.........##########.........##.....######...##",
+		"##....======....##.........##########.........##.....######...##",
+		"##..............##.......##############.......##...==========.##",
+		"##..............##.......##############.......##.......##.....##",
+		"##..............##.......##############.......##.......##.....##",
+		"##...========...##.......##############.......##.......##.....##",
+		"##..............##.....##################.....##.......##.....##",
+		"##........0.....##...2.##################..3..##.......##...1.##",
+		"############....################################....############",
+		"############....################################....############"
+	]},
 ]
 
 var id := BENCH
@@ -279,7 +327,7 @@ var grid := PackedByteArray()
 var rects: Array = []          # [Rect2i in px, kind] (the bench's pieces only)
 var spawns: Array[Vector2i] = []   # feet positions
 var torches: Array[Vector2] = []
-var theme := ""                # p4.9: "halloween" for THE HAUNTED HOUSE (the page's look); "nightmare", "barn"
+var theme := ""                # p4.9: "halloween" for THE HAUNTED HOUSE (the page's look); "nightmare", "barn", "table"
 
 func _init(layout: int = BENCH) -> void:
 	id = clampi(layout, 0, LAYOUTS.size() - 1)

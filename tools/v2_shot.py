@@ -198,9 +198,13 @@ else:
     drain(4.0)
     shot("fight2")
 seen = len(console)      # the next --until looks from here (the line after the last one that matched)
+words = {}
 for u in a.until:
     text, _, ds = u.partition("@")
     word = "".join(ch for ch in text.lower() if ch.isalnum()) or "until"
+    words[word] = words.get(word, 0) + 1
+    if words[word] > 1:
+        word += str(words[word])     # the same line asked for again: round, round2, round3...
     t_end = time.time() + a.until_timeout
     while time.time() < t_end and not any(text in c for c in console[seen:]):
         drain(0.25)

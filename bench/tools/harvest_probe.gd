@@ -339,6 +339,7 @@ func _rounds(n: int) -> void:
 		s.respawn = false
 		s.powerups = true
 		s.season = "harvest"
+		s.walls_start = 25 * 60      # the purple walls, as the server sets them: they end a round two flying bots would never end
 		s.set_arena(arena)
 		var tally := {"turkeys": 0, "came": 0, "pies": 0, "pied": 0, "dishes": 0, "tricks": 0, "costumes": 0, "pecks": 0, "peck_kills": 0}
 		var inside := 0
