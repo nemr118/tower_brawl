@@ -546,16 +546,23 @@ func _for_you(label_at: Vector2, orb: Vector2, a: float) -> void:
 # p4.18 PIE on your own screen: big blobs of cream that slide down and thin out (k: 1 just
 # hit, 0 gone), and the words. The others are out of sight meanwhile (the smoke rule).
 func _draw_cream_screen(k: float) -> void:
-	var a := clampf(k * 1.6, 0.0, 1.0)
-	draw_rect(Rect2(0, 0, 1920, 1080), Color(1.0, 0.98, 0.94, 0.16 * a))
-	for i in 9:
-		var bx := 150.0 + i * 205.0 + sin(i * 2.3) * 60.0
-		var by := 220.0 + fposmod(i * 371.0, 560.0) + (1.0 - k) * (160.0 + i * 22.0)
-		var br := (150.0 + (i % 3) * 46.0) * (0.55 + 0.45 * k)
-		draw_circle(Vector2(bx, by), br, Color(1.0, 0.99, 0.95, 0.5 * a))
-		draw_circle(Vector2(bx - br * 0.2, by - br * 0.22), br * 0.62, Color(1, 1, 1, 0.45 * a))
-		draw_rect(Rect2(bx - br * 0.16, by, br * 0.32, br * (1.3 + 1.2 * (1.0 - k))), Color(1.0, 0.99, 0.95, 0.42 * a))   # a drip
-	_text_c(Vector2(960, 150), "PIE IN THE FACE!", 44, Color(1.0, 0.85, 0.5, a))
+	var a := clampf(k * 2.4, 0.0, 1.0)       # thick at first; it thins out over the last second
+	draw_rect(Rect2(0, 0, 1920, 1080), Color(1.0, 0.98, 0.94, 0.14 * a))
+	var mine: Dictionary = fighters.get(me, {})
+	var my_at := Vector2(mine["x"] + 18.0, mine["y"] + 31.0) if not mine.is_empty() else Vector2(-9999, -9999)
+	for i in 11:
+		var bx := 90.0 + i * 178.0 + sin(i * 2.3) * 70.0
+		var by := 170.0 + fposmod(i * 371.0, 620.0) + (1.0 - k) * (220.0 + i * 26.0)
+		var br := (140.0 + (i % 3) * 46.0) * (0.5 + 0.5 * k)
+		var c := Vector2(bx, by)
+		if c.distance_to(my_at) < br + 100.0:
+			continue               # never over your own fighter: you can still see where you stand
+		draw_rect(Rect2(bx - br * 0.2, by, br * 0.4, br * (1.25 + 1.5 * (1.0 - k))), Color(0.99, 0.96, 0.88, 0.9 * a))   # a drip
+		draw_circle(c + Vector2(0, br * (1.25 + 1.5 * (1.0 - k))), br * 0.2, Color(0.99, 0.96, 0.88, 0.9 * a))
+		draw_circle(c, br * 1.04, Color(0.9, 0.84, 0.7, 0.9 * a))              # the dollop's shaded edge
+		draw_circle(c, br, Color(1.0, 0.985, 0.93, 0.94 * a))
+		draw_circle(c + Vector2(-br * 0.22, -br * 0.25), br * 0.55, Color(1, 1, 1, 0.9 * a))
+	_text_c(Vector2(960, 300), "PIE IN THE FACE!", 60, Color(0.85, 0.4, 0.1, a))
 
 func _draw_orb(o: Dictionary) -> void:
 	var big: bool = o["big"]
