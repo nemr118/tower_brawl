@@ -425,8 +425,10 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 		if b.get_available_bytes() > 0:      # p4.11 the ghosts
 			for i in b.get_u8():
 				ghosts.append({"seat": b.get_u8(), "x": float(b.get_16()), "y": float(b.get_16()), "flags": b.get_u8()})
-		if b.get_available_bytes() > 0 and b.get_u8() == 1:   # p4.12 the black cat
-			s["pet"] = {"x": float(b.get_16()), "y": float(b.get_16()), "dir": b.get_8(), "gone": b.get_u8()}
+		if b.get_available_bytes() > 0:   # p4.12 the black cat (1); p4.18 the turkey (2)
+			var pk := b.get_u8()
+			if pk != 0:
+				s["pet"] = {"x": float(b.get_16()), "y": float(b.get_16()), "dir": b.get_8(), "gone": b.get_u8(), "kind": pk - 1}
 		if b.get_available_bytes() > 0:                        # a bat swarm
 			var ph := b.get_u8()
 			if ph != 255:
@@ -645,6 +647,8 @@ func _glide(da: Dictionary, db: Dictionary, t: float) -> Dictionary:
 		return db
 	var d := db.duplicate()
 	d["x"] = lerpf(da["x"], db["x"], t)
+	if absf(float(da["y"]) - float(db["y"])) < 60.0:   # p4.18: the turkey hops and falls
+		d["y"] = lerpf(da["y"], db["y"], t)
 	return d
 
 # The network numbers since the last call, for a bench card.

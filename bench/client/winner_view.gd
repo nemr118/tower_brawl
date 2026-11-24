@@ -16,6 +16,7 @@ extends RefCounted
 const Art = preload("res://client/lobby_art.gd")
 const World = preload("res://client/world.gd")
 const Polish = preload("res://client/polish.gd")
+const Season = preload("res://client/season.gd")   # p4.18
 const AwardArt = preload("res://client/award_art.gd")   # p4.13 polish "award_art": a picture on each award card
 const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
@@ -25,6 +26,7 @@ const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17: cell 5 the cro
 const HERO := Vector2(540, 720)   # p4.17: the hero's picture (assets/heroes/hero_<seat>.png), its bottom at the podium's
 
 static var _backdrop: Texture2D = null
+static var _backdrop_name := ""
 static var _hero: Texture2D = null
 static var _hero_seat := -1
 
@@ -45,8 +47,11 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 	var words_y := 230.0 if hero else 280.0   # p4.17: the words a little higher, over the hero's hood
 	# the arena dims (p4.17: or the painted backdrop comes in over it)
 	if Polish.on("winner_backdrop"):
-		if _backdrop == null:
-			_backdrop = load("res://assets/winner_%s.png" % ("spooky" if Art.pick_dress() == "halloween" else "castle"))
+		# p4.18: the season's backdrop (the Harvest: a feast on the terrace)
+		var bn: String = {"halloween": "spooky", "harvest": "harvest"}.get(Art.dress_for(Season.now), "castle")
+		if _backdrop == null or bn != _backdrop_name:
+			_backdrop_name = bn
+			_backdrop = load("res://assets/winner_%s.png" % bn)
 		var bs := Vector2(_backdrop.get_width(), _backdrop.get_height())
 		bs *= maxf(view.size.x / bs.x, view.size.y / bs.y)
 		c.draw_texture_rect(_backdrop, Rect2(view.get_center() - bs * 0.5, bs), false, Color(1, 1, 1, a))

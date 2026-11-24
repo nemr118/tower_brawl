@@ -16,9 +16,12 @@ const ThemeView = preload("res://client/theme_view.gd")
 const EdgesView = preload("res://client/edges_view.gd")
 const BoilerView = preload("res://client/boiler_view.gd")
 const Polish = preload("res://client/polish.gd")         # the polish of 2026-10-25: a switch for each new look piece
+const Season = preload("res://client/season.gd")   # p4.18
 const DressView = preload("res://client/dress_view.gd")  # polish: the castle arenas' dressing (castle_depth, _moss, _ledges, _sconces)
 const BG_FAR_CASTLE := preload("res://assets/bg_castle_far.png")   # polish "castle_backdrop" (tools/gen_dressing.gd)
 const BG_MID_CASTLE := preload("res://assets/bg_castle_mid.png")
+const BG_FAR_AUTUMN := preload("res://assets/bg_autumn_far.png")   # p4.18: the castle arenas' far backdrop in the Harvest season (ComfyUI)
+const LeavesView = preload("res://client/leaves_view.gd")
 const ARROWS2 := preload("res://assets/fx_arrows2.png")           # polish "arrows2"
 const SH_SHAFT2 := preload("res://shaders/shaft2.gdshader")       # polish "shaft_motes": the shafts with dust in them
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
@@ -136,6 +139,7 @@ var aim_pointer := Line2D.new()
 var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while the shot is armed
 var pview                        # p4.9: the power-ups (client/powers_view.gd), every look
 var theme_view                   # p4.9: an arena's holiday look (client/theme_view.gd: THE HAUNTED HOUSE)
+var leaves                       # p4.18: autumn leaves on the castle arenas in the Harvest season (client/leaves_view.gd)
 var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
 var edges                        # p4.11: the arena's shapes stand out (client/edges_view.gd: halo behind, light on top)
 var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd), theme "nightmare"
@@ -198,6 +202,9 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	add_child(bg_mid)
 	theme_view = ThemeView.new()     # p4.9: behind the blocks, in front of the backdrop
 	add_child(theme_view)
+	leaves = LeavesView.new()        # p4.18: the Harvest season's falling leaves, on the castle arenas
+	leaves.set_count(0)
+	add_child(leaves)
 	for i in 3:
 		var sh := Polygon2D.new()
 		var x := 420.0 + i * 540.0
@@ -501,11 +508,21 @@ func _apply_theme() -> void:
 	var new_bg: bool = castle and Polish.on("castle_backdrop")   # polish: the castle arenas' new backdrop
 	bg_far.texture = BG_FAR_CASTLE if new_bg else BG_FAR
 	bg_mid.texture = BG_MID_CASTLE if new_bg else BG_MID
+	# p4.18: in the Harvest season the castle arenas stand under an autumn dusk, and leaves fall
+	var autumn: bool = castle and Season.harvest()
+	if autumn:
+		bg_far.texture = BG_FAR_AUTUMN
+		dark_base = Color(0.46, 0.38, 0.46)
+	if leaves != null:
+		leaves.set_count(([8, 22, 36][clampi(tier, 1, 3) - 1]) if autumn else 0)
 	dark.color = dark_base
 	# p4.11: the backdrop a step dimmer and cooler, the blocks a step brighter: the play
 	# space stands out from what is only scenery (the user: too little contrast)
 	bg_far.modulate = Color(0.62, 0.48, 0.85) if hw else Color(0.66, 0.7, 0.86)
 	bg_mid.modulate = Color(0.56, 0.44, 0.78, 0.9) if hw else Color(0.62, 0.66, 0.82, 0.9)
+	if autumn:
+		bg_far.modulate = Color(1.0, 0.94, 0.9)
+		bg_mid.modulate = Color(0.74, 0.56, 0.5, 0.9)
 	for layer in [tiles_plain, tiles_lit]:
 		layer.modulate = Color(0.98, 0.9, 1.1) if hw else Color(1.12, 1.12, 1.16)
 	var fx_on: bool = parts.get("particles", false)
@@ -526,6 +543,12 @@ func _apply_theme() -> void:
 			move_child(dress, tiles_lit.get_index() + 1)
 	if boiler != null:
 		boiler.set_theme(level)
+
+# p4.18: the season changed (the lobby's SEASON button, or the first seats message): the
+# arena takes its look again.
+func apply_season() -> void:
+	if level != null:
+		_apply_theme()
 
 func _fill_tiles(layer: TileMapLayer) -> void:
 	for cy in level.ROWS:
@@ -962,18 +985,35 @@ func _render_arrows(al: Dictionary) -> void:
 			var kind := int(a["kind"])
 			spr.texture = (ARROWS2 if Polish.on("arrows2") else ARROWS) if kind != P.A_SEED else null   # polish "arrows2"
 			spr.region_enabled = true
-			spr.region_rect = Rect2(0, (P.A_BOMB if kind == P.A_PUMPKIN else kind) * 8, 32, 8)
+			spr.region_rect = Rect2(0, (P.A_BOMB if kind == P.A_PUMPKIN else (P.A_NORMAL if kind == P.A_PIE else kind)) * 8, 32, 8)
 			spr.offset = Vector2(-12, 0)
-			if kind == P.A_PUMPKIN or kind == P.A_SEED:   # p4.12: a pumpkin on the tip, or a glowing seed
+			if kind == P.A_PUMPKIN or kind == P.A_SEED or kind == P.A_PIE:   # p4.12: a pumpkin on the tip, or a glowing seed
+				# p4.18: in the Harvest season the pumpkin is a corn cob and its seeds are popcorn; PIE: a cream pie on the tip
+				var corn: bool = Season.harvest() and kind != P.A_PIE
 				var head := Polygon2D.new()
-				var r := 7.0 if kind == P.A_PUMPKIN else 4.0
+				var r := 7.0 if kind == P.A_PUMPKIN else (8.0 if kind == P.A_PIE else (5.5 if corn else 4.0))
+				var long := 1.9 if corn and kind == P.A_PUMPKIN else 1.2
 				var poly := PackedVector2Array()
 				for q in 10:
-					poly.append(Vector2(cos(TAU * q / 10.0) * r * 1.2, sin(TAU * q / 10.0) * r))
+					poly.append(Vector2(cos(TAU * q / 10.0) * r * long, sin(TAU * q / 10.0) * r * (0.8 if long > 1.5 else 1.0)))
 				head.polygon = poly
-				head.color = Color(1.0, 0.55, 0.1) if kind == P.A_PUMPKIN else Color(1.0, 0.85, 0.35)
-				head.position = Vector2(6, 0) if kind == P.A_PUMPKIN else Vector2.ZERO
+				if kind == P.A_PIE:
+					head.color = Color(0.82, 0.56, 0.26)       # the crust
+				elif corn:
+					head.color = Color(1.0, 0.86, 0.2) if kind == P.A_PUMPKIN else Color(1.0, 0.98, 0.9)
+				else:
+					head.color = Color(1.0, 0.55, 0.1) if kind == P.A_PUMPKIN else Color(1.0, 0.85, 0.35)
+				head.position = Vector2(6, 0) if kind != P.A_SEED else Vector2.ZERO
 				spr.add_child(head)
+				if kind == P.A_PIE:                           # the cream on top
+					var cream := Polygon2D.new()
+					var cp := PackedVector2Array()
+					for q in 10:
+						cp.append(Vector2(cos(TAU * q / 10.0) * 5.6, sin(TAU * q / 10.0) * 5.6))
+					cream.polygon = cp
+					cream.color = Color(1.0, 0.98, 0.93)
+					cream.position = Vector2(7, 0)
+					spr.add_child(cream)
 			var g := Sprite2D.new()   # p4.5: a glow along the arrow while it flies, every look
 			g.texture = HALO
 			g.material = add_mat

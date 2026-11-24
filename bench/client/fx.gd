@@ -228,6 +228,14 @@ func on_event(e: Array) -> void:
 	elif type == P.E_STICK:
 		_burst("debris", pos)
 		_burst("spark", pos, KIND_COLOR[e[3] % KIND_COLOR.size()])
+	elif type == P.E_EXPLODE and (e[4] & 8) != 0:
+		# p4.18 a pie's splat (b has 8): a small white burst, no fire and no scorch
+		var pk := (1.732 if (e[4] & 1) != 0 else 1.0) * 0.6
+		flash(pos, 4.5 * pk, Color(1, 0.97, 0.9), 0.14, true)
+		ring(pos, 230.0 * pk, Color(1.0, 0.96, 0.86), 0.3)
+		ring(pos, 150.0 * pk, Color(1, 1, 1), 0.2)
+		_burst("blast_debris", pos)
+		shake = maxf(shake, 8.0)
 	elif type == P.E_EXPLODE:
 		# b: 1 a BIG arrow's (sim BIG_FX: 3 times the area), 2 a pumpkin's, 4 a seed's (p4.12)
 		var k := (1.732 if (e[4] & 1) != 0 else 1.0) * (0.75 if (e[4] & 2) != 0 else 1.0) * (0.5 if (e[4] & 4) != 0 else 1.0)

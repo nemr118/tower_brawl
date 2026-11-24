@@ -8,12 +8,14 @@ extends Control
 
 const Art = preload("res://client/lobby_art.gd")
 const HALO := preload("res://assets/fx_halo.png")
+const PIE := preload("res://assets/harvest_pie.png")   # p4.18: the Harvest dress: the O of TOWER is a pumpkin pie (ComfyUI)
 const SIZE := 150                # the title's font size
 const BASE := 168.0              # its baseline
 const CX := 960.0
 
 var pal: Dictionary = {}
 var halloween := false
+var harvest := false             # p4.18: the Harvest dress (the O of TOWER is a pumpkin pie)
 var tier := 2
 var t := 0.0
 var fill := _Fill.new()
@@ -60,7 +62,7 @@ func _layout() -> void:
 	var f := Art.DISPLAY
 	parts.clear()
 	pumpkin = Vector2.ZERO
-	if halloween:
+	if halloween or harvest:
 		var wt := f.get_string_size("T", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x
 		var wo := f.get_string_size("O", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x * 1.12
 		var wr := f.get_string_size("WER BRAWL", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x
@@ -76,8 +78,8 @@ func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	t += delta
-	if halloween:
-		queue_redraw()   # the pumpkin's face flickers
+	if halloween or harvest:
+		queue_redraw()   # the pumpkin's face flickers; the pie rocks
 
 # Behind the letters: the glow, the shadow, the dark edge and the rim; the ribbon.
 func _draw() -> void:
@@ -94,7 +96,12 @@ func _draw() -> void:
 		draw_string_outline(f, Vector2(p[1], BASE), p[0], HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE, 20, pal["logo_edge"])
 	for p in parts:
 		draw_string_outline(f, Vector2(p[1], BASE), p[0], HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE, 9, pal["logo_rim"])
-	if pumpkin.y > 0.0:
+	if pumpkin.y > 0.0 and harvest:      # p4.18: a pumpkin pie, rocking a little
+		var pw := pumpkin.y * 1.06
+		draw_set_transform(Vector2(pumpkin.x, BASE - SIZE * 0.36), sin(t * 1.3) * 0.07, Vector2.ONE)
+		draw_texture_rect(PIE, Rect2(-pw * 0.5, -pw * 0.5, pw, pw), false)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	elif pumpkin.y > 0.0:
 		_pumpkin(Vector2(pumpkin.x, BASE - SIZE * 0.36), pumpkin.y)
 	_ribbon(str(pal["tagline"]))
 

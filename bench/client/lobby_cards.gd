@@ -429,7 +429,7 @@ func _words(n: Control, xfs: Array) -> void:
 	# p4.17: the award's picture in a round badge beside the fighter (polish "award_badges")
 	if Polish.on("award_badges"):
 		for i in N:
-			if views[i].is_empty() or not views[i].has("award") or not AwardArt.ORDER.has(str(views[i]["award"][0])):
+			if views[i].is_empty() or not views[i].has("award") or not AwardArt.has(str(views[i]["award"][0])):
 				continue
 			_at(n, xfs[i])
 			var bc := Vector2(W * 0.5 - 38.0, FEET - 52.0)

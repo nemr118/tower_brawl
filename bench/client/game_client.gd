@@ -38,10 +38,12 @@ const Sticks = preload("res://client/touch_sticks.gd")
 const Predict = preload("res://client/predict.gd")
 const Present = preload("res://client/present.gd")
 const PV = preload("res://client/powers_view.gd")
+const Season = preload("res://client/season.gd")   # p4.18
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
 const CONTROLS_KEY := "towerbrawl_v2_controls"   # p4.16: CLASSIC or BUTTONS, kept on the device
+const HOWTO_KEY := "towerbrawl_v2_howto"         # p4.18: "1" once this device has seen HOW TO PLAY
 const LOOKS := ["low", "normal", "high"]
 const LOOK_TIER := {"low": 1, "normal": 2, "high": 3}
 const PICKS := ["auto", "low", "normal", "high"]   # p4.6: the LOOK button; a picked look is kept, AUTO steps down
@@ -78,6 +80,8 @@ var direct_url := ""     # p4.13: the game server's own address (wss://host:8091
 var ever_open := false   # the socket has opened at least once on server_url
 var version_bad := false
 var auto_join := false
+var tv := false                   # p4.18 ?tv: THE BIG SCREEN (a TV: the match full screen, a QR code to join in the lobby)
+var tv_asked := false
 var auto_start := false
 var start_sent := false
 var bots_sent := false
@@ -167,6 +171,7 @@ func _ready() -> void:
 	lobby.arena_picked.connect(func(n): net.send({"kind": "arena", "n": n}))   # 2026-10-26: a card in the picker
 	lobby.bot_level_pressed.connect(_on_bot_level)
 	lobby.power_pressed.connect(_on_power)
+	lobby.season_picked.connect(func(pick): net.send({"kind": "season", "pick": pick}))   # p4.18
 	lobby.set_look(str(opts["look"]) if look_test else _look_label())
 	sticks = Sticks.new()
 	sticks.pump = str(opts.get("stick", "")) != "old"
@@ -189,6 +194,9 @@ func _ready() -> void:
 		_storage_set(TOKEN_KEY, token)
 	lobby.set_name_text(my_name)
 	auto_join = opts.has("join")
+	tv = opts.has("tv")            # p4.18 THE BIG SCREEN: this page only watches
+	if tv:
+		auto_join = false
 	auto_start = opts.has("start")
 	server_url = str(opts.get("server", ""))
 	if server_url == "":
@@ -289,8 +297,9 @@ func _process(delta: float) -> void:
 			if e[0] == P.E_PU_GET and e[3] == my_seat:
 				hud.power_banner(e[4])   # p4.9: you took a power-up: what it is and what it does
 			elif e[0] == P.E_TRICK and e[3] == my_seat and e[4] > 0 and e[4] < 4:   # p4.12: a trick: the small card
-				hud.power_banner(P.PU_TRICK, ["", "PUMPKIN HEAD", "BACKWARDS", "TINY"][e[4]], ["", "no shooting", "left is right!", "so small"][e[4]],
-					PV.TRICK_ICON + e[4] - 1)
+				hud.power_banner(P.PU_TRICK, P.trick_name(e[4], Season.now), P.TRICK_TIPS[e[4]], PV.TRICK_ICON + e[4] - 1)
+			elif e[0] == P.E_CATCH_UP and e[3] == my_seat:   # p4.18: far behind: you start with a SHIELD
+				hud.power_banner(P.PU_SHIELD, "SHIELD", "a head start: you're behind")
 			elif e[0] == P.E_GHOST and e[3] == my_seat:
 				hud.say("GHOST: fly anywhere, let go of shoot to BOO", 5.0)
 		world.set_me(my_seat, phase)
@@ -352,6 +361,8 @@ func _process(delta: float) -> void:
 	if sticks.active != lobby.phone:
 		lobby.set_phone(sticks.active)
 	var show_lobby: bool = my_seat < 0 or phase < 0 or phase <= P.PH_COUNTDOWN or not connected
+	if tv:                        # THE BIG SCREEN has no seat: it shows every match
+		show_lobby = phase < 0 or phase <= P.PH_COUNTDOWN or not connected
 	_watch_frames(not show_lobby and phase >= P.PH_ROUND_START)
 	hud.update(seats_msg, s, my_seat, delta, fps_now, net.last_rtt, opts.has("info"), show_lobby)
 	lobby.visible = show_lobby
@@ -607,7 +618,12 @@ func _on_phase(new_phase: int, s: Dictionary) -> void:
 
 func _on_message(m: Dictionary) -> void:
 	var kind := str(m.get("kind", ""))
-	if kind == "welcome":
+	if kind == "tv":
+		lobby.set_tv(m.get("urls", []), m.get("qr", []))
+	elif kind == "welcome":
+		if tv and not tv_asked:
+			tv_asked = true
+			net.send({"kind": "tv"})
 		my_seat = int(m.get("seat", -1))
 		if pred.seat != my_seat:
 			pred.seat = my_seat
@@ -616,6 +632,10 @@ func _on_message(m: Dictionary) -> void:
 			auto_join = false
 			_on_join(my_name)
 		elif my_seat >= 0:
+			# p4.18: this device's first seat ever: HOW TO PLAY opens by itself (not for the tests' pages: ?join, ?nohowto)
+			if _storage_get(HOWTO_KEY) != "1" and not opts.has("join") and not opts.has("nohowto") and phase <= P.PH_COUNTDOWN:
+				_storage_set(HOWTO_KEY, "1")
+				lobby.open_howto()
 			if opts.has("bots") and not bots_sent:
 				bots_sent = true
 				net.send({"kind": "bots", "n": int(opts["bots"])})
@@ -633,6 +653,12 @@ func _on_message(m: Dictionary) -> void:
 		_say(str(m.get("text", "")), 4.0)
 	elif kind == "seats":
 		seats_msg = m
+		if m.has("season") and str(m["season"]) != Season.now:   # p4.18: the server's season dresses the page
+			Season.now = str(m["season"])
+			print("🎮 [Season] %s" % P.SEASON_LABEL.get(Season.now, "NONE"))
+			_on_season()
+		elif str(m.get("season_pick", "auto")) != lobby.season_pick:
+			_on_season()       # the same season under another pick (AUTO to HARVEST in November): the button's words
 		var seat_names: Array = []
 		for st in m.get("seats", []):
 			seat_names.append(str(st.get("name", "")))
@@ -657,6 +683,13 @@ func _on_message(m: Dictionary) -> void:
 func _say(text: String, secs: float) -> void:
 	status = text
 	status_t = secs
+
+# p4.18: the season changed (the first seats message, or the lobby's SEASON button): the
+# lobby and the banners take its dress.
+func _on_season() -> void:
+	lobby.set_season(Season.now, str(seats_msg.get("season_pick", "auto")))
+	hud.set_season(Season.now)
+	world.apply_season()
 
 func _on_join(name: String) -> void:
 	my_name = name.strip_edges().substr(0, 12)

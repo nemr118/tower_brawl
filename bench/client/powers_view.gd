@@ -14,6 +14,8 @@ const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const GhostfaceScript = preload("res://client/ghostface.gd")
 const Polish = preload("res://client/polish.gd")
+const Season = preload("res://client/season.gd")   # p4.18: the season's names and pictures
+const HV = preload("res://client/harvest_view.gd") # p4.18: the Harvest season's pictures
 const ICONS2 := preload("res://assets/pu_icons.png")   # p4.13 polish "icons2": ComfyUI's power-up pictures (64 px a cell, kind - 1)
 const TRICKS2 := preload("res://assets/trick_icons.png")   # 2026-10-26 polish "trick_art": the candy tricks' badges (64 px a cell)
 const TRICK_ICON := 100           # the tricks' icon kinds (the page's own, never sent): + 0 PUMPKIN HEAD, + 1 BACKWARDS, + 2 TINY; GHOSTFACE is P.PU_MASK
@@ -23,7 +25,7 @@ const COLORS := {P.PU_FIRE: Color(1.0, 0.55, 0.15), P.PU_BOMB: Color(1.0, 0.32, 
 	P.PU_RAIN: Color(0.45, 0.65, 1.0), P.PU_INVIS: Color(0.85, 0.85, 1.0), P.PU_FREEZE: Color(0.6, 0.9, 1.0),
 	P.PU_SPIKES: Color(1.0, 0.72, 0.3), P.PU_SPEED: Color(1.0, 0.95, 0.35),
 	P.PU_TRICK: Color(0.85, 0.5, 1.0), P.PU_PUMPKIN: Color(1.0, 0.55, 0.1), P.PU_BATS: Color(0.62, 0.45, 0.85),
-	P.PU_MASK: Color(0.96, 0.96, 1.0)}
+	P.PU_MASK: Color(0.96, 0.96, 1.0), P.PU_PIE: Color(1.0, 0.9, 0.72)}
 const GOLD := Color(1.0, 0.82, 0.25)
 const BOLT_COL := Color(0.62, 0.78, 1.0)
 const ZAP_S := 1.8                 # the electricity runs through a body this long
@@ -56,6 +58,9 @@ var up_at := {}                    # seat -> when it got back up
 var hearts: Array = []             # [pos, secs left]: hearts rising from a petted cat
 var candy_pops: Array = []         # p4.13 a candy opened: {pos, left, seat, word, icon, trick, at}
 var confetti: Array = []           # [pos, vel, colour, secs left, spin]: a candy's wrapper bits
+var pied := {}                     # p4.18 PIE: seat -> when (t) it was covered in cream
+const PIED_S := SimScript.PIED_TICKS / 60.0
+const FEATHER_COLS := [Color(0.55, 0.3, 0.12), Color(0.95, 0.5, 0.1), Color(0.85, 0.2, 0.1), Color(0.98, 0.8, 0.25), Color(1, 1, 1)]
 const CANDY_POP_S := 1.8
 const CANDY_COLS := [Color(1.0, 0.55, 0.12), Color(0.62, 0.3, 0.95), Color(0.5, 0.95, 0.4), Color(1.0, 0.45, 0.75), Color(1, 1, 1)]
 
@@ -200,10 +205,10 @@ func on_event(e: Array) -> void:
 		var col: Color = COLORS.get(k, Color.WHITE)
 		var cp := _candy_pop_for(int(e[3]))
 		if not cp.is_empty() and (cp["word"] == "TREAT" or k == P.PU_MASK):
-			cp["word"] = str(P.PU_SHORT.get(k, ""))   # p4.13: a candy's treat: its big badge shows it, no small one
+			cp["word"] = P.pu_short(k, Season.now)   # p4.13: a candy's treat: its big badge shows it, no small one
 			cp["icon"] = k
 			return
-		_pop(pos + Vector2(0, -36), P.PU_SHORT.get(k, ""), col, 1.6, P.is_big(k) or k == P.PU_MASK, k)
+		_pop(pos + Vector2(0, -36), P.pu_short(k, Season.now), col, 1.6, P.is_big(k) or k == P.PU_MASK, k)
 		rings.append([pos + Vector2(0, 30), 110.0 if P.is_big(k) or k == P.PU_MASK else 80.0, col, 0.4, 0.4])
 		world.fx.flash(pos + Vector2(0, 30), 4.0, col, 0.25, true)
 	elif type == P.E_SHIELD_POP:
@@ -235,7 +240,7 @@ func on_event(e: Array) -> void:
 			cp = _new_candy_pop(pos, int(e[3]))
 		var b: int = e[4]
 		cp["trick"] = b > 0 and b < 4
-		cp["word"] = ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"][clampi(b, 0, 4)]
+		cp["word"] = P.trick_name(b, Season.now)
 		cp["icon"] = [P.PU_TRICK, TRICK_ICON, TRICK_ICON + 1, TRICK_ICON + 2, P.PU_MASK][clampi(b, 0, 4)]
 	elif type == P.E_CANDY_DROP:  # p4.13 a candy out of a body, or from the sky
 		rings.append([pos, 44.0, COLORS[P.PU_TRICK], 0.3, 0.3])
@@ -249,14 +254,42 @@ func on_event(e: Array) -> void:
 			confetti.append([pos, Vector2.from_angle(ang) * randf_range(180.0, 420.0) + Vector2(0, -160.0),
 				CANDY_COLS[i % CANDY_COLS.size()], randf_range(0.7, 1.1), randf() * TAU])
 	elif type == P.E_CAT_COME:   # the black cat shows up (its own PET ME tag says the rest)
-		rings.append([pos + Vector2(0, -14), 60.0, Color(0.75, 0.6, 1.0), 0.4, 0.4])
+		if e[3] == 1:            # p4.18: the turkey
+			rings.append([pos + Vector2(0, -20), 80.0, Color(1.0, 0.7, 0.25), 0.5, 0.5])
+			_pop(pos + Vector2(0, -60), "GOBBLE GOBBLE", Color(1.0, 0.85, 0.4), 1.4, true)
+		else:
+			rings.append([pos + Vector2(0, -14), 60.0, Color(0.75, 0.6, 1.0), 0.4, 0.4])
+	elif type == P.E_PET and e[4] == 1:   # p4.18: someone caught the turkey: feathers fly (its power-up's own pop follows)
+		_pop(pos + Vector2(0, -44), "GOT IT!", Color(1.0, 0.85, 0.4), 1.2, true)
+		rings.append([pos, 110.0, Color(1.0, 0.7, 0.25), 0.45, 0.45])
+		world.fx.flash(pos, 4.0, Color(1.0, 0.8, 0.4), 0.25, true)
+		for i in 18:
+			var ang := TAU * i / 18.0 + randf() * 0.3
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(140.0, 380.0) + Vector2(0, -200.0),
+				FEATHER_COLS[i % FEATHER_COLS.size()], randf_range(0.8, 1.3), randf() * TAU])
 	elif type == P.E_PET:        # someone petted it
 		_pop(pos + Vector2(0, -10), "PURR", Color(1.0, 0.6, 0.8), 1.3, false, P.PU_SHIELD)
 		hearts.append([pos, 1.2])
 		rings.append([pos, 70.0, Color(1.0, 0.6, 0.8), 0.4, 0.4])
+	elif type == P.E_PIE:        # p4.18: a pie splats: the cream's reach as a white ring
+		var pr: float = SimScript.PIE_R * (SimScript.BIG_FX if e[4] == 1 else 1.0)
+		rings.append([pos, pr, Color(1.0, 0.97, 0.9, 0.9), 0.5, 0.5])
+		for i in 14:
+			var ang := TAU * i / 14.0 + randf() * 0.4
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(200.0, 520.0) + Vector2(0, -120.0), Color(1.0, 0.98, 0.93),
+				randf_range(0.5, 0.9), randf() * TAU])
+	elif type == P.E_PIED:       # covered in cream (your own screen gets the splat: _draw)
+		pied[int(e[3])] = t
+		_pop(pos + Vector2(0, -30), "SPLAT!", Color(1.0, 0.97, 0.9), 1.0, true)
+	elif type == P.E_CATCH_UP:   # far behind: a SHIELD from the start
+		rings.append([pos + Vector2(0, 30), 80.0, COLORS[P.PU_SHIELD], 0.5, 0.5])
+		_pop(pos + Vector2(0, -36), "HEAD START", COLORS[P.PU_SHIELD], 1.6, false, P.PU_SHIELD)
 	elif type == P.E_BATS:       # a swarm screeches at the edge it comes in from
 		var at := Vector2(clampf(pos.x, 120.0, 1800.0), pos.y)
-		_pop(at, "", Color(0.8, 0.65, 1.0), 1.3, true, P.PU_BATS)
+		if world != null and world.level != null and world.level.theme == "barn":   # p4.18: the barn's gust of leaves
+			_pop(at, "WIND!", Color(1.0, 0.85, 0.5), 1.3, true)
+		else:
+			_pop(at, "", Color(0.8, 0.65, 1.0), 1.3, true, P.PU_BATS)
 	elif type == P.E_GHOST:      # p4.11: a ghost rises from its body
 		rings.append([pos, 60.0, Color(0.85, 0.9, 1.0, 0.8), 0.5, 0.5])
 	elif type == P.E_BOO:
@@ -291,7 +324,10 @@ func _draw() -> void:
 		if seat != me and gf["state"] != P.F_DEAD and (hid or blind):
 			continue
 		var gtc: Color = team[seat % team.size()] if team.size() > 0 else Color.WHITE
-		GhostfaceScript.draw(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0), down_at.get(seat, -9.0), up_at.get(seat, -9.0))
+		if Season.harvest():      # p4.18: THE BIG TURKEY
+			HV.big_turkey(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0))
+		else:
+			GhostfaceScript.draw(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0), down_at.get(seat, -9.0), up_at.get(seat, -9.0))
 		if (int(powers[seat]["mask"]) & 2) != 0 and gf["state"] != P.F_DEAD:   # down: a ring counts its 2 seconds
 			var rc := Vector2(gf["x"] + 18.0, gf["y"] + 40.0)
 			var left := clampf(1.0 - (t - down_at.get(seat, t)) / (SimScript.MASK_DOWN / 60.0), 0.0, 1.0)
@@ -353,7 +389,10 @@ func _draw() -> void:
 				_text_c(at + Vector2(0, r + 18.0), p[1], 17 if p[5] else 15, Color(col.lerp(Color.WHITE, 0.4), a))
 		else:
 			_text_c(at, p[1], 22 if p[5] else 18, Color(col, a))
-	if blind:
+	var cream_k := clampf(1.0 - (t - float(pied.get(me, -99.0))) / PIED_S, 0.0, 1.0)
+	if blind and cream_k > 0.0:
+		_draw_cream_screen(cream_k)   # p4.18 PIE: cream over your own screen, sliding off
+	elif blind:
 		draw_rect(Rect2(0, 0, 1920, 1080), Color(0.5, 0.52, 0.58, 0.32))
 		var mine: Dictionary = fighters.get(me, {})
 		if not mine.is_empty():   # in the smoke: a closed eye over your head (you can't see anyone)
@@ -368,6 +407,9 @@ func _draw() -> void:
 # glow; resting it bobs and wiggles, falling it spins (from the sky: sparkles above it);
 # it blinks in its last 2 seconds.
 func _draw_candy(cd: Dictionary) -> void:
+	if Season.harvest():      # p4.18: a covered dish
+		HV.dish(self, cd, t)
+		return
 	var rest: bool = (int(cd["flags"]) & 1) != 0
 	var a := 1.0
 	if int(cd["life"]) < 120 and int(t * 8.0) % 2 == 0:
@@ -432,7 +474,7 @@ func _draw_candy_pop(cp: Dictionary) -> void:
 	var icon: int = cp["icon"]
 	draw_circle(at, r, Color(disc(COLORS.get(P.PU_TRICK if icon >= TRICK_ICON else icon, Color.WHITE)), a))
 	draw_icon(self, at, icon, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
-	var top := "TRICK!" if cp["trick"] else ("BOO!" if icon == P.PU_MASK else "TREAT!")
+	var top := "TRICK!" if cp["trick"] else (("GOBBLE!" if Season.harvest() else "BOO!") if icon == P.PU_MASK else "TREAT!")
 	_text_c(at + Vector2(0, -r - 12.0), top, 16, Color(1.0, 0.75, 0.3, a))
 	if str(cp["word"]) != "":
 		_text_c(at + Vector2(0, r + 24.0), str(cp["word"]), 20, Color(1.0, 0.95, 0.85, a))
@@ -471,8 +513,46 @@ func _draw_warning(o: Dictionary) -> void:
 	if big:   # a gold ring, and the name of the one it is for, small
 		draw_arc(ic, 28.0, 0.0, TAU, 28, Color(GOLD, a * (0.6 + 0.4 * pulse)), 3.0)
 		var who := int(o.get("for", 255))
-		if who >= 0 and who < names.size() and str(names[who]) != "":
+		if who == me and me >= 0:     # p4.18: yours: said big, with arrows from your fighter
+			_for_you(ic + Vector2(0, -40.0), c, a)
+		elif who >= 0 and who < names.size() and str(names[who]) != "":
 			_text_c(ic + Vector2(0, -38.0), "for " + str(names[who]), 16, Color(GOLD, a))
+
+# p4.18 a BIG power-up that came for you (the October logs: 60% of them were never taken;
+# nothing said whose they were): FOR YOU over it, pulsing, and three gold arrowheads
+# running from your fighter towards it (the short way, through the wrap).
+func _for_you(label_at: Vector2, orb: Vector2, a: float) -> void:
+	var pulse := 0.75 + 0.25 * sin(t * 9.0)
+	_text_c(label_at, "FOR YOU", 24, Color(GOLD.lerp(Color.WHITE, 0.3), a * pulse))
+	var mine: Dictionary = fighters.get(me, {})
+	if mine.is_empty() or mine["state"] == P.F_DEAD:
+		return
+	var from := Vector2(mine["x"] + 18.0, mine["y"] + 31.0)
+	var d := Vector2(SimScript.wrap_d(from.x, orb.x, 1920.0), SimScript.wrap_d(from.y, orb.y, 1080.0))
+	var dist := d.length()
+	if dist < 150.0:
+		return
+	var u := d / dist
+	var v := Vector2(-u.y, u.x)
+	for i in 3:
+		var k := fmod(t * 1.4 + i / 3.0, 1.0)
+		var at := from + u * (70.0 + k * minf(180.0, dist - 110.0))
+		draw_colored_polygon(PackedVector2Array([at + u * 13.0, at - u * 7.0 + v * 10.0, at - u * 2.0, at - u * 7.0 - v * 10.0]),
+			Color(GOLD, a * (1.0 - k) * 0.95))
+
+# p4.18 PIE on your own screen: big blobs of cream that slide down and thin out (k: 1 just
+# hit, 0 gone), and the words. The others are out of sight meanwhile (the smoke rule).
+func _draw_cream_screen(k: float) -> void:
+	var a := clampf(k * 1.6, 0.0, 1.0)
+	draw_rect(Rect2(0, 0, 1920, 1080), Color(1.0, 0.98, 0.94, 0.16 * a))
+	for i in 9:
+		var bx := 150.0 + i * 205.0 + sin(i * 2.3) * 60.0
+		var by := 220.0 + fposmod(i * 371.0, 560.0) + (1.0 - k) * (160.0 + i * 22.0)
+		var br := (150.0 + (i % 3) * 46.0) * (0.55 + 0.45 * k)
+		draw_circle(Vector2(bx, by), br, Color(1.0, 0.99, 0.95, 0.5 * a))
+		draw_circle(Vector2(bx - br * 0.2, by - br * 0.22), br * 0.62, Color(1, 1, 1, 0.45 * a))
+		draw_rect(Rect2(bx - br * 0.16, by, br * 0.32, br * (1.3 + 1.2 * (1.0 - k))), Color(1.0, 0.99, 0.95, 0.42 * a))   # a drip
+	_text_c(Vector2(960, 150), "PIE IN THE FACE!", 44, Color(1.0, 0.85, 0.5, a))
 
 func _draw_orb(o: Dictionary) -> void:
 	var big: bool = o["big"]
@@ -494,6 +574,8 @@ func _draw_orb(o: Dictionary) -> void:
 		for i in 8:
 			var a0 := t * 1.5 + i * TAU / 8.0
 			draw_arc(c, r + 12.0, a0, a0 + 0.45, 6, Color(GOLD, a), 5.0)
+		if int(o.get("for", 255)) == me and me >= 0:
+			_for_you(c + Vector2(0, -r - 22.0), c, a)
 
 # A picture of each power-up (the web font has no symbols), moving so it reads at a
 # glance: the flame flickers, the bomb's fuse sparks, poison bubbles, smoke drifts,
@@ -502,10 +584,25 @@ func _draw_orb(o: Dictionary) -> void:
 # snowflake turns, the spikes bob, the bolt flashes. ci: any canvas; tt: seconds.
 # The disc behind a power-up's picture: its colour, darker; with ComfyUI's colour pictures
 # (polish "icons2") much darker, so the picture stands out.
+# The power-up an arrow kind came from (0: a plain arrow): the first four share their
+# numbers; p4.12 PUMPKIN BOMBS, p4.18 PIE.
+static func arrow_power(kind: int) -> int:
+	if kind >= P.A_FIRE and kind <= P.A_SMOKE:
+		return kind
+	if kind == P.A_PUMPKIN:
+		return P.PU_PUMPKIN
+	if kind == P.A_PIE:
+		return P.PU_PIE
+	return 0
+
 static func disc(col: Color) -> Color:
 	return col.darkened(0.62) if Polish.on("icons2") else col.darkened(0.25)
 
 static func draw_icon(ci: CanvasItem, c: Vector2, kind: int, s: float, col: Color, tt: float) -> void:
+	var hc := HV.icon_cell(kind, TRICK_ICON, Season.harvest())   # p4.18: PIE's badge, and the Harvest season's own
+	if hc >= 0:
+		HV.icon(ci, c, hc, s, col.a, tt)
+		return
 	if kind >= TRICK_ICON or kind == P.PU_MASK:   # 2026-10-26: a candy trick's badge (and GHOSTFACE's), bobbing like the others
 		if Polish.on("trick_art"):
 			var cell := 3 if kind == P.PU_MASK else clampi(kind - TRICK_ICON, 0, 2)
@@ -673,7 +770,9 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 			var k := fmod(t * 1.3 + i * 0.5, 1.0)
 			var p := top + Vector2(-12.0 + i * 24.0, 6.0 + 30.0 * k)
 			draw_circle(p, 4.0, Color(0.55, 0.75, 1.0, (1.0 - k) * a))
-	if (bits & P.PW_PUMPKIN) != 0:      # p4.12 the pumpkin trick: a hopping jack-o'-lantern instead of the body
+	if (bits & P.PW_PUMPKIN) != 0 and Season.harvest():   # p4.18 TURKEY TIME: a hopping turkey instead of the body
+		HV.trick_turkey(self, f, tc, a, t)
+	elif (bits & P.PW_PUMPKIN) != 0:      # p4.12 the pumpkin trick: a hopping jack-o'-lantern instead of the body
 		var pc := c + Vector2(0, 6)
 		draw_circle(pc, 30.0, Color(0.6, 0.28, 0.05, a))
 		draw_circle(pc, 26.0, Color(1.0, 0.55, 0.1, a))
@@ -690,7 +789,7 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 	var badges: Array = []
 	var pkind := int(pw["kind"])
 	if pkind > 0:
-		badges.append(pkind if pkind <= P.PU_SMOKE else (P.PU_PUMPKIN if pkind == P.A_PUMPKIN else P.PU_FIRE))
+		badges.append(arrow_power(pkind) if arrow_power(pkind) > 0 else P.PU_FIRE)
 	if (bits & P.PW_INF) != 0:
 		badges.append(P.PU_INF)
 	if (bits & P.PW_BIG) != 0:
@@ -706,6 +805,10 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 # p4.12 the black cat: walking its floor (legs, a curled tail, green eyes), PET ME over it;
 # running off when petted (it fades).
 func _draw_pet(pd: Dictionary) -> void:
+	if int(pd.get("kind", 0)) == 1:     # p4.18: the turkey (it is off the floor when its feet are not on a cell's line)
+		var off := fposmod(float(pd["y"]), 30.0)
+		HV.pet(self, pd, t, off > 1.0 and off < 29.0, font)
+		return
 	var feet := Vector2(pd["x"], pd["y"])
 	var dir := float(pd["dir"])
 	var gone := int(pd.get("gone", 0))
@@ -775,6 +878,9 @@ func _draw_swarm(bd: Dictionary) -> void:
 	var y: float = bd["y"]
 	var dir := float(bd["dir"])
 	var h: float = SimScript.BATS_H
+	if world != null and world.level != null and world.level.theme == "barn":   # p4.18: a gust of leaves
+		HV.gust(self, int(bd["phase"]), float(bd.get("x", 0.0)), y, dir, SimScript.BATS_W, h, t)
+		return
 	if int(bd["phase"]) == 0:
 		var ex := 40.0 if dir > 0 else 1880.0
 		draw_rect(Rect2(0, y - h * 0.5, 1920, h), Color(0.35, 0.2, 0.5, 0.08 + 0.06 * sin(t * 20.0)))
@@ -799,7 +905,10 @@ func _draw_circling_bats(f: Dictionary, seat: int) -> void:
 	for i in 10:
 		var ang := t * 3.0 + i * TAU / 10.0 + seat
 		var p := c + Vector2(cos(ang) * (50.0 + 8.0 * sin(t * 4.0 + i)), sin(ang) * 40.0)
-		_bat(p, 1.05, t * 18.0 + i, Color(0.04, 0.02, 0.07, 0.95))
+		if Season.harvest():      # p4.18: CROWS
+			HV.crow(self, p, 1.0, t * 18.0 + i, 0.97)
+		else:
+			_bat(p, 1.05, t * 18.0 + i, Color(0.04, 0.02, 0.07, 0.95))
 
 # A ghost cat (the user's daughter's idea): a pale glowing cat with big green eyes
 # and a wavy ghost's tail instead of legs, outlined so it shows on the dark arena,

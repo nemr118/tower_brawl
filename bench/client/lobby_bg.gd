@@ -4,11 +4,14 @@
 # and in the Halloween dress bats and a lightning flash now and then. LOW keeps
 # it cheap: one mist layer, a few embers, two bats, no lightning.
 # It covers the whole window (lobby.gd sets its rect from fit()).
+# p4.18 the Harvest dress: no bats or lightning; autumn leaves fall and turn
+# (LOW 6, NORMAL 16, HIGH 26).
 extends Control
 
 var pal: Dictionary = {}
 var tier := 2                    # 1 LOW, 2 NORMAL, 3 HIGH (the page's look)
 var halloween := false
+var harvest := false             # p4.18: the Harvest dress: falling leaves
 var t := 0.0
 var fade := 1.0                  # 0..1: the lobby fading in (lobby.gd)
 var flash := 0.0
@@ -118,6 +121,8 @@ func _draw() -> void:
 	# the far mist, behind the seat cards
 	if layers > 1:
 		_mist(w, 470.0, 150.0, 0.45, 9.0, 0.7, Color(mist, mist.a * 0.6 * a))
+	if harvest:
+		_leaves(w, h)
 	if halloween:
 		var n := 2 if tier <= 1 else (5 if tier == 2 else 7)
 		for i in n:
@@ -128,6 +133,22 @@ func _draw() -> void:
 	_mist(w, 770.0, 120.0, 0.9, 16.0, 1.0, Color(mist, mist.a * a))
 	if layers > 1:
 		_mist(w, 930.0, 90.0, 1.6, 26.0, 1.3, Color(mist, mist.a * 1.2 * a))
+
+# p4.18 falling leaves: each drifts down, sways and turns; orange, red and gold.
+const LEAF_COLS := [Color(0.95, 0.5, 0.1), Color(0.85, 0.22, 0.1), Color(0.98, 0.78, 0.2), Color(0.7, 0.3, 0.08)]
+func _leaves(w: float, h: float) -> void:
+	var n := 6 if tier <= 1 else (16 if tier == 2 else 26)
+	for i in n:
+		var sp := 38.0 + (i % 5) * 13.0
+		var x := fposmod(i * 263.0 + sin(t * 0.7 + i * 1.7) * 60.0 + t * (10.0 + i % 3 * 6.0), w + 80.0) - 40.0
+		var y := fposmod(i * 149.0 + t * sp, h + 80.0) - 40.0
+		var s := 1.0 + (i % 4) * 0.25
+		var col: Color = LEAF_COLS[i % LEAF_COLS.size()]
+		draw_set_transform(Vector2(x, y), t * (0.8 + (i % 3) * 0.5) + i, Vector2(s, s * (0.55 + 0.45 * sin(t * 2.0 + i))))
+		draw_colored_polygon(PackedVector2Array([Vector2(-11, 0), Vector2(-4, -6), Vector2(6, -5), Vector2(13, 0), Vector2(6, 5), Vector2(-4, 6)]),
+			Color(col, 0.85 * fade))
+		draw_line(Vector2(-11, 0), Vector2(11, 0), Color(col.darkened(0.45), 0.8 * fade), 1.5)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # A band of mist: its top edge waves and fades out, the bottom is thickest.
 func _mist(w: float, y: float, depth: float, speed: float, wave: float, freq: float, col: Color) -> void:

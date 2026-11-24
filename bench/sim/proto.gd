@@ -89,6 +89,7 @@ const A_MIASMA := 3
 const A_SMOKE := 4        # a thick smoke cloud: no damage, bots cannot see through it
 const A_PUMPKIN := 5      # p4.12 PUMPKIN BOMBS: a smaller blast, then 5 seeds fly out and pop
 const A_SEED := 6         # a pumpkin's seed: it pops in a small blast on a wall, a fighter, or after a moment
+const A_PIE := 7          # p4.18 PIE: it splats where it lands: a small blast, cream on everyone near
 const S_FLY := 0
 const S_FALL := 1
 const S_STUCK := 2
@@ -123,13 +124,15 @@ const PU_PUMPKIN := 16     # PUMPKIN BOMBS (BOMB ARROWS' Halloween twin, on THE 
 const PU_BATS := 17        # BIG: a bat swarm circles you 8 s, knocks arrows away and hides you
 const PU_MASK := 18        # GHOSTFACE, from TRICK OR TREAT (the user's daughter's favourite): no bow this round,
                            # a knife swing instead; a hit knocks you down 2 s, a hit while down is the end
+const PU_PIE := 19        # p4.18 the Harvest season: every arrow is a cream pie: a small blast, and whoever is near the
+                           # splat is covered in cream PIED_TICKS (they see nobody, like in smoke); an arrow kind, all match
 const PU_NAMES := {1: "FIRE ARROWS", 2: "BOMB ARROWS", 3: "POISON ARROWS", 4: "SMOKE ARROWS", 5: "SHIELD",
 	6: "INFINITE ARROWS", 7: "FLYING", 8: "BIG ARROWS", 9: "GHOST CATS", 10: "RAIN", 11: "INVISIBLE",
 	12: "FREEZE", 13: "SPIKED SHIELD", 14: "SUPER SPEED", 15: "TRICK OR TREAT", 16: "PUMPKIN BOMBS", 17: "BAT SWARM",
-	18: "GHOSTFACE"}
+	18: "GHOSTFACE", 19: "PIE"}
 const PU_SHORT := {1: "FIRE", 2: "BOMB", 3: "POISON", 4: "SMOKE", 5: "SHIELD", 6: "INFINITE", 7: "FLY", 8: "BIG",
 	9: "CATS", 10: "RAIN", 11: "INVISIBLE", 12: "FREEZE", 13: "SPIKES", 14: "SPEED", 15: "TRICK?", 16: "PUMPKIN", 17: "BATS",
-	18: "GHOSTFACE"}
+	18: "GHOSTFACE", 19: "PIE"}
 # what each one does, in a line (the page says it when you take one)
 const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	2: "every arrow you shoot blows up, all match", 3: "every arrow you shoot leaves a poison cloud, all match",
@@ -141,7 +144,8 @@ const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	13: "arrows bounce off (it comes back), and spikes on top kill anyone who stomps you", 14: "you run super fast",
 	15: "a treat (a power-up) or a silly trick", 16: "every arrow is a pumpkin: it bursts into seeds that pop, all match",
 	17: "bats circle you: they knock arrows away and hide you",
-	18: "no bow this round: let go of shoot to swing your knife; a hit knocks you down 2 seconds, a hit while you're down ends you"}
+	18: "no bow this round: let go of shoot to swing your knife; a hit knocks you down 2 seconds, a hit while you're down ends you",
+	19: "every arrow is a cream pie: it bursts, and everyone near the splat cannot see for 3 seconds, all match"}
 const ORB_WARN := 0        # an orb's states: the lightning builds up over its spot
 const ORB_LIVE := 1        # it struck: the orb waits to be taken
 const PW_TAG := 0xB5       # the snapshot's power-up part starts with this byte
@@ -194,8 +198,8 @@ const E_PIN := 27        # p4.10: an arrow pins a body to a wall: x, y the arrow
 const E_GHOST := 28      # p4.11: a person's ghost rises from the body: a = fighter
 const E_BOO := 29        # a ghost BOOs: a = the ghost, b = the one it shoved (255: the dash starts)
 const E_GHOST_POP := 30  # an arrow pops a ghost (gone 3 s): a = the ghost, b = the shooter
-const E_PET := 31        # p4.12: someone pets the black cat (a SHIELD): a = fighter
-const E_CAT_COME := 32   # the black cat shows up: x, y its feet
+const E_PET := 31        # p4.12: someone pets the black cat (a SHIELD): a = fighter; b = 1: it caught the turkey (p4.18: its power-up follows)
+const E_CAT_COME := 32   # the black cat shows up: x, y its feet; a = 1: the turkey (p4.18)
 const E_TRICK := 33      # TRICK OR TREAT: a = fighter, b = 0 a treat (its power-up follows), 1 pumpkin, 2 backwards, 3 tiny
 const E_BATS := 34       # a bat swarm screeches before it sweeps in: x, y where it comes in; a = 1 it flies right, 0 left
 # p4.12: two or three words beside the name on your own screen (the user: "graphics or
@@ -203,7 +207,7 @@ const E_BATS := 34       # a bat swarm screeches before it sweeps in: x, y where
 const PU_TIP := {1: "burning arrows", 2: "boom arrows", 3: "poison arrows", 4: "smoke arrows", 5: "blocks one hit",
 	6: "endless arrows", 7: "fly with the stick", 8: "huge arrows", 9: "cats hunt them", 10: "they slow down",
 	11: "you're hidden", 12: "they freeze", 13: "spikes up", 14: "run fast", 15: "", 16: "seed bombs",
-	17: "bats guard you", 18: "knife: let go to swing"}
+	17: "bats guard you", 18: "knife: let go to swing", 19: "pie in the face"}
 const E_KNIFE := 35      # GHOSTFACE swings the knife: a = fighter, b = 1 to the right
 const E_MASK_DOWN := 36  # GHOSTFACE is knocked down (2 s): a = fighter
 const E_MASK_UP := 37    # and gets back up: a = fighter
@@ -211,6 +215,9 @@ const E_CANDY_DROP := 38 # p4.13 a candy appears: x, y; b = 0 out of a body, 1 f
 const E_CANDY_GET := 39  # someone opens a candy (TRICK OR TREAT, then its E_TRICK): x, y; a = fighter
 const E_FURNACE := 40    # THE BOILER ROOM (sim/boiler.gd): a furnace blasts fire: x, y its mouth; a = which one; b = its direction
 const E_STEAM := 41      # a pressure pipe vents steam: x, y its valve; a = which one; b = its direction
+const E_PIE := 42        # p4.18 a pie splats: x, y; a = the shooter; b = 1 BIG
+const E_PIED := 43       # a fighter is covered in cream (it sees nobody for sim.gd's PIED_TICKS): a = fighter
+const E_CATCH_UP := 44   # a person far behind starts the round with a SHIELD (sim.gd catch_up): a = fighter
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)
@@ -222,6 +229,50 @@ const F2_AWAY := 4
 const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
 	8: "a ghost cat", 9: "spikes", 10: "a furnace", 11: "a knife"}
 const WALLS_DEADLY_BIT := 0x8000
+
+# p4.18 the seasons (docs/reference/game-review-2026-11.md). The server is in one season: by
+# its own date (AUTO), or the lobby's SEASON button picks one. It sends it with the seats, so
+# every phone matches. A season gives the candies, their tricks, the costume, the pet and
+# some power-ups new names and pictures; the rules under them stay the same. "" is no season:
+# the lobby wears the castle, and the candies stay Halloween's (as before p4.18).
+const SEASON_PICKS := ["auto", "off", "halloween", "harvest"]   # the SEASON button's choices
+const SEASON_LABEL := {"": "NONE", "halloween": "HALLOWEEN", "harvest": "HARVEST"}
+const HARVEST_NAMES := {15: "WHAT'S FOR DINNER?", 16: "POPCORN ARROWS", 17: "CROWS", 18: "THE BIG TURKEY"}
+const HARVEST_SHORT := {15: "DISH?", 16: "POPCORN", 17: "CROWS", 18: "BIG TURKEY"}
+const HARVEST_HELP := {16: "every arrow is a corn cob: it bursts into popcorn that pops, all match",
+	17: "crows circle you: they knock arrows away and hide you",
+	18: "no bow this round: let go of shoot to peck; a hit knocks you down 2 seconds, a hit while you're down ends you"}
+const HARVEST_TIP := {16: "popcorn bombs", 17: "crows guard you", 18: "peck: let go to lunge"}
+# a candy's tricks (sim.gd's trick numbers 1..3), then the costume (4)
+const TRICK_NAMES := ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"]
+const HARVEST_TRICKS := ["TREAT", "TURKEY TIME", "TOO MUCH PIE", "PEA-SIZED", "THE BIG TURKEY"]
+const TRICK_TIPS := ["", "no shooting", "left is right!", "so small", ""]
+
+# The season on a day: Halloween 1 October to 2 November, the Harvest 3 to 30 November.
+static func season_for(month: int, day: int) -> String:
+	if month == 10 or (month == 11 and day <= 2):
+		return "halloween"
+	if month == 11:
+		return "harvest"
+	return ""
+
+# A power-up's name, short name, help line and tip in a season.
+static func pu_name(kind: int, season: String) -> String:
+	return str(HARVEST_NAMES[kind]) if season == "harvest" and HARVEST_NAMES.has(kind) else str(PU_NAMES.get(kind, str(kind)))
+
+static func pu_short(kind: int, season: String) -> String:
+	return str(HARVEST_SHORT[kind]) if season == "harvest" and HARVEST_SHORT.has(kind) else str(PU_SHORT.get(kind, ""))
+
+static func pu_help(kind: int, season: String) -> String:
+	return str(HARVEST_HELP[kind]) if season == "harvest" and HARVEST_HELP.has(kind) else str(PU_HELP.get(kind, ""))
+
+static func pu_tip(kind: int, season: String) -> String:
+	return str(HARVEST_TIP[kind]) if season == "harvest" and HARVEST_TIP.has(kind) else str(PU_TIP.get(kind, ""))
+
+# A candy's result by name: 0 a treat, 1..3 the tricks, 4 the costume.
+static func trick_name(n: int, season: String) -> String:
+	var list: Array = HARVEST_TRICKS if season == "harvest" else TRICK_NAMES
+	return str(list[clampi(n, 0, list.size() - 1)])
 
 # p4.12: a BIG power-up (the numbers after SUPER SPEED are regular ones again, but BAT SWARM).
 static func is_big(k: int) -> bool:

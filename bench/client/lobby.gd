@@ -26,6 +26,7 @@ signal arena_picked(n: int)       # 2026-10-26: a card in the arena picker (lobb
 signal controls_pressed           # p4.16: CONTROLS (CLASSIC or BUTTONS, kept on the device; phones only)
 signal bot_level_pressed
 signal power_pressed
+signal season_picked(pick: String)   # p4.18: the SEASON button's next choice (sim/proto.gd SEASON_PICKS)
 
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
@@ -35,6 +36,8 @@ const Logo = preload("res://client/lobby_logo.gd")
 const Cards = preload("res://client/lobby_cards.gd")
 const Count = preload("res://client/lobby_count.gd")
 const Arenas = preload("res://client/lobby_arenas.gd")
+const Howto = preload("res://client/lobby_howto.gd")   # p4.18: HOW TO PLAY, three pictures
+const Names = preload("res://client/lobby_names.gd")   # p4.18: WHO ARE YOU? the names the server knows
 const Polish = preload("res://client/polish.gd")
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
 const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
@@ -76,6 +79,16 @@ var power_btn = Art.Btn.new()
 var level_btn = Art.Btn.new()
 var look_btn = Art.Btn.new()
 var controls_btn = Art.Btn.new()  # p4.16: under LOOK, phones only
+var season_btn = Art.Btn.new()    # p4.18: top left: AUTO (by the server's date), OFF, HALLOWEEN, HARVEST
+var howto_btn = Art.Btn.new()     # p4.18: under it: HOW TO PLAY
+var howto := Howto.new()
+var who := Names.new()
+var known_names: Array = []       # the seats message's "names"
+var seated_names: Array = []
+var tv := false                   # p4.18 THE BIG SCREEN: no buttons; a QR code and the address to join
+var tv_urls: Array = []
+var tv_qr: Array = []             # the code's rows, "0101..." (the server makes it)
+var season_pick := "auto"
 var buttons_mode := false
 var bots_minus = Art.Btn.new()
 var bots_plus = Art.Btn.new()
@@ -127,6 +140,8 @@ func _init() -> void:
 	pal = Art.DRESSES[dress]
 	var hw := dress == "halloween"
 	add_child(bg)
+	bg.harvest = dress == "harvest"
+	logo.harvest = dress == "harvest"
 	bg.set_dress(pal, hw)
 	bg.set_tier(tier)
 	root.size = Vector2(1920, 1080)
@@ -183,6 +198,14 @@ func _init() -> void:
 	_btn(controls_btn, face.darkened(0.2), ink, 30, Rect2(1540, 100, 320, 72), 5, corner)
 	controls_btn.pressed.connect(func(): controls_pressed.emit())
 	controls_btn.visible = false
+	_btn(season_btn, face.darkened(0.2), ink, 30, Rect2(60, 84, 330, 72), 5, corner)
+	season_btn.say("", "SEASON: AUTO")
+	_btn(howto_btn, face.darkened(0.2), ink, 30, Rect2(60, 164, 330, 64), 0, corner)
+	howto_btn.say("", "?  HOW TO PLAY")
+	howto_btn.pressed.connect(open_howto)
+	season_btn.pressed.connect(func():
+		var picks: Array = P.SEASON_PICKS
+		season_picked.emit(str(picks[(picks.find(season_pick) + 1) % picks.size()])))
 	if Polish.on("ui_icons"):
 		power_btn.pic = PU_ICONS
 		power_btn.pic_src = Rect2(13 * 64, 0, 64, 64)
@@ -195,6 +218,12 @@ func _init() -> void:
 	count.set_dress(pal)
 	root.add_child(arenas)            # on top of everything in the lobby
 	arenas.picked.connect(func(n): arena_picked.emit(n))
+	root.add_child(who)               # p4.18 WHO ARE YOU?
+	who.picked.connect(func(n):
+		name_edit.text = n
+		join_pressed.emit(n))
+	who.someone_new.connect(func(): name_edit.grab_focus())
+	root.add_child(howto)             # p4.18: over the arena picker too
 	visibility_changed.connect(_on_visibility)
 
 # The ARENA button: the picker of painted cards (polish "arena_cards"), or the next arena as before.
@@ -217,6 +246,21 @@ func _name_field(r: Rect2) -> void:
 	name_edit.max_length = 12
 	name_edit.placeholder_text = "TYPE A NAME"
 	name_edit.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_edit.add_theme_font_override("font", Art.DISPLAY)
+	name_edit.add_theme_font_size_override("font_size", 56)
+	name_edit.add_theme_constant_override("caret_width", 4)
+	name_edit.text_submitted.connect(func(_t): if not seated: _on_main())
+	dock.add_child(name_edit)
+	name_cap.text = "YOUR NAME"
+	name_cap.position = Vector2(24, 6)
+	name_cap.add_theme_font_override("font", Art.BODY)
+	name_cap.add_theme_font_size_override("font_size", 28)
+	name_cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_edit.add_child(name_cap)
+	_name_style()
+
+# The name field's colours, from the dress (p4.18: the dress can change: _apply_dress).
+func _name_style() -> void:
 	var edge: Color = pal["panel_edge"]
 	var accent: Color = pal["accent"]
 	var n := _field_box(Color(0.02, 0.01, 0.04, 0.92), edge, Color(0, 0, 0, 0.5), 10)
@@ -225,22 +269,11 @@ func _name_field(r: Rect2) -> void:
 	name_edit.add_theme_stylebox_override("normal", n)
 	name_edit.add_theme_stylebox_override("focus", f)
 	name_edit.add_theme_stylebox_override("read_only", ro)
-	name_edit.add_theme_font_override("font", Art.DISPLAY)
-	name_edit.add_theme_font_size_override("font_size", 56)
 	name_edit.add_theme_color_override("font_color", pal["text"])
 	name_edit.add_theme_color_override("font_uneditable_color", Color(1.0, 0.97, 0.85))
 	name_edit.add_theme_color_override("font_placeholder_color", Color(pal["faint"], 0.9))
 	name_edit.add_theme_color_override("caret_color", accent)
-	name_edit.add_theme_constant_override("caret_width", 4)
-	name_edit.text_submitted.connect(func(_t): if not seated: _on_main())
-	dock.add_child(name_edit)
-	name_cap.text = "YOUR NAME"
-	name_cap.position = Vector2(24, 6)
-	name_cap.add_theme_font_override("font", Art.BODY)
-	name_cap.add_theme_font_size_override("font_size", 28)
 	name_cap.add_theme_color_override("font_color", pal["dim"])
-	name_cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_edit.add_child(name_cap)
 
 func _field_box(fill: Color, edge: Color, sh: Color, sh_size: int) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -261,6 +294,8 @@ func _field_box(fill: Color, edge: Color, sh: Color, sh_size: int) -> StyleBoxFl
 func _on_main() -> void:
 	if seated:
 		start_pressed.emit()
+	elif name_edit.text.strip_edges() == "" and not known_names.is_empty() and not name_edit.has_focus():
+		who.open(known_names, seated_names)     # p4.18: no name yet: WHO ARE YOU?
 	else:
 		join_pressed.emit(name_edit.text)
 
@@ -292,6 +327,82 @@ func set_look(name: String) -> void:
 	logo.set_tier(tier)
 	cards.tier = tier
 
+# p4.18: the server's season ("" none) dresses the lobby; pick is the SEASON button's choice.
+func set_season(season: String, pick: String) -> void:
+	season_pick = pick
+	var label := str(P.SEASON_LABEL.get(season, "NONE"))
+	season_btn.say("", "SEASON: %s" % ("AUTO · " + label if pick == "auto" else ("OFF" if pick == "off" else label)))
+	arena_btn.thumb = null      # MIX's card follows the season: update() sets it again
+	var d := Art.dress_for(season)
+	if d != dress:
+		_apply_dress(d)
+
+# A new dress on a lobby that is already built: the colours of every part.
+func _apply_dress(d: String) -> void:
+	dress = d
+	pal = Art.DRESSES[dress]
+	var hw := dress == "halloween"
+	bg.harvest = dress == "harvest"
+	bg.set_dress(pal, hw)
+	logo.harvest = dress == "harvest"
+	logo.set_dress(pal, hw)
+	cards.set_dress(pal, hw)
+	count.set_dress(pal)
+	var face: Color = pal["button"]
+	var ink: Color = pal["text"]
+	for b in [arena_btn, power_btn, level_btn]:
+		b.setup(face, ink, 40)
+	for b in [bots_minus, bots_plus]:
+		b.setup(face.lightened(0.08), ink, 54)
+	leave_btn.setup(pal["danger"], ink, 40)
+	main_btn.setup(pal["accent"], Color(0.13, 0.05, 0.0), 72)
+	main_btn.glow_col = pal["accent_hi"]
+	for b in [look_btn, controls_btn, season_btn, howto_btn]:
+		b.setup(face.darkened(0.2), ink, 30)
+	_name_style()
+	notice_text.add_theme_color_override("font_color", pal["text"])
+	for c in [dock, notice, corner]:
+		c.queue_redraw()
+
+# p4.18 THE BIG SCREEN (game_client.gd's ?tv): the lobby for a TV. Nobody taps a TV: the
+# buttons go, and where they were a big QR code and the address say how to join.
+func set_tv(urls: Array, qr: Array) -> void:
+	tv = true
+	tv_urls = urls
+	tv_qr = qr
+	for b in [arena_btn, power_btn, bots_minus, bots_plus, level_btn, main_btn, leave_btn, season_btn, howto_btn, look_btn, controls_btn]:
+		b.visible = false
+	name_edit.visible = false
+	dock.queue_redraw()
+
+func _paint_tv(c: Control, txt: Color) -> void:
+	var gold: Color = pal["accent_hi"]
+	var q := Rect2(60, 676, 284, 284)
+	var x := 110.0
+	if not tv_qr.is_empty():
+		c.draw_style_box(Art.box(Color.WHITE, Color(0.1, 0.1, 0.1), 14, 0, 0, Color(0, 0, 0, 0.5), 12), q)
+		var n := tv_qr.size()
+		var m := (q.size.x - 28.0) / n
+		for cy in n:
+			var row := str(tv_qr[cy])
+			for cx in mini(n, row.length()):
+				if row[cx] == "1":
+					c.draw_rect(Rect2(q.position.x + 14.0 + cx * m, q.position.y + 14.0 + cy * m, m + 0.5, m + 0.5), Color.BLACK)
+		x = 400.0
+	Art.text(c, Art.DISPLAY, Vector2(x, 762), "SCAN TO PLAY", 84, gold, 10, Color(0.03, 0.01, 0.05))
+	if tv_urls.is_empty():
+		c.draw_string(Art.BODY, Vector2(x, 832), "Open this computer's address on your phone.", HORIZONTAL_ALIGNMENT_LEFT, -1, 46, txt)
+	else:
+		c.draw_string(Art.DISPLAY, Vector2(x, 838), str(tv_urls[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 60, txt)
+	c.draw_string(Art.BODY, Vector2(x, 896), "Point a phone's camera at the code, or type the address. Up to 8 players.", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color(pal["dim"]))
+	c.draw_string(Art.BODY, Vector2(x, 944), tv_line, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(pal["faint"], 0.95))
+
+var tv_line := ""                 # the settings in words (a TV has no buttons)
+
+# p4.18: the three HOW TO PLAY pictures, for the controls in use.
+func open_howto() -> void:
+	howto.open(("buttons" if buttons_mode else "classic") if phone else "pc")
+
 func set_phone(on: bool) -> void:
 	phone = on
 	controls_btn.visible = on
@@ -319,6 +430,13 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	cards.level_name = lvl
 	cards.connected = connected
 	cards.set_seats(list, my_seat, phase, bots, m.get("awards", []))
+	known_names = m.get("names", [])
+	seated_names.clear()
+	for st in list:
+		if int(st.get("kind", 0)) == 1:
+			seated_names.append(str(st.get("name", "")))
+	if seated and who.visible:
+		who.close()
 	var in_lobby := phase == P.PH_LOBBY
 	var can_set := seated and in_lobby
 	var pick := int(m.get("arena", P.ARENA_MIX))
@@ -339,8 +457,11 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	bots_plus.disabled = not can_set or bots_wanted >= 7
 	level_btn.say("BOT LEVEL", lvl)
 	level_btn.disabled = not can_set
+	season_btn.disabled = not can_set
+	tv_line = "ARENA: %s  ·  BOTS: %d %s  ·  POWER-UPS %s" % ["MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick), bots_wanted, lvl,
+		"ON" if int(m.get("power", 0)) != 0 else "OFF"]
 	name_edit.editable = not seated
-	leave_btn.visible = seated
+	leave_btn.visible = seated and not tv
 	name_edit.size.x = 580.0 if seated else 840.0
 	leave_btn.disabled = not connected
 	# the big button: what to do next
@@ -369,6 +490,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 			line = "Wrong version: reload the page."
 		elif not connected:
 			line = "Connecting to the server…"
+		elif tv:
+			line = "Waiting for players: one of them taps START." if phase <= P.PH_LOBBY else "Here we go."
 		elif not seated:
 			line = "Type your name and tap JOIN." if people < 8 else "All 8 seats are taken. JOIN when one frees up."
 		elif phase == P.PH_COUNTDOWN:
@@ -446,6 +569,9 @@ func _paint_dock(c: Control) -> void:
 	# the status line: a pill that pops when its words change (the countdown says it all)
 	if count_secs <= 0:
 		_status_pill(c, txt)
+	if tv:
+		_paint_tv(c, txt)
+		return
 	# the bots box: BOTS, the number, then the - and + buttons (its own buttons)
 	_bots_box(c, txt, edge)
 	# the controls line

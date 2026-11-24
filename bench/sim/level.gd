@@ -255,6 +255,19 @@ func _init(layout: int = BENCH) -> void:
 static func count() -> int:
 	return LAYOUTS.size()
 
+# p4.18 MIX in a season (proto.gd's seasons): the Harvest season takes the castle arenas and
+# its own two (themes "barn" and "table") and leaves the spooky ones out; any other time MIX
+# is the castle arenas and the spooky ones. Every arena of PLAY can still be picked by hand.
+static func mix_for(season: String) -> Array:
+	var out: Array = []
+	for n in PLAY:
+		var th := str(LAYOUTS[n].get("theme", ""))
+		var harvest_arena := th == "barn" or th == "table"
+		var spooky := th == "halloween" or th == "nightmare"
+		if (season == "harvest" and not spooky) or (season != "harvest" and not harvest_arena):
+			out.append(n)
+	return out
+
 static func name_of(layout: int) -> String:
 	return LAYOUTS[clampi(layout, 0, LAYOUTS.size() - 1)]["name"]
 

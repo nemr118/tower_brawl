@@ -132,6 +132,14 @@ const AWARDS := [
 	["SWEET TOOTH", "candies", "max", 1, "opened %d candies", ""],
 	["SCARY MOVIE STAR", "masks", "max", 1, "turned into GHOSTFACE %d times", ""],
 	["GHOST BUSTER", "mask_kills", "max", 1, "finished off GHOSTFACE %d times", ""],
+	# p4.18 the Harvest season's own (their numbers are counted only in that season: _match_events)
+	["GOBBLE GOBBLE", "turkeys", "max", 1, "caught the turkey %d times", ""],
+	["PIE FACE", "pied", "max", 1, "got a pie in the face %d times", ""],
+	["STUFFED", "dishes", "max", 1, "opened %d dishes", ""],
+	["LEFTOVERS", "leftovers", "max", 6, "picked up %d arrows", ""],
+	["GOBBLER", "big_turkeys", "max", 1, "turned into THE BIG TURKEY %d times", ""],
+	["PECKING ORDER", "peck_kills", "max", 1, "%d knockouts with a peck", ""],
+	["TURKEY DINNER", "turkey_ends", "max", 1, "finished off THE BIG TURKEY %d times", ""],
 ]
 const FALLBACK := [["GOOD SPORT", "played the whole match"], ["BEST WIGGLE", "the wiggliest archer"],
 	["MAIN CHARACTER", "every story needs one"], ["WILL WIN NEXT TIME", "just warming up"],
@@ -206,6 +214,8 @@ var goal := 0
 var winner := P.NO_ONE
 var bots_wanted := MAX_BOTS
 var arena_pick := P.ARENA_MIX    # the lobby's ARENA (G5): MIX or one layout of sim/level.gd
+var season_pick := "auto"        # p4.18 the lobby's SEASON (proto.gd SEASON_PICKS): auto = by this computer's date
+var start_power := 0             # a test knob (--start-power N): every fighter starts each round with power-up N
 var mix_i := 0                   # MIX: the next arena in LevelScript.PLAY
 var goal_override := 0
 var seats_dirty := true
@@ -274,6 +284,7 @@ func _ready() -> void:
 	net_sleep_us = int(float(o.get("net-sleep-ms", 4)) * 1000.0)
 	var root_dir := ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
 	var out_dir := str(o.get("out", root_dir.path_join("bench_results"))).path_join(Time.get_date_string_from_system())
+	_load_names(str(o.get("out", root_dir.path_join("bench_results"))))   # p4.18: the names seen on other nights
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var log_path := out_dir.path_join("v2_server.jsonl")
 	server_log = FileAccess.open(log_path, FileAccess.READ_WRITE if FileAccess.file_exists(log_path) else FileAccess.WRITE)
@@ -288,6 +299,11 @@ func _ready() -> void:
 	pin_demo = o.has("pin-demo")
 	hw_gallery = o.has("hw-gallery")
 	sim.candy_trick = int(o.get("candy-trick", -1))
+	sim.pet_always = o.has("pet-always")
+	start_power = int(o.get("start-power", 0))
+	if o.has("season") and P.SEASON_PICKS.has(str(o["season"]).to_lower()):
+		season_pick = str(o["season"]).to_lower()
+	sim.season = _season()
 	sim.walls_start = maxi(0, int(o.get("walls-s", WALLS_S))) * 60
 	if o.has("spots"):
 		for k in str(o["spots"]).split(",", false):
@@ -467,6 +483,9 @@ func _on_text(c: Conn, txt: String) -> void:
 		return
 	if not c.ok:
 		return
+	if kind == "tv":       # p4.18 THE BIG SCREEN asks where phones join
+		_out(c.id, JSON.stringify(_tv_info()))
+		return
 	if kind == "report":
 		_on_report(c, d)
 		return
@@ -486,6 +505,7 @@ func _on_text(c: Conn, txt: String) -> void:
 			_say("🏰 [JOIN] rejected %s from %s: all %d seats are taken" % [c.name, c.ip, SEATS])
 			return
 		_seat_person(s, c, false)
+		_know(c.name)       # p4.18: the join screen offers this name next time (WHO ARE YOU?)
 		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
 	elif kind == "leave":
 		if c.seat >= 0:
@@ -525,6 +545,10 @@ func _on_text(c: Conn, txt: String) -> void:
 			sim.set_arena(_next_arena())
 			_say("🏰 [LOBBY] arena %s, picked by seat %d '%s'" % [_arena_label(arena_pick), c.seat, seats[c.seat].name])
 			seats_dirty = true
+	elif kind == "season":
+		var pick := str(d.get("pick", ""))
+		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and pick != season_pick and P.SEASON_PICKS.has(pick):
+			_set_season(pick, "seat %d '%s'" % [c.seat, seats[c.seat].name])
 	elif kind == "power":
 		var on := int(d.get("n", 0)) != 0
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and on != sim.powerups:
@@ -880,12 +904,29 @@ func _begin_match() -> void:
 	_say("🏰 [MATCH] start: %d people + %d bots (%s), first to %d points" % [_people(), _bots_now(), SimScript.BrainScript.NAMES[sim.bot_level], goal])
 	_start_round()
 
-# The arena of the next round: the pick, or MIX's next one (G5).
+# The arena of the next round: the pick, or MIX's next one (G5; p4.18: MIX's list follows the season).
 func _next_arena() -> int:
 	if arena_pick == P.ARENA_MIX:
-		var play: Array = SimScript.LevelScript.PLAY
+		var play: Array = SimScript.LevelScript.mix_for(_season())
 		return play[mix_i % play.size()]
 	return arena_pick
+
+# p4.18 the season now: the pick, or by this computer's date (proto.gd season_for).
+func _season() -> String:
+	if season_pick == "off":
+		return ""
+	if season_pick == "auto":
+		var d := Time.get_date_dict_from_system()
+		return P.season_for(int(d["month"]), int(d["day"]))
+	return season_pick
+
+func _set_season(pick: String, by: String) -> void:
+	season_pick = pick
+	sim.season = _season()
+	if phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN:
+		sim.set_arena(_next_arena())     # MIX's list may have changed
+	_say("🏰 [LOBBY] season %s (now %s), picked by %s" % [pick.to_upper(), P.SEASON_LABEL.get(sim.season, "NONE"), by])
+	seats_dirty = true
 
 static func _arena_label(n: int) -> String:
 	return "MIX" if n == P.ARENA_MIX else SimScript.LevelScript.name_of(n)
@@ -929,10 +970,14 @@ func _start_round() -> void:
 			if r.get("_m", 0) != match_no:   # this server's match number, kept in memory only
 				r["_m"] = match_no
 				r["matches"] += 1
+	sim.season = _season()     # p4.18 (by date too: a server left running into the next season follows it)
 	sim.set_arena(_next_arena())
 	if arena_pick == P.ARENA_MIX:
 		mix_i += 1
 	sim.start_round(seat_list)
+	if start_power > 0:
+		for f in sim.fighters:
+			sim._give(f, start_power)
 	round_first = true     # p4.11
 	last_pos.clear()
 	if pu_gallery:
@@ -944,6 +989,7 @@ func _start_round() -> void:
 			f.connected = not (s.kind == 1 and s.client_id == 0)
 			f.buttons = 0
 	_sync_points()
+	sim.catch_up()         # p4.18: a person 2 or more points behind starts with a SHIELD
 	sim.frozen = true
 	winner = P.NO_ONE
 	phase = P.PH_ROUND_START
@@ -1038,6 +1084,8 @@ func _send_seats(target: int) -> void:
 		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.powerups else 0,
 		"awards": last_awards,
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
+		"season": _season(), "season_pick": season_pick,
+		"names": _names_list(),
 		"seats": list}
 	_out(target, JSON.stringify(msg))
 	if target == 0:
@@ -1367,20 +1415,24 @@ func _log_powers(evs: Array) -> void:
 		if k == P.E_PU_GET:
 			var i: int = e[3]
 			var who: String = seats[i].name if i >= 0 and i < SEATS else "?"
-			_say("🏰 [POWER] seat %d '%s' took %s%s" % [i, who, P.PU_NAMES.get(e[4], str(e[4])), " (BIG)" if P.is_big(e[4]) else ""])
+			_say("🏰 [POWER] seat %d '%s' took %s%s" % [i, who, P.pu_name(e[4], sim.season), " (BIG)" if P.is_big(e[4]) else ""])
 			server_log.store_line(JSON.stringify({"kind": "power", "t": Time.get_unix_time_from_system(), "match": match_no,
-				"round": round_no, "seat": i, "name": who, "power": P.PU_NAMES.get(e[4], str(e[4])), "s": snappedf(_round_secs(), 0.01)}))
+				"round": round_no, "seat": i, "name": who, "power": P.pu_name(e[4], sim.season), "s": snappedf(_round_secs(), 0.01)}))
 		elif k == P.E_PU_WARN and e[4] == 1:
-			_say("🏰 [POWER] a BIG %s comes for someone behind" % P.PU_NAMES.get(e[3], str(e[3])))
+			_say("🏰 [POWER] a BIG %s comes for someone behind" % P.pu_name(e[3], sim.season))
 		elif k == P.E_TRICK and e[4] > 0:
+			# p4.18: every result has a name now (the costume, 4, had none: a script error on each GHOSTFACE)
 			var ti: int = e[3]
-			_say("🏰 [POWER] seat %d '%s' got a TRICK: %s" % [ti, seats[ti].name if ti < SEATS else "?", ["", "PUMPKIN", "BACKWARDS", "TINY"][e[4]]])
+			_say("🏰 [POWER] seat %d '%s' got a TRICK: %s" % [ti, seats[ti].name if ti < SEATS else "?", P.trick_name(e[4], sim.season)])
 		elif k == P.E_CANDY_GET:
 			var ci: int = e[3]
-			_say("🏰 [POWER] seat %d '%s' opened a candy" % [ci, seats[ci].name if ci < SEATS else "?"])
+			_say("🏰 [POWER] seat %d '%s' opened a %s" % [ci, seats[ci].name if ci < SEATS else "?", "dish" if sim.season == "harvest" else "candy"])
 		elif k == P.E_PET:
 			var pi: int = e[3]
-			_say("🏰 [POWER] seat %d '%s' petted the black cat: a SHIELD" % [pi, seats[pi].name if pi < SEATS else "?"])
+			_say("🏰 [POWER] seat %d '%s' %s" % [pi, seats[pi].name if pi < SEATS else "?", "caught the turkey" if e[4] == 1 else "petted the black cat: a SHIELD"])
+		elif k == P.E_CATCH_UP:
+			var ui: int = e[3]
+			_say("🏰 [POWER] seat %d '%s' starts with a SHIELD (behind the leader)" % [ui, seats[ui].name if ui < SEATS else "?"])
 
 # p4.11: this match's numbers by seat (the awards), from the events.
 func _mcount(seat: int, key: String, n: int = 1) -> void:
@@ -1393,6 +1445,7 @@ func _mcount(seat: int, key: String, n: int = 1) -> void:
 func _match_events(evs: Array) -> void:
 	if phase < P.PH_PLAY or phase > P.PH_ROUND_END:
 		return
+	var hv: bool = sim.season == "harvest"   # p4.18: the Harvest season's awards have their own numbers
 	for e in evs:
 		var k: int = e[0]
 		if k == P.E_JUMP and e[4] != 1:
@@ -1406,13 +1459,13 @@ func _match_events(evs: Array) -> void:
 		elif k == P.E_CATCH:
 			_mcount(e[3], "catches")
 		elif k == P.E_PICKUP:
-			_mcount(e[3], "pickups")
+			_mcount(e[3], "leftovers" if hv else "pickups")
 		elif k == P.E_PU_GET:
 			_mcount(e[3], "powers")
 			if P.is_big(e[4]):
 				_mcount(e[3], "bigs")
 			if e[4] == P.PU_MASK:
-				_mcount(e[3], "masks")
+				_mcount(e[3], "big_turkeys" if hv else "masks")
 		elif k == P.E_DEATH:
 			_mcount(e[3], "deaths")
 			_mcount(e[3], CAUSE_KEY.get(e[4], ""))
@@ -1426,9 +1479,9 @@ func _match_events(evs: Array) -> void:
 			else:
 				_mcount(e[3], "kills")
 				var c: int = last_cause.get(e[4], 0)
-				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills", 11: "knife_kills"}.get(c, ""))
+				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills", 11: "peck_kills" if hv else "knife_kills"}.get(c, ""))
 				if e[4] < SEATS and sim.fighter(e[4]) != null and sim.fighter(e[4]).mask:
-					_mcount(e[3], "mask_kills")   # finished GHOSTFACE off while it was down
+					_mcount(e[3], "turkey_ends" if hv else "mask_kills")   # finished GHOSTFACE off while it was down
 		elif k == P.E_PIN:
 			_mcount(e[3], "pinned")
 			var pf = sim.fighter(e[3])
@@ -1437,11 +1490,13 @@ func _match_events(evs: Array) -> void:
 		elif k == P.E_BOO and e[4] != 255:
 			_mcount(e[3], "boos")
 		elif k == P.E_PET:
-			_mcount(e[3], "pets")
+			_mcount(e[3], "turkeys" if e[4] == 1 else "pets")
 		elif k == P.E_TRICK and e[4] > 0:
 			_mcount(e[3], "tricks")
 		elif k == P.E_CANDY_GET:
-			_mcount(e[3], "candies")
+			_mcount(e[3], "dishes" if hv else "candies")
+		elif k == P.E_PIED:
+			_mcount(e[3], "pied")
 
 # Each tick of play: who is in the fight, in the air, flying, invisible, a ghost, and the steps run.
 func _match_sample() -> void:
@@ -1570,6 +1625,62 @@ func _save_stats() -> void:
 	f.close()
 
 # Tonight's numbers come back when the server starts again the same day.
+# p4.18 WHO ARE YOU? (the page's name picker): the names people typed, with how often each
+# took a seat, kept across nights in <out>/known_names.json. The first time, it is filled
+# from the old nights' v2_stats.json files. Default names (Player 3) and bots do not count,
+# and a name that differs only in its capitals joins the one already there.
+var known_names := {}
+var names_path := ""
+
+func _load_names(root: String) -> void:
+	names_path = root.path_join("known_names.json")
+	if FileAccess.file_exists(names_path):
+		var d = JSON.parse_string(FileAccess.get_file_as_string(names_path))
+		if typeof(d) == TYPE_DICTIONARY:
+			for k in d:
+				known_names[str(k)] = int(d[k])
+		return
+	var dir := DirAccess.open(root)
+	if dir == null:
+		return
+	for sub in dir.get_directories():
+		var sp := root.path_join(sub).path_join("v2_stats.json")
+		if not FileAccess.file_exists(sp):
+			continue
+		var sd = JSON.parse_string(FileAccess.get_file_as_string(sp))
+		if typeof(sd) != TYPE_DICTIONARY:
+			continue
+		for r in sd.get("players", []):
+			if typeof(r) == TYPE_DICTIONARY and not bool(r.get("bot", false)):
+				_know(str(r.get("name", "")), maxi(1, int(r.get("matches", 1))), false)
+	_save_names()
+
+func _know(name: String, n: int = 1, save: bool = true) -> void:
+	if name == "" or name.begins_with("Player") or name.begins_with("BOT "):
+		return
+	var key := name
+	for k in known_names:
+		if str(k).to_lower() == name.to_lower():
+			key = str(k)
+			break
+	known_names[key] = int(known_names.get(key, 0)) + n
+	if save:
+		_save_names()
+		seats_dirty = true
+
+func _save_names() -> void:
+	if names_path == "":
+		return
+	var f := FileAccess.open(names_path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(known_names))
+
+# The 12 names that sat down most often, the most often first.
+func _names_list() -> Array:
+	var ks: Array = known_names.keys()
+	ks.sort_custom(func(a, b): return int(known_names[a]) > int(known_names[b]) or (int(known_names[a]) == int(known_names[b]) and str(a) < str(b)))
+	return ks.slice(0, 12)
+
 func _load_stats(path: String) -> void:
 	stats_path = path
 	stats_since = Time.get_unix_time_from_system()
@@ -1707,6 +1818,12 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 				_out(cid, JSON.stringify({"kind": "note", "text": "The host took your seat. Press JOIN to play again."}))
 			_say("🏰 [HOST] kicked seat %d '%s': back to watching" % [i, who])
 			return [true, "%s is back to watching." % who]
+		"season":
+			var pick := str(d.get("pick", ""))
+			if not P.SEASON_PICKS.has(pick):
+				return [false, "A season is one of: %s." % ", ".join(P.SEASON_PICKS)]
+			_set_season(pick, "the host")
+			return [true, "Season %s (now %s)." % [pick.to_upper(), P.SEASON_LABEL.get(sim.season, "NONE")]]
 		"power":
 			sim.powerups = int(d.get("n", 0)) != 0
 			seats_dirty = true
@@ -1732,6 +1849,28 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 	return [false, "Unknown command: %s" % cmd]
 
 # The addresses phones on this network use (no loopback, Tailscale or Docker ones).
+# p4.18 THE BIG SCREEN (the page's ?tv): the addresses phones open, and a QR code of the first
+# one as rows of 0 and 1 (made by the qrencode tool once and kept; none without the tool: the
+# page then shows the address alone).
+var _tv_cache := {}
+func _tv_info() -> Dictionary:
+	var urls: Array = []
+	for ip in _lan_ips():
+		urls.append("https://%s:8443/v2/" % ip)
+	var key := ",".join(urls)
+	if str(_tv_cache.get("key", "?")) != key:
+		var rows: Array = []
+		if not urls.is_empty():
+			var out: Array = []
+			if OS.execute("qrencode", ["-t", "ASCII", "-m", "0", str(urls[0])], out) == 0 and not out.is_empty():
+				for line in str(out[0]).split("\n", false):
+					var row := ""
+					for i in range(0, line.length(), 2):
+						row += "1" if line[i] == "#" else "0"
+					rows.append(row)
+		_tv_cache = {"key": key, "kind": "tv", "urls": urls, "qr": rows}
+	return _tv_cache
+
 func _lan_ips() -> Array:
 	var out: Array = []
 	for a in IP.get_local_addresses():
@@ -1796,6 +1935,7 @@ func _host_state() -> Dictionary:
 		"bot_level": sim.bot_level, "bot_level_name": SimScript.BrainScript.NAMES[sim.bot_level], "levels": levels,
 		"power_arrows": sim.powerups, "powerups": sim.powerups,   # p4.9: the host page's switch is the power-ups
 		"people": _people(), "watchers": watching.size(), "lan": _lan_ips(), "page_port": 8443, "game_port": port,
+		"season": _season(), "season_pick": season_pick, "seasons": P.SEASON_PICKS,
 		"seats": seat_list, "watching": watching,
 		"tick": {"mean_ms": last_rec.get("tick_mean_ms", 0.0), "max_ms": last_rec.get("tick_max_ms", 0.0),
 			"cpu_pct": last_rec.get("cpu_pct", 0.0), "rss_mb": last_rec.get("rss_mb", 0.0)},

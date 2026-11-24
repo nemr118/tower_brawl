@@ -70,21 +70,46 @@ def wait(pid, limit=600):
     return None, {"timeout": True}
 
 
+def free():
+    """Ask ComfyUI to drop its models from the card (the next picture loads them again)."""
+    req = urllib.request.Request(URL + "/free", data=json.dumps({"unload_models": True, "free_memory": True}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=30).read()
+    except Exception as e:
+        print("free:", e, flush=True)
+
+
+def contrast(path):
+    return ImageStat.Stat(Image.open(path).convert("L")).stddev[0]
+
+
 def run(jobs, seed_base=None, out=OUT):
-    """jobs: [(name, model, w, h, prompt)]; returns {name: path} for the pictures that came out."""
+    """jobs: [(name, model, w, h, prompt)]; returns {name: path} for the pictures that came out.
+    A blank picture (2026-11-24: Z-Image went blank mid-batch with the card tight on memory) frees the
+    models and is tried once more. TB_REDO=1 in the environment skips every picture that is already
+    there and not blank (the seeds stay the same)."""
     seed = seed_base if seed_base is not None else int(time.time()) % 100000
+    redo = os.environ.get("TB_REDO") == "1"
     done = {}
     for i, (name, model, w, h, prompt) in enumerate(jobs):
-        t0 = time.time()
-        prefix = f"tb_test/{name}"
-        graph = zimage(prompt, seed + i, w, h, prefix) if model == "z" else klein(prompt, seed + i, w, h, prefix)
-        im, st = wait(post(graph))
-        if im is None:
-            print(f"FAIL {name}: {json.dumps(st)[:300]}", flush=True)
-            continue
         dst = os.path.join(out, name + ".png")
-        shutil.copy(os.path.join(COMFY_OUT, im.get("subfolder", ""), im["filename"]), dst)
-        sd = ImageStat.Stat(Image.open(dst).convert("L")).stddev[0]
-        print(f"{'BLANK?' if sd < 4 else 'ok   '} {name}: {time.time() - t0:5.1f} s, {w}x{h}, contrast {sd:.0f}", flush=True)
-        done[name] = dst
+        if redo and os.path.exists(dst) and contrast(dst) >= 4:
+            done[name] = dst
+            continue
+        for attempt in (1, 2):
+            t0 = time.time()
+            prefix = f"tb_test/{name}"
+            graph = zimage(prompt, seed + i, w, h, prefix) if model == "z" else klein(prompt, seed + i, w, h, prefix)
+            im, st = wait(post(graph))
+            if im is None:
+                print(f"FAIL {name}: {json.dumps(st)[:300]}", flush=True)
+                break
+            shutil.copy(os.path.join(COMFY_OUT, im.get("subfolder", ""), im["filename"]), dst)
+            sd = contrast(dst)
+            print(f"{'BLANK?' if sd < 4 else 'ok   '} {name}: {time.time() - t0:5.1f} s, {w}x{h}, contrast {sd:.0f}", flush=True)
+            done[name] = dst
+            if sd >= 4 or attempt == 2:
+                break
+            free()
     return done

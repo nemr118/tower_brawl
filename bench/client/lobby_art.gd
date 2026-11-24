@@ -6,12 +6,28 @@
 # Used by lobby.gd and its parts (lobby_bg, lobby_logo, lobby_cards, lobby_count).
 extends RefCounted
 
+const P = preload("res://sim/proto.gd")   # p4.18: the seasons
+
 const DISPLAY: FontFile = preload("res://assets/fonts/lobby_display.ttf")   # Noto Sans Condensed Black
 const BODY: FontFile = preload("res://assets/fonts/lobby_body.ttf")         # Noto Sans Condensed Bold
 
 # A dress is a set of colours and words. "halloween": purple night, pumpkin
-# orange, slime green. "castle": blue night, gold.
+# orange, slime green. "castle": blue night, gold. "harvest" (p4.18): an autumn
+# dusk, pumpkin orange, gold, a green ribbon.
 const DRESSES := {
+	"harvest": {
+		"tint_top": Color(0.10, 0.04, 0.02, 0.84), "tint_mid": Color(0.09, 0.04, 0.02, 0.36), "tint_bot": Color(0.05, 0.02, 0.01, 0.92),
+		"panel": Color(0.13, 0.07, 0.04, 0.93), "panel_edge": Color(0.72, 0.42, 0.16), "panel_hi": Color(1.0, 0.85, 0.6, 0.16),
+		"accent": Color(1.0, 0.56, 0.10), "accent_hi": Color(1.0, 0.82, 0.36), "accent_dark": Color(0.45, 0.16, 0.02),
+		"second": Color(1.0, 0.84, 0.36), "button": Color(0.42, 0.20, 0.10), "danger": Color(0.60, 0.14, 0.12),
+		"text": Color(1.0, 0.97, 0.92), "dim": Color(0.86, 0.72, 0.58), "faint": Color(0.6, 0.46, 0.36),
+		"logo_top": Color(1.0, 0.92, 0.55), "logo_bot": Color(0.95, 0.36, 0.06), "logo_rim": Color(0.48, 0.12, 0.05),
+		"logo_edge": Color(0.12, 0.04, 0.02), "logo_glow": Color(1.0, 0.5, 0.12, 0.30),
+		"ribbon": Color(0.20, 0.36, 0.14), "ribbon_dark": Color(0.10, 0.20, 0.07), "ribbon_text": Color(1.0, 0.9, 0.55),
+		"tagline": "HARVEST FEAST",
+		"mist": Color(0.9, 0.55, 0.2, 0.14), "ember": Color(1.0, 0.5, 0.12), "ember2": Color(0.95, 0.78, 0.2),
+		"flash": Color(1.0, 0.85, 0.6),
+	},
 	"halloween": {
 		"tint_top": Color(0.07, 0.01, 0.11, 0.86), "tint_mid": Color(0.05, 0.01, 0.09, 0.38), "tint_bot": Color(0.03, 0.0, 0.06, 0.92),
 		"panel": Color(0.10, 0.05, 0.16, 0.93), "panel_edge": Color(0.46, 0.25, 0.72), "panel_hi": Color(0.85, 0.7, 1.0, 0.16),
@@ -88,15 +104,20 @@ static func _query() -> String:
 		q += " " + a
 	return q
 
-# The dress for tonight: "halloween" from October 1 to November 2, else "castle".
-# A test knob: ?dress=castle or ?dress=halloween on the page (--dress=... on the PC).
+# The dress for tonight by this device's own date, until the server says its season
+# (p4.18): "halloween" from October 1 to November 2, "harvest" from November 3 to 30,
+# else "castle". A test knob: ?dress=castle, halloween or harvest on the page (--dress=... on the PC).
 static func pick_dress() -> String:
+	var t := Time.get_date_dict_from_system()
+	return dress_for(P.season_for(int(t.month), int(t.day)))
+
+# The dress of a season ("" or an unknown one: the castle). The ?dress= knob wins.
+static func dress_for(season: String) -> String:
 	var q := _query()
 	for d in DRESSES:
 		if ("dress=" + d) in q:
 			return d
-	var t := Time.get_date_dict_from_system()
-	return "halloween" if int(t.month) == 10 or (int(t.month) == 11 and int(t.day) <= 2) else "castle"
+	return season if DRESSES.has(season) else "castle"
 
 # A test knob for pictures: ?lobby_slow=4 plays the lobby's rise-in 4 times
 # slower (1: normal).

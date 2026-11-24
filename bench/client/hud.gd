@@ -16,6 +16,7 @@ const Winner = preload("res://client/winner_view.gd")   # the winner's screen (2
 const Banner = preload("res://client/hud_banner.gd")    # p4.17: the round's big words in the lobby title's style
 const Art = preload("res://client/lobby_art.gd")
 const Polish = preload("res://client/polish.gd")
+const Season = preload("res://client/season.gd")        # p4.18: the season's names
 const BANNER_S := 2.6
 const FIGHT_S := 0.9
 const CARD_W := 210.0
@@ -95,6 +96,10 @@ func round_end(m: Dictionary) -> void:
 		var w := int(m.get("winner", 0))
 		banner = "%s WINS THE ROUND" % str(m.get("name", "")).to_upper()
 		banner_color = World.TEAM[w % 8]
+
+# p4.18: the server's season: ROUND N wears its title colours.
+func set_season(season: String) -> void:
+	title_pal = Art.DRESSES[Art.dress_for(season)]
 
 func match_end(m: Dictionary) -> void:
 	awards = m.get("awards", [])
@@ -264,20 +269,22 @@ func _chips(c: Control, font: Font, x: float, pw: Dictionary) -> void:
 	var kind: int = pw["kind"]
 	var left := ceili(float(pw["left"]))
 	var list: Array = []
-	var pk := kind if kind <= P.PU_SMOKE else (P.PU_PUMPKIN if kind == P.A_PUMPKIN else 0)   # p4.12: arrow kind 5 is PUMPKIN BOMBS
+	var sn: String = Season.now      # p4.18: the season's names (POPCORN, CROWS, BIG TURKEY, the tricks)
+	var pk := PV.arrow_power(kind)   # the power-up an arrow kind came from (p4.12 PUMPKIN BOMBS, p4.18 PIE)
 	if pk > 0:
-		list.append([P.PU_SHORT[pk], PV.COLORS[pk]])
+		list.append([P.pu_short(pk, sn), PV.COLORS[pk]])
 	for pair in [[P.PW_SHIELD, P.PU_SHIELD], [P.PW_INF, P.PU_INF], [P.PW_FLY, P.PU_FLY], [P.PW_BIG, P.PU_BIG]]:
 		if bits & pair[0]:
-			list.append([P.PU_SHORT[pair[1]], PV.COLORS[pair[1]]])
+			list.append([P.pu_short(pair[1], sn), PV.COLORS[pair[1]]])
 	for pair in [[P.PW_INVIS_ON, P.PU_INVIS], [P.PW_SPEED, P.PU_SPEED], [P.PW_UMBRELLA, P.PU_RAIN], [P.PW_SPIKES, P.PU_SPIKES]]:
 		if bits & pair[0]:
-			list.append(["%s %d" % [P.PU_SHORT[pair[1]], left], PV.COLORS[pair[1]]])
+			list.append(["%s %d" % [P.pu_short(pair[1], sn), left], PV.COLORS[pair[1]]])
 	if pw.get("swarm", false):
-		list.append(["BATS %d" % left, PV.COLORS[P.PU_BATS]])
+		list.append(["%s %d" % [P.pu_short(P.PU_BATS, sn), left], PV.COLORS[P.PU_BATS]])
 	if (int(pw.get("mask", 0)) & 1) != 0:
-		list.append(["GHOSTFACE" if (int(pw["mask"]) & 2) == 0 else "DOWN!", PV.COLORS[P.PU_MASK]])
-	for tr in [[P.PW_PUMPKIN, "PUMPKIN!"], [P.PW_BACKWARDS, "BACKWARDS"], [P.PW_TINY, "TINY"]]:
+		list.append([P.pu_short(P.PU_MASK, sn) if (int(pw["mask"]) & 2) == 0 else "DOWN!", PV.COLORS[P.PU_MASK]])
+	var tricks: Array = ["TURKEY!", "DIZZY", "PEA-SIZED"] if sn == "harvest" else ["PUMPKIN!", "BACKWARDS", "TINY"]
+	for tr in [[P.PW_PUMPKIN, tricks[0]], [P.PW_BACKWARDS, tricks[1]], [P.PW_TINY, tricks[2]]]:
 		if bits & tr[0]:
 			list.append([tr[1], PV.COLORS[P.PU_TRICK]])
 	if bits & P.PW_FROZEN:
@@ -306,8 +313,8 @@ func _power_banner(c: Control, font: Font) -> void:
 	var pop := 1.0 + 0.3 * clampf((k - 0.88) / 0.12, 0.0, 1.0)
 	var col: Color = PV.COLORS.get(banner_kind, Color.WHITE)
 	var big := P.is_big(banner_kind)
-	var name: String = banner_name if banner_name != "" else str(P.PU_SHORT.get(banner_kind, ""))
-	var tip: String = banner_tip if banner_tip != "" else str(P.PU_TIP.get(banner_kind, ""))
+	var name: String = banner_name if banner_name != "" else P.pu_short(banner_kind, Season.now)
+	var tip: String = banner_tip if banner_tip != "" else P.pu_tip(banner_kind, Season.now)
 	var nw := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
 	var tw := font.get_string_size(tip, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x if tip != "" else 0.0
 	var w := 64.0 + nw + (14.0 + tw if tip != "" else 0.0) + 20.0

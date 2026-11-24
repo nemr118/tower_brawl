@@ -11,6 +11,7 @@ signal picked(n: int)
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
 const Art = preload("res://client/lobby_art.gd")
+const Season = preload("res://client/season.gd")
 const SHEET := preload("res://assets/arena_cards.png")   # 400 x 225 a card: MIX, then LevelScript.PLAY's order
 const CW := 400.0
 const CH := 225.0
@@ -34,6 +35,8 @@ static func order() -> Array:
 # Arena n's card in the sheet (MIX is its first cell).
 static func src(n: int) -> Rect2:
 	var i := 0 if n == P.ARENA_MIX else LevelScript.PLAY.find(n) + 1
+	if n == P.ARENA_MIX and Season.harvest():
+		i = LevelScript.PLAY.size() + 1     # p4.18: the Harvest season's MIX (the keep, the bridges, the barn, the table), the sheet's last cell
 	return Rect2(maxi(i, 0) * CW, 0, CW, CH)
 
 func open(pick: int) -> void:
@@ -46,12 +49,16 @@ func open(pick: int) -> void:
 func close() -> void:
 	visible = false
 
+# Card i's place: five cards or fewer in rows of 3, more (p4.18: seven) in rows of 4, a little smaller.
 func _rect(i: int) -> Rect2:
-	var row := 0 if i < 3 else 1
-	var in_row := 3 if row == 0 else 2
-	var row_w := in_row * CARD.x + (in_row - 1) * GAP
-	var x := (1920.0 - row_w) * 0.5 + (i - row * 3) * (CARD.x + GAP)
-	return Rect2(Vector2(x, 200.0 + row * (CARD.y + 110.0)), CARD)
+	var n := order().size()
+	var per := 3 if n <= 5 else 4
+	var card := CARD if n <= 5 else Vector2(416, 234)
+	var row := i / per
+	var in_row := mini(per, n - row * per)
+	var row_w := in_row * card.x + (in_row - 1) * GAP
+	var x := (1920.0 - row_w) * 0.5 + (i - row * per) * (card.x + GAP)
+	return Rect2(Vector2(x, 200.0 + row * (card.y + 110.0)), card)
 
 func _process(delta: float) -> void:
 	if visible:

@@ -14,8 +14,20 @@ const ORDER := ["SHARPSHOOTER", "STOMP CHAMP", "BOOM BOOM", "CAT WHISPERER", "CA
 	"SCARY MOVIE STAR", "GHOST BUSTER", "GOOD SPORT", "BEST WIGGLE", "MAIN CHARACTER", "WILL WIN NEXT TIME",
 	"FASHION ICON", "CERTIFIED SILLY", "FAN FAVORITE", "NEVER GAVE UP"]
 
+# p4.18 the Harvest season's awards: assets/award_art_harvest.png, one row (tools/comfy/make_assets.py HARVEST_AWARDS)
+const SHEET_HV := preload("res://assets/award_art_harvest.png")
+const HARVEST := ["GOBBLE GOBBLE", "PIE FACE", "STUFFED", "LEFTOVERS", "GOBBLER", "PECKING ORDER", "TURKEY DINNER"]
+
+# Has this award a picture?
+static func has(title: String) -> bool:
+	return ORDER.has(title) or HARVEST.has(title)
+
 # The award's picture in r; false when it has none (a new award with no picture yet).
 static func draw(ci: CanvasItem, title: String, r: Rect2, a: float = 1.0) -> bool:
+	var h := HARVEST.find(title)
+	if h >= 0:
+		ci.draw_texture_rect_region(SHEET_HV, r, Rect2(h * CELL, 0, CELL, CELL), Color(1, 1, 1, a))
+		return true
 	var i := ORDER.find(title)
 	if i < 0:
 		return false

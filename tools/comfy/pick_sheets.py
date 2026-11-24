@@ -4,7 +4,7 @@ loading picture with the logo on it, the candy tricks' badges cut out on dark di
 game shows them), and the castle backdrops brought to the game's 480 x 270 next to today's.
     python3 tools/comfy/pick_sheets.py        -> $TB_COMFY_OUT/sheets/*.png"""
 import os
-from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageFont
+from PIL import ImageStat, Image, ImageDraw, ImageFilter, ImageChops, ImageFont
 
 OUT = os.environ.get("TB_COMFY_OUT", os.path.expanduser("~/.cache/tower-brawl-comfy"))
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -200,9 +200,71 @@ def ui():
     grid(rcells, 2, 700, 200, "A ribbon behind the round banners (ROUND 2, NAME WINS THE ROUND): pick one").save(f"{OUT}/sheets/ribbons.png")
 
 
+def harvest_paint():
+    """p4.18 the Harvest season's paintings (run_harvest.py paint): the loading picture with the logo, the
+    winner's backdrop, the two arena cards, the autumn far backdrop at the game's pixel size."""
+    cells = []
+    for i in range(5):
+        p = f"{OUT}/splash/harvest_{i}.png"
+        if not os.path.exists(p):
+            cells.append((f"loading {i}", None))
+            continue
+        im = Image.open(p).convert("RGBA")
+        lg, pad = logo(im.width)
+        im.alpha_composite(lg, ((im.width - lg.width) // 2, max(0, int(im.height * 0.035) - pad)))
+        im.convert("RGB").save(f"{OUT}/splash/harvest_{i}_logo.png")
+        cells.append((f"loading {i}", im.convert("RGB").resize((480, 270), Image.LANCZOS)))
+    for i in range(4):
+        p = f"{OUT}/winner/harvest_{i}.png"
+        cells.append((f"winner {i}", Image.open(p).convert("RGB").resize((480, 270), Image.LANCZOS) if os.path.exists(p) else None))
+    for k in ("barn", "table"):
+        for i in range(4):
+            p = f"{OUT}/cards/{k}_{i}.png"
+            cells.append((f"{k} card {i}", Image.open(p).convert("RGB").resize((480, 270), Image.LANCZOS) if os.path.exists(p) else None))
+    os.makedirs(f"{OUT}/backdrops/pix", exist_ok=True)
+    for i in range(3):
+        p = f"{OUT}/backdrops/autumn_k{i}.png"
+        if not os.path.exists(p):
+            cells.append((f"autumn sky {i}", None))
+            continue
+        im = Image.open(p).convert("RGB").resize((480, 270), Image.BOX)
+        im = im.quantize(colors=40, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).convert("RGB")
+        im.save(f"{OUT}/backdrops/pix/autumn_k{i}.png")
+        cells.append((f"autumn sky {i}", im))
+    grid(cells, 4, 480, 270, "The Harvest season's paintings: loading, the winner's backdrop, the arena cards, the autumn sky").save(f"{OUT}/sheets/harvest_paint.png")
+
+
+HARVEST_ICONS = ["dish", "pie", "popcorn", "crows", "turkey_time", "too_much_pie", "pea", "big_turkey", "pie_top", "splat",
+                 "gobble", "pie_face", "stuffed", "leftovers"]
+HARVEST_BIRDS = ["turkey_run", "turkey_jump", "big_stand", "big_peck", "big_down"]
+
+
+def harvest_icons():
+    """p4.18 the Harvest season's badges, awards and the two turkeys, cut off their magenta (a bird row = one try's poses)."""
+    os.makedirs(f"{OUT}/harvest/cut", exist_ok=True)
+    for names, cols, title, sheet in ((HARVEST_ICONS, 4, "Harvest badges and awards (big, and small at the bottom right): one a row", "harvest_icons"),
+                                      (HARVEST_BIRDS, 5, "The two turkeys: a row is one try (the same seed for every pose)", "harvest_birds")):
+        cells = []
+        order = [(k, i) for k in names for i in range(4)] if cols == 4 else [(k, i) for i in range(4) for k in names]
+        for k, i in order:
+            p = f"{OUT}/harvest/{k}_{i}.png"
+            tile = Image.new("RGBA", (200, 200), BG + (255,))
+            if cols == 4:
+                ImageDraw.Draw(tile).ellipse((20, 20, 180, 180), fill=(40, 30, 58, 255), outline=(255, 214, 90, 255), width=4)
+            ok = os.path.exists(p) and ImageStat.Stat(Image.open(p).convert("L")).stddev[0] >= 4
+            ic = cut(p, 256) if ok else None
+            if ic is not None:
+                ic.save(f"{OUT}/harvest/cut/{k}_{i}.png")
+                small = ic.resize((128, 128) if cols == 4 else (180, 180), Image.LANCZOS)
+                tile.alpha_composite(small, ((200 - small.width) // 2, (200 - small.height) // 2))
+                tile.alpha_composite(ic.resize((48, 48), Image.LANCZOS), (150, 150))
+            cells.append((f"{k} {i}", tile.convert("RGB")))
+        grid(cells, cols, 200, 200, title).save(f"{OUT}/sheets/{sheet}.png")
+
+
 if __name__ == "__main__":
     import sys
-    jobs = {f.__name__: f for f in (cards, splash, tricks, backdrops, winner, portraits, ui)}
+    jobs = {f.__name__: f for f in (cards, splash, tricks, backdrops, winner, portraits, ui, harvest_paint, harvest_icons)}
     for job in ([jobs[a] for a in sys.argv[1:]] if sys.argv[1:] else jobs.values()):
         try:
             job()

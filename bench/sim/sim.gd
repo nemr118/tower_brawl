@@ -172,7 +172,7 @@ const GHOST_POP := 180
 # first gets a SHIELD, and it runs off.
 const PET_CHANCE := 0.25
 const PET_CHANCE_HW := 0.4
-const PET_AT := [360, 720]
+const PET_AT := [120, 300]          # p4.18: 2 to 5 s in (it was 6 to 12 s: a third of the rounds were over by 9 s)
 const PET_LIFE := 600
 const PET_SPEED := 1.6
 # TRICK OR TREAT: a treat TREAT of the time (a random power-up, a BIG one 1 time in 6), else
@@ -198,6 +198,10 @@ const BATS_SPEED := 12.0
 const BATS_W := 520.0
 const BATS_H := 170.0
 const BAT_SWARM_TICKS := 480
+# p4.18 on THE HARVEST BARN (theme "barn") the sweep is a gust of leaves: the same rule,
+# sooner and more often (a round is over in about 11 s).
+const GUST_FIRST := 420
+const GUST_EVERY := [660, 960]
 const BAT_SWARM_R := 85.0
 # GHOSTFACE (the user's daughter's favourite, from TRICK OR TREAT MASK_CHANCE of the time):
 # no bow this round; letting go of shoot swings a knife down in front, KNIFE_TICKS long
@@ -226,6 +230,35 @@ const CANDY_G := 0.45
 const CANDY_BOUNCE := 0.35
 const CANDY_LIFE := 600
 const CANDY_R := 14.0
+# p4.18 the turkey (the Harvest season's pet, in the black cat's place): it comes TURKEY_AT ticks
+# into a round (TURKEY_CHANCE of rounds, TURKEY_CHANCE_BARN on THE HARVEST BARN), walks its
+# floor, and runs from the nearest living fighter within TURKEY_SEE: off a floor's end (it
+# falls to what is below, through the wrap too), over a wall it can flap over (TURKEY_FLAP,
+# under its own light gravity TURKEY_G), back if the wall is too tall. The first living
+# fighter to touch it gets a random regular power-up, and it flies off. It leaves by itself
+# after TURKEY_LIFE. The bots do not chase it.
+const TURKEY_CHANCE := 0.45
+const TURKEY_CHANCE_BARN := 0.9
+const TURKEY_AT := [120, 240]
+const TURKEY_LIFE := 900
+const TURKEY_WALK := 1.6
+const TURKEY_RUN := 6.0
+const TURKEY_SEE := 330.0
+const TURKEY_FLAP := 11.5
+const TURKEY_G := 0.6
+const TURKEY_FALL := 9.0
+# p4.18 PIE (the Harvest season): a pie splats where it lands: a blast PIE_FX of a bomb's, and
+# every living fighter within PIE_R is covered in cream PIED_TICKS (it sees nobody: in_smoke).
+const PIE_W := 13
+const PIE_FX := 0.6
+const PIE_R := 230.0
+const PIED_TICKS := 180
+# p4.18 catch-up help that cannot miss (TowerFall's autobalance; the October logs: 60% of the
+# BIG orbs were never taken): a person CATCH_UP_BEHIND or more points behind the leader
+# starts the round with a SHIELD.
+const CATCH_UP_BEHIND := 2
+# p4.18 a costume's swing comes with a short lunge (GHOSTFACE's knife got 4 kills in 18 turns)
+const KNIFE_LUNGE := 9.5
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -306,6 +339,8 @@ class Fighter:
 	var batted: int = 0         # inside a bat swarm (hidden) a little longer
 	var bats_t: int = 0         # BAT SWARM ticks left
 	var mask: bool = false      # GHOSTFACE, this round: a knife, no bow
+	var pied_t: int = 0         # p4.18 PIE: covered in cream this many ticks more (it sees nobody)
+	var caught_up: bool = false # p4.18: it started this round with catch_up's SHIELD (said once, at FIGHT)
 	var down_t: int = 0         # knocked down (GHOSTFACE) this many more ticks
 	var knife_t: int = 0        # a slash's ticks left
 	var knife_cd: int = 0       # ticks until it can slash again
@@ -385,6 +420,8 @@ var bats := {}                  # a bat swarm: {phase (0 screeching, 1 sweeping)
 var bats_at := -1               # the play tick the next swarm screeches (-1: none on this arena)
 var bats_hold := false          # a test knob (hw_gallery): the swarm stays where it is
 var candies: Array = []         # p4.13: {x, y (its middle), vx, vy, t, rest, sky}
+var season := ""                # p4.18: "" none, "halloween", "harvest" (the server sets it; proto.gd's seasons)
+var pet_always := false         # a test knob (the server's --pet-always): the pet comes every round, 1 s in
 var candy_t := -1               # play ticks to the next candy from the sky
 var candy_drop := CANDY_DROP    # a body's chance to drop one (the probe sets 1.0)
 var candy_trick := -1           # 2026-10-26 a test knob (the server's --candy-trick N, for pictures): every candy gives
@@ -516,9 +553,14 @@ func _reset_powers_round() -> void:
 	if hazards != null:
 		hazards.reset()
 	pet = {}
-	pet_at = rng.randi_range(PET_AT[0], PET_AT[1]) if rng.randf() < (PET_CHANCE_HW if level.theme == "halloween" else PET_CHANCE) else -1
+	if season == "harvest":     # p4.18: the turkey, early and often
+		pet_at = rng.randi_range(TURKEY_AT[0], TURKEY_AT[1]) if rng.randf() < (TURKEY_CHANCE_BARN if level.theme == "barn" else TURKEY_CHANCE) else -1
+	else:
+		pet_at = rng.randi_range(PET_AT[0], PET_AT[1]) if rng.randf() < (PET_CHANCE_HW if level.theme == "halloween" else PET_CHANCE) else -1
+	if pet_always:
+		pet_at = 60
 	bats = {}
-	bats_at = BATS_FIRST if level.theme == "halloween" else -1
+	bats_at = BATS_FIRST if level.theme == "halloween" else (GUST_FIRST if level.theme == "barn" else -1)
 	candies.clear()
 	candy_t = rng.randi_range(CANDY_EVERY[0], CANDY_EVERY[1])
 	orbs.clear()
@@ -1124,6 +1166,8 @@ func _power_timers(f: Fighter) -> void:
 			f.trick = 0
 	if f.batted > 0:
 		f.batted -= 1
+	if f.pied_t > 0:
+		f.pied_t -= 1
 	if f.mask:
 		_knife_tick(f)
 		if f.down_t > 0:
@@ -1386,6 +1430,9 @@ func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 		_event(P.E_IGNITE, int(a.x), int(surface_y if floor_hit else a.y), 1 if floor_hit else 0, 0)
 	elif a.kind == P.A_BOMB or a.kind == P.A_PUMPKIN:
 		a.fuse = BOMB_FUSE
+	elif a.kind == P.A_PIE:     # p4.18: a pie splats at once
+		a.dead = true
+		_pie(a)
 	elif a.kind == P.A_MIASMA:
 		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
 		_event(P.E_MIASMA, int(a.x), int(a.y), 0, 0)
@@ -1436,6 +1483,9 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 		elif a.kind == P.A_PUMPKIN:
 			a.dead = true
 			_pumpkin(a)
+		elif a.kind == P.A_PIE:
+			a.dead = true
+			_pie(a)
 		elif a.kind == P.A_MIASMA:
 			a.dead = true
 			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
@@ -1534,6 +1584,21 @@ func _explode(x: float, y: float, owner: int, k: float = 1.0, flags: int = -1) -
 			a.vx = dx / d * 12.0
 			a.vy = dy / d * 12.0 - 6.0
 
+# p4.18 PIE: the splat. A small blast, and cream on every living fighter within PIE_R.
+func _pie(a: Arrow) -> void:
+	var k := BIG_FX if a.big else 1.0
+	_explode(a.x, a.y, a.owner, PIE_FX * k, (1 if a.big else 0) | 8)
+	_event(P.E_PIE, int(a.x), int(a.y), a.owner, 1 if a.big else 0)
+	var r2 := PIE_R * PIE_R * k * k
+	for f in fighters:
+		if f.state == P.F_DEAD:
+			continue
+		var dx := wrap_d(a.x, f.x + HALF_W, W)
+		var dy := wrap_d(a.y, f.y + MID_Y, H)
+		if dx * dx + dy * dy <= r2:
+			f.pied_t = PIED_TICKS
+			_event(P.E_PIED, f.x + HALF_W, f.y, f.id, 0)
+
 func _tinks() -> void:
 	var flying: Array = []
 	for a in arrows:
@@ -1610,6 +1675,11 @@ func _update_powers() -> void:
 			_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 0)
 		cats.clear()
 		return
+	if play_t <= 2:
+		for f in fighters:    # p4.18: said once, at FIGHT
+			if f.caught_up:
+				f.caught_up = false
+				_event(P.E_CATCH_UP, f.x + HALF_W, f.y, f.id, 0)
 	_update_cats()
 	_update_bats()          # p4.12: the bats belong to THE HAUNTED HOUSE (power-ups or not)
 	if not powerups:
@@ -1686,6 +1756,8 @@ func _give(f: Fighter, kind: int) -> void:
 		f.pw_kind = kind          # the arrow kinds share the numbers 1..4
 	elif kind == P.PU_PUMPKIN:
 		f.pw_kind = P.A_PUMPKIN
+	elif kind == P.PU_PIE:
+		f.pw_kind = P.A_PIE
 	elif kind == P.PU_BATS:
 		f.bats_t = BAT_SWARM_TICKS
 	elif kind == P.PU_SHIELD:
@@ -1720,7 +1792,7 @@ func _give(f: Fighter, kind: int) -> void:
 		f.spike_regen = 0
 	elif kind == P.PU_SPEED:
 		f.speed_t = SPEED_TICKS
-	if (kind >= P.PU_FIRE and kind <= P.PU_SMOKE) or kind == P.PU_PUMPKIN:
+	if (kind >= P.PU_FIRE and kind <= P.PU_SMOKE) or kind == P.PU_PUMPKIN or kind == P.PU_PIE:
 		keep[f.id] = f.pw_kind
 
 # p4.12 TRICK OR TREAT: GHOSTFACE (MASK_CHANCE), a treat (a random power-up: its own pop and
@@ -1831,6 +1903,8 @@ func _knife(f: Fighter, ang: float, faced: bool) -> void:
 	f.knife_t = KNIFE_TICKS
 	f.knife_cd = KNIFE_CD
 	f.knife_hit = false
+	if absf(f.vx) < KNIFE_LUNGE:     # p4.18: a short lunge the way it faces
+		f.vx = f.facing * KNIFE_LUNGE
 	_event(P.E_KNIFE, f.x + HALF_W, f.y + MID_Y, f.id, 1 if f.facing > 0 else 0)
 
 func _knife_tick(f: Fighter) -> void:
@@ -1865,6 +1939,9 @@ func _update_pet() -> void:
 		if pet_at >= 0 and play_t >= pet_at:
 			pet_at = -1
 			_spawn_pet()
+		return
+	if int(pet.get("kind", 0)) == 1:
+		_update_turkey()
 		return
 	pet["t"] += 1
 	if pet["gone"] > 0:
@@ -1906,9 +1983,94 @@ func _spawn_pet() -> void:
 				long = false
 		if not long:
 			continue
-		pet = {"x": sp.x, "y": sp.y, "dir": 1 if rng.randf() < 0.5 else -1, "t": 0, "gone": 0}
-		_event(P.E_CAT_COME, int(sp.x), int(sp.y), 0, 0)
+		var turkey := season == "harvest"
+		pet = {"x": sp.x, "y": sp.y, "dir": 1 if rng.randf() < 0.5 else -1, "t": 0, "gone": 0, "kind": 1 if turkey else 0, "vy": 0.0, "air": false}
+		_event(P.E_CAT_COME, int(sp.x), int(sp.y), 1 if turkey else 0, 0)
 		return
+
+# p4.18 the turkey's tick (the rules: the constants' note above).
+func _update_turkey() -> void:
+	pet["t"] += 1
+	if pet["gone"] > 0:           # caught, or its time is up: it flies up and off
+		pet["gone"] -= 1
+		pet["x"] = fposmod(pet["x"] + pet["dir"] * TURKEY_RUN, W)
+		pet["y"] -= 7.0
+		if pet["gone"] == 0:
+			pet = {}
+		return
+	if pet["t"] >= TURKEY_LIFE:
+		pet["gone"] = 40
+		return
+	var near: Fighter = null
+	var best := TURKEY_SEE
+	for f in fighters:
+		if f.state == P.F_DEAD:
+			continue
+		var d := absf(wrap_d(f.x + HALF_W, pet["x"], W))
+		if d < best and absf(wrap_d(f.y + BODY_H, pet["y"], H)) < 170.0:
+			best = d
+			near = f
+	var run := near != null
+	if run:
+		pet["dir"] = 1 if wrap_d(near.x + HALF_W, pet["x"], W) >= 0.0 else -1
+	var dir: int = pet["dir"]
+	var px: float = pet["x"]
+	var py: float = pet["y"]
+	var sp := TURKEY_RUN if run else TURKEY_WALK
+	if pet["air"]:
+		pet["vy"] = minf(pet["vy"] + TURKEY_G, TURKEY_FALL)
+		var nx := px + dir * sp * 0.8
+		var ny: float = py + pet["vy"]
+		if level.cell_at(fposmod(nx + dir * 14.0, W), ny - 14.0) == 1:
+			nx = px                # a wall in the way: straight up or down
+		if pet["vy"] < 0.0 and level.cell_at(fposmod(nx, W), ny - 30.0) == 1:
+			pet["vy"] = 0.0        # its head meets a block
+			ny = py
+		elif pet["vy"] > 0.0:
+			var top := floorf(ny / 30.0) * 30.0     # the top of the cell its feet are in now
+			if top >= py - 0.01 and level.cell_at(fposmod(nx, W), ny) != 0:
+				ny = top           # it crossed that top coming down: it lands (a block or a ledge)
+				pet["air"] = false
+				pet["vy"] = 0.0
+		pet["x"] = fposmod(nx, W)
+		pet["y"] = fposmod(ny, H)
+	else:
+		var nx := px + dir * sp
+		var wall: bool = level.cell_at(fposmod(nx + dir * 16.0, W), py - 12.0) == 1
+		var floor_ahead: bool = level.cell_at(fposmod(nx + dir * 14.0, W), py + 2.0) != 0
+		if wall:
+			# three cells of wall or less and it flaps over when it is chased; else it turns back
+			if run and level.cell_at(fposmod(nx + dir * 16.0, W), py - 102.0) != 1 and level.cell_at(fposmod(px, W), py - 80.0) != 1:
+				pet["air"] = true
+				pet["vy"] = -TURKEY_FLAP
+			else:
+				pet["dir"] = -dir
+		elif not floor_ahead:
+			if run:                # off the floor's end, with a little hop
+				pet["air"] = true
+				pet["vy"] = -4.0
+				pet["x"] = fposmod(nx, W)
+			else:
+				pet["dir"] = -dir
+		else:
+			pet["x"] = fposmod(nx, W)
+	for f in fighters:
+		if f.state == P.F_DEAD:
+			continue
+		if absf(wrap_d(f.x + HALF_W, pet["x"], W)) < 32.0 and absf(wrap_d(f.y + BODY_H, pet["y"], H)) < 44.0:
+			_event(P.E_PET, int(pet["x"]), int(pet["y"]) - 20, f.id, 1)
+			_give(f, _pick_regular())
+			pet["gone"] = 40
+			pet["dir"] = 1 if wrap_d(f.x + HALF_W, pet["x"], W) >= 0.0 else -1
+			break
+
+# p4.18 catch-up help: the server calls it at a round's start, once the points are in.
+func catch_up() -> void:
+	var top := top_points()
+	for f in fighters:
+		if not f.bot and top - f.points >= CATCH_UP_BEHIND:
+			f.shield = maxi(f.shield, 1)
+			f.caught_up = true
 
 # p4.12 bats: the swarm on THE HAUNTED HOUSE (screech, then a band sweeping across: an
 # arrow flying into it drops, whoever is inside is hidden a moment), and each BAT SWARM
@@ -1952,7 +2114,8 @@ func _update_bats() -> void:
 			f.batted = 30
 	if (bats["dir"] > 0 and x0 > W) or (bats["dir"] < 0 and x0 + BATS_W < 0.0):
 		bats = {}
-		bats_at = play_t + rng.randi_range(BATS_EVERY[0], BATS_EVERY[1])
+		var every: Array = GUST_EVERY if level.theme == "barn" else BATS_EVERY
+		bats_at = play_t + rng.randi_range(every[0], every[1])
 
 # Out of sight for the others (and the bots): INVISIBLE now, or hidden in bats.
 static func hidden(f: Fighter) -> bool:
@@ -2075,25 +2238,30 @@ func _drop() -> void:
 
 # A regular kind by REGULAR_W, never the last one.
 func _pick_regular() -> int:
+	var kinds: Array = REGULAR_W.keys()
+	if season == "harvest":
+		kinds.append(P.PU_PIE)      # p4.18: PIE drops in the Harvest season
 	var total := 0
-	for k in REGULAR_W:
+	for k in kinds:
 		if k != pu_last:
 			total += _weight(k)
 	var r := rng.randi() % maxi(1, total)
-	for k in REGULAR_W:
+	for k in kinds:
 		if k == pu_last:
 			continue
 		r -= _weight(k)
 		if r < 0:
 			pu_last = k
-			if k == P.PU_BOMB and level.theme == "halloween":
-				return P.PU_PUMPKIN    # p4.12: on THE HAUNTED HOUSE the bombs are pumpkins
+			# p4.12: on THE HAUNTED HOUSE the bombs are pumpkins; p4.18: on the Harvest season's
+			# own arenas they are popcorn (the same kind: the season names and draws it)
+			if k == P.PU_BOMB and (level.theme == "halloween" or (season == "harvest" and (level.theme == "barn" or level.theme == "table"))):
+				return P.PU_PUMPKIN
 			return k
 	pu_last = P.PU_SHIELD
 	return P.PU_SHIELD
 
 func _weight(k: int) -> int:
-	return int(REGULAR_W[k])
+	return int(REGULAR_W.get(k, PIE_W))
 
 func _pick_big() -> int:
 	var pick: int = BIG_KINDS[rng.randi() % BIG_KINDS.size()]
@@ -2309,7 +2477,7 @@ func _fighter_zones(f: Fighter) -> void:
 					in_smoke = true
 				else:
 					in_miasma = true
-	f.in_smoke = in_smoke
+	f.in_smoke = in_smoke or f.pied_t > 0    # p4.18: cream in the eyes hides the others, as smoke does
 	f.burn_t = f.burn_t + 1 if in_fire else 0
 	f.miasma_t = f.miasma_t + 1 if in_miasma else 0
 	if f.burn_t >= FIRE_KILL_TICKS:
@@ -2487,7 +2655,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(f.gx))
 		buf.put_16(int(f.gy))
 		buf.put_u8((1 if f.popped_t > 0 else 0) | (2 if f.boo_t > 0 else 0) | (4 if f.boo_cd == 0 else 0))
-	buf.put_u8(0 if pet.is_empty() else 1)    # p4.12 the black cat
+	buf.put_u8(0 if pet.is_empty() else 1 + int(pet.get("kind", 0)))    # p4.12 the black cat (1); p4.18 the turkey (2)
 	if not pet.is_empty():
 		buf.put_16(int(pet["x"]))
 		buf.put_16(int(pet["y"]))

@@ -48,7 +48,8 @@ trap stop_comfy EXIT
   tools/comfy.sh start) >> "$LOG" 2>&1 || fail "ComfyUI did not start"
 for s in "$@"; do
   say "== $s"
-  python3 -u "$s" >> "$LOG" 2>&1 || fail "$s stopped with an error"
+  # shellcheck disable=SC2086   # a job can carry its own words: "run_harvest.py icons birds"
+  python3 -u $s >> "$LOG" 2>&1 || fail "$s stopped with an error"
   (cd "$VR" && tools/comfy.sh status) | grep -q running || fail "ComfyUI is gone (the watchdog?): see $HOME/.cache/vam_restyle or the log"
 done
 say "BATCH DONE"
