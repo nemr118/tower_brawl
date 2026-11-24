@@ -5,7 +5,8 @@
 # kind is kept; the splat creams who is near and kills who is in the blast; the cream
 # hides the others and ends; PIE drops only in the Harvest season; bombs come as popcorn
 # on the season's arenas), the catch-up SHIELD (2 points behind, people only, said once)
-# and the costume's lunge. Exit 1 on a failed check.
+# and the costume's lunge; then whole rounds of 8 bots in the season on each of MIX's
+# arenas (nobody ends inside a block, every round ends, what happened). Exit 1 on a failed check.
 #   godot --headless --path bench --script res://tools/harvest_probe.gd
 extends SceneTree
 
@@ -80,6 +81,7 @@ func _init() -> void:
 	_pie()
 	_catch_up()
 	_lunge()
+	_rounds(40)
 	_say("%s (%d fail) in %d ms" % ["PASS" if fails == 0 else "FAIL", fails, Time.get_ticks_msec() - t0])
 	quit(0 if fails == 0 else 1)
 
@@ -328,6 +330,69 @@ func _catch_up() -> void:
 	s.fighters[1].points = 1
 	s.catch_up()
 	_check(s.fighters[0].shield == 0 and s.fighters[1].shield == 0, "1 point apart: no SHIELD")
+
+# Whole rounds of 8 bots in the Harvest season on each of MIX's arenas, with the costume
+# on one seat: every round ends, nobody is ever inside a block, and the numbers.
+func _rounds(n: int) -> void:
+	for arena in LevelScript.mix_for("harvest"):
+		var s = SimScript.new(0, 24, 900 + arena)
+		s.respawn = false
+		s.powerups = true
+		s.season = "harvest"
+		s.set_arena(arena)
+		var tally := {"turkeys": 0, "came": 0, "pies": 0, "pied": 0, "dishes": 0, "tricks": 0, "costumes": 0, "pecks": 0, "peck_kills": 0}
+		var inside := 0
+		var endless := 0
+		var secs: Array = []
+		for r in n:
+			var list := []
+			for i in 8:
+				list.append({"id": i, "bot": true})
+			s.start_round(list)
+			s.frozen = false
+			if r % 4 == 0:
+				s.fighters[0].mask = true        # THE BIG TURKEY plays a quarter of the rounds
+			var t := 0
+			var last_cause := {}
+			while s.alive_count() > 1 and t < 3600:
+				t += 1
+				s.step()
+				for f in s.fighters:
+					if f.state != P.F_DEAD and s.box_hits_solid(f.x, f.y, SimScript.BODY_W, SimScript.BODY_H):
+						inside += 1
+				if not s.pet.is_empty() and int(s.pet["gone"]) == 0 and s.level.cell_at(s.pet["x"], s.pet["y"] - 1.0) == 1:
+					inside += 1
+				for e in s.take_events():
+					if e[0] == P.E_PET and e[4] == 1:
+						tally["turkeys"] += 1
+					elif e[0] == P.E_CAT_COME and e[3] == 1:
+						tally["came"] += 1
+					elif e[0] == P.E_PIE:
+						tally["pies"] += 1
+					elif e[0] == P.E_PIED:
+						tally["pied"] += 1
+					elif e[0] == P.E_CANDY_GET:
+						tally["dishes"] += 1
+					elif e[0] == P.E_TRICK and e[4] >= 1 and e[4] <= 3:
+						tally["tricks"] += 1
+					elif e[0] == P.E_TRICK and e[4] == 4:
+						tally["costumes"] += 1
+					elif e[0] == P.E_KNIFE:
+						tally["pecks"] += 1
+					elif e[0] == P.E_DEATH:
+						last_cause[e[3]] = e[4]
+					elif e[0] == P.E_KILL and int(last_cause.get(e[4], 0)) == 11:
+						tally["peck_kills"] += 1
+			if t >= 3600:
+				endless += 1
+			secs.append(t / 60.0)
+		secs.sort()
+		_say("%d rounds on %s: a median %.1f s; the turkey came %d times and was caught %d; %d pies creamed %d fighters; %d dishes (%d tricks, %d costumes); %d pecks, %d knockouts" % [
+			n, s.level.name, secs[secs.size() / 2], tally["came"], tally["turkeys"], tally["pies"], tally["pied"], tally["dishes"], tally["tricks"], tally["costumes"],
+			tally["pecks"], tally["peck_kills"]])
+		_check(inside == 0, "%s: nobody (and no turkey) is ever inside a block (%d ticks)" % [s.level.name, inside])
+		_check(endless == 0, "%s: every round ends within 60 s (%d did not)" % [s.level.name, endless])
+		_check(tally["came"] > 0 and tally["dishes"] > 0, "%s: the turkey comes and dishes are opened in %d rounds" % [s.level.name, n])
 
 func _lunge() -> void:
 	var s = _stage(KEEP, 3, 71)

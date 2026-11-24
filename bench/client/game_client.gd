@@ -172,6 +172,7 @@ func _ready() -> void:
 	lobby.bot_level_pressed.connect(_on_bot_level)
 	lobby.power_pressed.connect(_on_power)
 	lobby.season_picked.connect(func(pick): net.send({"kind": "season", "pick": pick}))   # p4.18
+	world.pview.test_cream = opts.has("cream")   # p4.18 a test knob for pictures: PIE's cream on your own screen
 	lobby.set_look(str(opts["look"]) if look_test else _look_label())
 	sticks = Sticks.new()
 	sticks.pump = str(opts.get("stick", "")) != "old"

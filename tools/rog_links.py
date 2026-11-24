@@ -101,7 +101,9 @@ page = f"""<!doctype html>
   {''.join(cards)}
   <p class="note">Scan a code with the phone's camera, or type the link. The first time, the phone warns about the
   certificate: tap Advanced, then Proceed. Everyone must be on the same Wi-Fi as this laptop.<br>
-  The host page (bots, arena, power-ups, kick, stats): <a href="{a.dash}">{a.dash}</a></p>
+  The host page (bots, arena, power-ups, kick, stats): <a href="{a.dash}">{a.dash}</a><br>
+  THE BIG SCREEN, for a TV plugged into this laptop (the match full screen, a code to join; press F11 for full screen):
+  <a href="https://127.0.0.1:{a.port}/v2/?tv">https://127.0.0.1:{a.port}/v2/?tv</a></p>
 </main></body></html>
 """
 with open(a.out, "w") as f:

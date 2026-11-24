@@ -59,6 +59,7 @@ var hearts: Array = []             # [pos, secs left]: hearts rising from a pett
 var candy_pops: Array = []         # p4.13 a candy opened: {pos, left, seat, word, icon, trick, at}
 var confetti: Array = []           # [pos, vel, colour, secs left, spin]: a candy's wrapper bits
 var pied := {}                     # p4.18 PIE: seat -> when (t) it was covered in cream
+var test_cream := false            # a test knob (the page's ?cream): the cream on your own screen, again and again (pictures)
 const PIED_S := SimScript.PIED_TICKS / 60.0
 const FEATHER_COLS := [Color(0.55, 0.3, 0.12), Color(0.95, 0.5, 0.1), Color(0.85, 0.2, 0.1), Color(0.98, 0.8, 0.25), Color(1, 1, 1)]
 const CANDY_POP_S := 1.8
@@ -390,7 +391,9 @@ func _draw() -> void:
 		else:
 			_text_c(at, p[1], 22 if p[5] else 18, Color(col, a))
 	var cream_k := clampf(1.0 - (t - float(pied.get(me, -99.0))) / PIED_S, 0.0, 1.0)
-	if blind and cream_k > 0.0:
+	if test_cream:
+		_draw_cream_screen(1.0 - fposmod(t, PIED_S) / PIED_S)
+	elif blind and cream_k > 0.0:
 		_draw_cream_screen(cream_k)   # p4.18 PIE: cream over your own screen, sliding off
 	elif blind:
 		draw_rect(Rect2(0, 0, 1920, 1080), Color(0.5, 0.52, 0.58, 0.32))
