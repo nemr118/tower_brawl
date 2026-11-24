@@ -18,9 +18,10 @@ import time
 from collections import Counter, defaultdict
 
 CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "poison", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes",
-          10: "a furnace", 11: "GHOSTFACE's knife"}
-BIG = {"GHOST CATS", "RAIN", "INVISIBLE", "FREEZE", "SPIKED SHIELD", "SUPER SPEED"}   # p4.9's BIG power-ups
-ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE", 4: "THE BOILER ROOM"}
+          10: "a furnace", 11: "the costume's knife or peck"}   # p4.18: THE BIG TURKEY pecks
+BIG = {"GHOST CATS", "RAIN", "INVISIBLE", "FREEZE", "SPIKED SHIELD", "SUPER SPEED", "BAT SWARM", "CROWS"}   # the BIG power-ups (p4.18: CROWS is BAT SWARM's Harvest name)
+ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE", 4: "THE BOILER ROOM", 5: "THE HARVEST BARN",
+          6: "THE BIG TABLE"}   # p4.18: a round line carries its arena's name too (arena_name): that one wins
 
 
 def when(t):
@@ -90,7 +91,7 @@ def main():
     # the server
     print("\nTHE SERVER")
     for s in by["start"]:
-        print(f"  {when(s['t'])} started {s.get('version')} ({s.get('bots')} bots {s.get('bot_level')}, arena {s.get('arena')}, host port {s.get('admin_port', 0)})")
+        print(f"  {when(s['t'])} started {s.get('version')} ({s.get('bots')} bots {s.get('bot_level')}, arena {s.get('arena')}, host port {s.get('admin_port', 0)}{', season ' + (s['season'] or 'none') if 'season' in s else ''})")
     reps = by["report"]
     if reps:
         worst = max(reps, key=lambda r: r.get("tick_max_ms", 0))
@@ -111,7 +112,7 @@ def main():
     print("\nMATCHES AND ROUNDS")
     if rounds:
         secs = [r["secs"] for r in rounds]
-        arenas = Counter(ARENAS.get(r.get("arena"), str(r.get("arena"))) for r in rounds)
+        arenas = Counter(r.get("arena_name") or ARENAS.get(r.get("arena"), str(r.get("arena"))) for r in rounds)
         causes = Counter(CAUSES.get(d[2], str(d[2])) for r in rounds for d in r.get("deaths", []))
         print(f"  {len(matches)} matches ended, {len(rounds)} rounds (a median {med(secs):.1f} s, the longest {max(secs):.1f} s), "
               f"{sum(1 for r in rounds if r.get('draw'))} draws")

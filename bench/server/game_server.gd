@@ -345,7 +345,8 @@ func _ready() -> void:
 		"tls": tls_opts != null, "bots": bots_wanted, "power_arrows": sim.power_arrows, "powerups": sim.powerups, "goal_override": goal_override,
 		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick), "bot_level": SimScript.BrainScript.NAMES[sim.bot_level],
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(), "soak": soak,
-		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on, "admin_port": host_port}
+		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on, "admin_port": host_port,
+		"season": _season(), "season_pick": season_pick}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
 	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power-ups %s, %s, arena %s, cpu %s x%d, report in %s" % [
@@ -842,7 +843,7 @@ func _match_tick() -> void:
 			server_log.store_line(JSON.stringify({"kind": "round", "t": Time.get_unix_time_from_system(), "match": match_no,
 				"round": round_no, "arena": sim.level.id, "secs": snappedf(_round_secs(), 0.01), "winner": winner, "draw": draw,
 				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths,
-				"names": _seat_names()}))
+				"names": _seat_names(), "arena_name": sim.level.name, "season": sim.season}))   # p4.18: the arena by name (numbers move), the season
 			server_log.flush()
 			if not draw:
 				_mcount(winner, "round_wins")   # p4.11
