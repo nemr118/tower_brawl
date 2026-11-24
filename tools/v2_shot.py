@@ -34,6 +34,8 @@ ap.add_argument("--until", action="append", default=[], help="TEXT@D1,D2: wait f
                 "TEXT@cast:SECS: every frame for SECS s after it (<out>_<word>/NNN.jpg). Again for the next --until "
                 "(p4.17: '[Round]@cast:3', '[Winner]@3,15' = the winner's screen, then the lobby with the awards)")
 ap.add_argument("--until-timeout", type=float, default=150.0, help="seconds to wait for each --until line")
+ap.add_argument("--no-join", action="store_true", help="p4.18: open the page with no name and no join (the join screen as a new phone sees it; with --extra tv: THE BIG SCREEN)")
+ap.add_argument("--host-start", type=int, default=0, help="p4.18: start the match through the server's host port (--admin-port N) in place of a tap on START")
 ap.add_argument("--port", type=int, default=9334)
 ap.add_argument("--wait", type=float, default=9.0, help="seconds for the page to load and join")
 ap.add_argument("--round-wait", type=float, default=4.3, help="seconds from START to the round shot (3 s countdown + the ROUND banner; less on a slow page)")
@@ -156,7 +158,7 @@ if a.phone:
     cmd("Emulation.setUserAgentOverride", userAgent=ua)
 else:
     cmd("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=False)
-url = f"{a.url}?server={a.server}&name={a.name}&join&info" + (f"&{a.extra}" if a.extra else "")
+url = f"{a.url}?server={a.server}" + ("&info" if a.no_join else f"&name={a.name}&join&info") + (f"&{a.extra}" if a.extra else "")
 cmd("Page.navigate", url=url)
 drain(a.wait)
 # the old shell's full-screen gate ("Tap to play full screen") sits over the canvas on a phone: tap it away
@@ -179,7 +181,13 @@ if a.lobby_tap:
     shot("lobby_tap")
     tap(960, 1060)      # a tap at the bottom edge: a picker or a menu closes
     drain(0.8)
-tap(1230, 854)          # START (lobby.gd since 2026-10-25: the big button at 920..1860 x 798..952)
+if a.host_start:
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{a.host_start}/start", data=b"{}", method="POST"), timeout=5).read()
+    except Exception as e:
+        print("host start:", e, flush=True)
+else:
+    tap(1230, 854)      # START (lobby.gd since 2026-10-25: the big button at 920..1860 x 798..952)
 if a.burst > 0:
     cast("burst", a.burst)
 else:
