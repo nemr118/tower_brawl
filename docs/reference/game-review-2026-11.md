@@ -108,6 +108,24 @@ Ranked by what the logs and pictures show, not by size.
 
 **Leave alone:** the round length, the walls at 25 s, the bots' level, ghosts, the server's network code. The numbers say they work.
 
+## Bugs the code hunt found (a helper, 2026-11-23)
+It read the server, the rules and the page in full, ran its own probes on a test server, and checked the October logs. I checked the main ones again in the logs. Most harmful first.
+
+1. **A dropped phone loses its seat after 8 s** (`game_server.gd` `HOLD_TICKS`). The fighter plays on as a bot; the person comes back to the lobby view, must tap JOIN, gets the lowest free seat (maybe another colour) and 0 points. On 25 October: 33 drops, 17 came back in time (3 to 8 s), 16 lost the seat. Fix: hold a seat 60 s during a match, and let the page take its seat back by itself.
+2. **After a phone freezes for 2 s or more, its clock can run far ahead and never come back** (`net.gd`: one false long ping). Seen in a probe: after a 3 s freeze the page ran 176 ticks ahead and drew its own fighter 100 to 540 px off until a reload. Fix: cap the ping the clock uses at 300 ms, and clamp the server's margin byte.
+3. **A freed seat's fighter stays in the round and can win it.** The banner then says " WINS THE ROUND" with no name, and the point goes to an empty seat. 6 times in the two nights. Fix: take that fighter out of the round, or keep the name and points to the round's end.
+4. **The round's winner can still be killed in the 1.5 s before the point** (an arrow in the air, a blast, poison). The banner says X WINS over X's body, and the point counts. 10 of 248 rounds on 25 October, one of them a match point. A rule to pick: the winner is safe once the round is called, or nobody scores.
+5. **The server never notices a silent phone.** A frozen page keeps its seat with its last buttons held down, round after round; and a phone that returns on a new socket gets a second seat. Fix: no packet for 3 s counts as a drop; a known token takes its old seat over.
+6. **After a server restart, an open page plays without prediction** until it is reloaded (`predict.gd` keeps the old server's tick). Fix: reset it when the socket opens.
+7. **A thumb already on the glass when the sticks appear is ignored until lifted** (kids rest their thumbs through 3-2-1). And a cancelled touch fires an armed shot. Fix: take an unknown touch as a new one.
+8. **SKIP works from the replay's first frame, with one tap, for everyone**, and sits where right thumbs play. 10 of 31 matches were skipped, 4 within 2 s. Fix: SKIP wakes up 2 s in, away from the JUMP corner.
+9. **The winner's screen gets what the replay leaves of 12 s:** 6.2 s after a 1-kill replay, 3.6 s after 3 kills, 0.8 s after 6. The awards and p4.17's painted screen live in that rest. Fix: the server adds the replay's length (it knows the winner's kills) to a fixed 8 s.
+10. **Four lists in the page only grow** (`net.gd`, `predict.gd`): about 1.3 MB an hour. Fix: cap them.
+11. **After 5 s without a connection every lobby says "ONE MORE STEP: open https://.../v2ws"**, which is wrong advice after a Wi-Fi blip. Fix: only when the socket never opened.
+12. **A socket that closes while the send path is blocked keeps its seat "on"** (rare; a host kick clears it).
+
+**Looked solid:** no stuck phase; join, leave, kick, start, stop at every phase edge; a 9th phone (FULL, then JOIN when a seat frees); power-up state between rounds and matches; the server's memory over 8 hours (flat within 3 MB).
+
 ## Housekeeping
 - **p4.15, p4.16 and p4.17 have no night on record.** The wall moves, the BUTTONS layout, the iPhone speed-up and the new winner's screen are unjudged. Before Thursday: 15 minutes with two or three phones, one of them an iPhone. Watch for the white screen, the frame rate, and a stutter when the winner's screen comes up.
 - **The ROG was off on 2026-11-23** (no answer on Tailscale, the wire or Wi-Fi). It has to be on for a deploy, and its logs since 26 October are still on it.
