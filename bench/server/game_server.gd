@@ -1126,6 +1126,21 @@ func _save_lobby() -> void:
 		f.store_string(JSON.stringify({"bots": bots_wanted, "bot_level": sim.bot_level, "arena": arena_pick, "power": sim.powerups,
 			"season": season_pick}))
 
+# p4.20 TONIGHT'S CHAMPIONS: the 8 names with the most matches won tonight (then rounds won,
+# then knockouts), each [name, matches won, rounds won, knockouts, a bot?]. Only who played a match.
+func _champs() -> Array:
+	var out: Array = []
+	for r in stats.values():
+		if int(r.get("matches", 0)) > 0 or int(r.get("round_wins", 0)) > 0:
+			out.append([str(r["name"]), int(r.get("match_wins", 0)), int(r.get("round_wins", 0)), int(r.get("kills", 0)), bool(r.get("bot", false))])
+	out.sort_custom(func(a, b):
+		if a[1] != b[1]:
+			return a[1] > b[1]
+		if a[2] != b[2]:
+			return a[2] > b[2]
+		return a[3] > b[3])
+	return out.slice(0, 8)
+
 # The seats bots sit on now (the logs: a bot's name does not say it is one).
 func _bot_seats() -> Array:
 	var out: Array = []
@@ -1334,6 +1349,7 @@ func _send_seats(target: int) -> void:
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"season": _season(), "season_pick": season_pick,
 		"silly": silly if phase >= P.PH_ROUND_START else 0,     # p4.20: this round's surprise (the ROUND banner says it)
+		"champs": _champs(),      # p4.20 TONIGHT'S CHAMPIONS (client/lobby_champs.gd)
 		"names": _names_list(),
 		"seats": list}
 	_out(target, JSON.stringify(msg))

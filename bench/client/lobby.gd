@@ -42,6 +42,7 @@ const Count = preload("res://client/lobby_count.gd")
 const Arenas = preload("res://client/lobby_arenas.gd")
 const Howto = preload("res://client/lobby_howto.gd")   # p4.18: HOW TO PLAY, three pictures
 const Names = preload("res://client/lobby_names.gd")   # p4.18: WHO ARE YOU? the names the server knows
+const Champs = preload("res://client/lobby_champs.gd")       # p4.20: TONIGHT'S CHAMPIONS
 const Settings = preload("res://client/lobby_settings.gd")   # p4.19: one panel for LOOK, CONTROLS, SOUND, SEASON
 const Polish = preload("res://client/polish.gd")
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
@@ -88,6 +89,9 @@ var season_btn = Art.Btn.new()    # p4.18: top left: AUTO (by the server's date)
 var howto_btn = Art.Btn.new()     # p4.18: under it: HOW TO PLAY
 var howto := Howto.new()
 var settings := Settings.new()
+var champs_board := Champs.new()  # p4.20
+var champs_btn = Art.Btn.new()    # under HOW TO PLAY: TONIGHT
+var champs: Array = []            # the seats message's "champs"
 var settings_btn = Art.Btn.new()  # p4.19: top right, in place of LOOK and CONTROLS (polish "settings")
 var one_panel := false            # is that polish on?
 var who := Names.new()
@@ -214,6 +218,11 @@ func _init() -> void:
 	_btn(howto_btn, face.darkened(0.2), ink, 30, Rect2(60, 164, 330, 64), 0, corner)
 	howto_btn.say("", "?  HOW TO PLAY")
 	howto_btn.pressed.connect(open_howto)
+	_btn(champs_btn, face.darkened(0.2), ink, 30, Rect2(60, 172, 340, 62), 0, corner)     # p4.20
+	champs_btn.say("", "TONIGHT")
+	champs_btn.pic = UI_ICONS
+	champs_btn.pic_src = Rect2(IC_CROWN * 128, 0, 128, 128)
+	champs_btn.pressed.connect(func(): champs_board.open(champs))
 	one_panel = Polish.on("settings")
 	_btn(settings_btn, face.darkened(0.2), ink, 34, Rect2(1520, 18, 340, 80), 8, corner)
 	settings_btn.say("", "SETTINGS")
@@ -250,6 +259,8 @@ func _init() -> void:
 	root.add_child(howto)             # p4.18: over the arena picker too
 	howto.pal = pal
 	who.pal = pal
+	root.add_child(champs_board)      # p4.20
+	champs_board.pal = pal
 	root.add_child(settings)          # p4.19
 	settings.set_dress(pal)
 	settings.look_picked.connect(func(pick): look_picked.emit(pick))
@@ -395,6 +406,8 @@ func _apply_dress(d: String) -> void:
 	for b in [look_btn, controls_btn, season_btn, howto_btn]:
 		b.setup(face.darkened(0.2), ink, 30)
 	settings_btn.setup(face.darkened(0.2), ink, 34)
+	champs_btn.setup(face.darkened(0.2), ink, 30)
+	champs_board.pal = pal
 	if one_panel:
 		howto_btn.size_px = 34
 	settings.set_dress(pal)
@@ -411,7 +424,7 @@ func set_tv(urls: Array, qr: Array) -> void:
 	tv = true
 	tv_urls = urls
 	tv_qr = qr
-	for b in [arena_btn, power_btn, bots_minus, bots_plus, level_btn, main_btn, leave_btn, season_btn, howto_btn, look_btn, controls_btn, settings_btn]:
+	for b in [arena_btn, power_btn, bots_minus, bots_plus, level_btn, main_btn, leave_btn, season_btn, howto_btn, look_btn, controls_btn, settings_btn, champs_btn]:
 		b.visible = false
 	name_edit.visible = false
 	dock.queue_redraw()
@@ -435,10 +448,19 @@ func _paint_tv(c: Control, txt: Color) -> void:
 		c.draw_string(Art.BODY, Vector2(x, 832), "Open this computer's address on your phone.", HORIZONTAL_ALIGNMENT_LEFT, -1, 46, txt)
 	else:
 		c.draw_string(Art.DISPLAY, Vector2(x, 838), str(tv_urls[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 60, txt)
-	c.draw_string(Art.BODY, Vector2(x, 896), "Point a phone's camera at the code, or type the address. Up to 8 players.", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color(pal["dim"]))
-	c.draw_string(Art.BODY, Vector2(x, 944), tv_line, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(pal["faint"], 0.95))
+	# (shorter words when tonight's champions take the right side)
+	c.draw_string(Art.BODY, Vector2(x, 896), "Point a phone's camera at the code. Up to 8 players." if not champs.is_empty() else
+		"Point a phone's camera at the code, or type the address. Up to 8 players.", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color(pal["dim"]))
+	c.draw_string(Art.BODY, Vector2(x, 944), tv_line, HORIZONTAL_ALIGNMENT_LEFT, 850.0 if not champs.is_empty() else -1.0, 30, Color(pal["faint"], 0.95))
 	if tv_sound_hint:
 		Art.text(c, Art.BODY, Vector2(x, 996), "Click this screen once to turn the sound on.", 34, gold, 5, Color(0.03, 0.01, 0.05))
+	if not champs.is_empty():       # p4.20: tonight's champions, at the right of THE BIG SCREEN's lobby
+		var cb := Rect2(1270, 668, 590, 330)
+		Art.panel(c, cb, Color(pal["panel"], 0.9), Color(pal["panel_edge"], 0.9), 20, Color(0, 0, 0, 0.4), 10)
+		Art.text(c, Art.DISPLAY, Vector2(cb.position.x, cb.position.y + 44.0), "TONIGHT'S CHAMPIONS", 34, gold, 5, Color(0.03, 0.01, 0.05), HORIZONTAL_ALIGNMENT_CENTER, cb.size.x)
+		c.draw_set_transform(Vector2(cb.position.x + 20.0, cb.position.y + 56.0), 0.0, Vector2(0.58, 0.58))
+		Champs.rows(c, champs, Rect2(0, 0, (cb.size.x - 40.0) / 0.58, (cb.size.y - 70.0) / 0.58), pal, 5)
+		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 var tv_line := ""                 # the settings in words (a TV has no buttons)
 var tv_sound_hint := false        # p4.19: sound is on but the browser waits for one click
@@ -490,6 +512,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	cards.connected = connected
 	cards.set_seats(list, my_seat, phase, bots, m.get("awards", []))
 	known_names = m.get("names", [])
+	champs = m.get("champs", [])
+	champs_btn.visible = one_panel and not tv and not champs.is_empty()   # (nothing to show before the night's first match)
 	seated_names.clear()
 	for st in list:
 		if int(st.get("kind", 0)) == 1:
