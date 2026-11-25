@@ -853,9 +853,11 @@ func _on_message(m: Dictionary) -> void:
 			print("🎮 [Silly] %s" % P.silly_name(sl, str(m.get("season", Season.now))))
 		silly_now = sl
 		Teams.read(m)              # TEAMS: the mode and each seat's team
+		# p4.22 the nights to Christmas, from every seats message (a page left open past midnight counts on);
+		# the test knob ?sleeps=N (pictures of the countdown) wins over the server's date
+		Season.sleeps = int(opts["sleeps"]) if opts.has("sleeps") else int(m.get("sleeps", -1))
 		if m.has("season") and str(m["season"]) != Season.now:   # p4.18: the server's season dresses the page
 			Season.now = str(m["season"])
-			Season.sleeps = int(m.get("sleeps", -1))     # p4.22
 			print("🎮 [Season] %s" % P.SEASON_LABEL.get(Season.now, "NONE"))
 			_on_season()
 		elif str(m.get("season_pick", "auto")) != lobby.season_pick:
