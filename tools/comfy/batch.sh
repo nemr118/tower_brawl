@@ -43,7 +43,9 @@ why=$(busy) && fail "busy again after the lock ($why)"
 say "the card: $(vram_mib) MiB in use; starting ComfyUI"
 stop_comfy() { (cd "$VR" && tools/comfy.sh stop >> "$LOG" 2>&1); say "ComfyUI stopped"; }
 trap stop_comfy EXIT
-(cd "$VR" && systemd-run --user --scope -q -p MemoryMax=30G env VR_COMFY_ROOT="$HOME/ComfyUI" \
+# TB_MEM_MAX: ComfyUI's memory limit. 30G for pictures. ACE-Step (run_music.py) needs 44G: with 30G its
+# text model is built on the card, where it cannot see the 0.50 cap, and runs out of memory at load.
+(cd "$VR" && systemd-run --user --scope -q -p MemoryMax="${TB_MEM_MAX:-30G}" env VR_COMFY_ROOT="$HOME/ComfyUI" \
   VR_COMFY_PY="$HOME/ComfyUI/venv-py312/bin/python" VR_VRAM_FRACTION=0.50 VR_FP8=1 VR_COMFY_EXTRA="" \
   tools/comfy.sh start) >> "$LOG" 2>&1 || fail "ComfyUI did not start"
 for s in "$@"; do

@@ -73,6 +73,7 @@ var title_pal: Dictionary = {}
 var round_name := ""               # p4.17: the round's winner (the big line) and a draw
 var round_draw := false
 var round_winner := 0              # p4.19: the round winner's seat (it picks the silly line)
+var silly := 0                     # p4.20: this round's surprise for everyone (the seats message; proto.gd SILLY_*)
 var view := Rect2(0, 0, 1920, 1080)   # p4.17: the part of the 1920 x 1080 design the window shows (the winner's backdrop fills it)
 
 func _init() -> void:
@@ -141,6 +142,7 @@ func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: 
 	if not seats_msg.is_empty():
 		seats = seats_msg["seats"]
 		goal = int(seats_msg.get("goal", 0))
+		silly = int(seats_msg.get("silly", 0))
 	snap = s
 	my_seat = seat
 	hidden = lobby_shown
@@ -168,7 +170,11 @@ func _banner_spec() -> Array:
 	if phase == P.PH_ROUND_START:
 		main = ["ROUND %d" % round_no, 124, title_pal["logo_top"], title_pal["logo_bot"], title_pal["logo_rim"], 430]
 		rib = LevelScript.name_of(int(snap.get("arena", 0)))
-		extra.append(["GET READY", 36, Color(0.88, 0.88, 0.95), 600])
+		if silly > 0 and P.silly_name(silly, Season.now) != "":     # p4.20: a silly round says what it is
+			rib = P.silly_name(silly, Season.now)
+			extra.append(["SILLY ROUND", 52, Color(1.0, 0.85, 0.3), 616])
+		else:
+			extra.append(["GET READY", 36, Color(0.88, 0.88, 0.95), 600])
 	elif phase == P.PH_PLAY:
 		if fight_t > 0.0:
 			main = ["FIGHT!", 160, Color(1.0, 0.93, 0.5), Color(1.0, 0.22, 0.06), Color(0.45, 0.04, 0.02), 470]
@@ -283,6 +289,8 @@ func _paint(c: Control) -> void:
 		_banner(c, font, banner, 78, banner_color, 440)
 	elif phase == P.PH_MATCH_END and banner != "":
 		Winner.paint(c, end_t, winner_seat, winner_name, awards, left, view)   # client/winner_view.gd (2026-10-25)
+	if silly > 0 and phase == P.PH_PLAY and fight_t <= 0.0:     # p4.20: the silly round's name stays up, small
+		_silly_pill(c)
 	if banner_t > 0.0 and banner_kind > 0:
 		if new_look:
 			_power_card2(c)
@@ -519,3 +527,13 @@ func _note_pill(c: Control) -> void:
 	var r := Rect2(960.0 - w * 0.5, 992.0, w, 52.0)
 	c.draw_style_box(Art.box(Color(0.05, 0.04, 0.09, 0.88 * a), Color(1.0, 0.82, 0.3, 0.8 * a), 26, 2, 4, Color(0, 0, 0, 0.4 * a), 8), r)
 	c.draw_string(Art.BODY, Vector2(r.position.x + 32.0, r.position.y + 35.0), note, HORIZONTAL_ALIGNMENT_LEFT, w - 64.0, 28, Color(1.0, 0.95, 0.8, a))
+
+# p4.20: a silly round's name, small, under the cards (someone who looked away still knows).
+func _silly_pill(c: Control) -> void:
+	var words := P.silly_name(silly, Season.now)
+	if words == "":
+		return
+	var w := Art.DISPLAY.get_string_size(words, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x + 44.0
+	var r := Rect2(960.0 - w * 0.5, 90.0, w, 40.0)
+	c.draw_style_box(Art.box(Color(0.16, 0.08, 0.02, 0.85), Color(1.0, 0.82, 0.3, 0.9), 20, 2, 4), r)
+	c.draw_string(Art.DISPLAY, Vector2(r.position.x + 22.0, r.position.y + 29.0), words, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1.0, 0.88, 0.45))

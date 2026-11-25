@@ -117,6 +117,7 @@ var rep_errors := 0
 var rep_mouse_shots := 0
 var rep_ua := ""
 var deathcam                      # p4.8: the match end's montage of the winner's kills
+var silly_now := 0                # p4.20: the silly round the seats message last named
 var sfx                           # p4.19: the sounds (client/sfx.gd; sfx.set_on(true or false) for the lobby's SOUND button)
 var match_msg := {}               # the match_end message, shown once the montage is done
 var fps_t := 0.0
@@ -758,6 +759,11 @@ func _on_message(m: Dictionary) -> void:
 		_say(str(m.get("text", "")), 4.0)
 	elif kind == "seats":
 		seats_msg = m
+		var sl := int(m.get("silly", 0))        # p4.20: a silly round starts: a ta-da, and a line for the tools
+		if sl > 0 and sl != silly_now:
+			sfx.play("lid")
+			print("🎮 [Silly] %s" % P.silly_name(sl, str(m.get("season", Season.now))))
+		silly_now = sl
 		if m.has("season") and str(m["season"]) != Season.now:   # p4.18: the server's season dresses the page
 			Season.now = str(m["season"])
 			print("🎮 [Season] %s" % P.SEASON_LABEL.get(Season.now, "NONE"))

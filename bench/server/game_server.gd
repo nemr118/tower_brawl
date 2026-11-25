@@ -254,6 +254,10 @@ var bots_wanted := MAX_BOTS
 var arena_pick := P.ARENA_MIX    # the lobby's ARENA (G5): MIX or one layout of sim/level.gd
 var season_pick := "auto"        # p4.18 the lobby's SEASON (proto.gd SEASON_PICKS): auto = by this computer's date
 var start_power := 0             # a test knob (--start-power N): every fighter starts each round with power-up N
+var silly := 0                   # p4.20: this round's surprise for everyone (proto.gd SILLY_*; 0: a plain round)
+var silly_last := 0              # the last one played (never the same twice in a row)
+var silly_every := 3             # every third round (--silly-every N; 0: never). The lobby's POWER-UPS OFF turns them off too
+var silly_force := 0             # a test knob (--silly N): every round is silly round N
 var mix_i := 0                   # MIX: the next arena in LevelScript.PLAY
 var goal_override := 0
 var seats_dirty := true
@@ -339,6 +343,8 @@ func _ready() -> void:
 	sim.candy_trick = int(o.get("candy-trick", -1))
 	sim.pet_always = o.has("pet-always")
 	start_power = int(o.get("start-power", 0))
+	silly_every = maxi(0, int(o.get("silly-every", 3)))
+	silly_force = int(o.get("silly", 0))
 	if o.has("season") and P.SEASON_PICKS.has(str(o["season"]).to_lower()):
 		season_pick = str(o["season"]).to_lower()
 	sim.season = _season()
@@ -990,7 +996,8 @@ func _match_tick() -> void:
 				"round": round_no, "arena": sim.level.id, "secs": snappedf(_round_secs(), 0.01), "winner": winner, "draw": draw,
 				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths,
 				"names": _seat_names(), "arena_name": sim.level.name, "season": sim.season,   # p4.18: the arena by name (numbers move), the season
-				"bots": _bot_seats()}))   # p4.19: the bots' seats (a bot is GRAVY now, not BOT 3)
+				"bots": _bot_seats(),     # p4.19: the bots' seats (a bot is GRAVY now, not BOT 3)
+				"silly": P.silly_name(silly, sim.season)}))   # p4.20: "" for a plain round
 			server_log.flush()
 			if not draw:
 				_mcount(winner, "round_wins")   # p4.11
@@ -1192,6 +1199,11 @@ func _start_round() -> void:
 	if start_power > 0:
 		for f in sim.fighters:
 			sim._give(f, start_power)
+	silly = _pick_silly()      # p4.20: every third round is a silly one (0: a plain round)
+	if silly > 0:
+		sim.silly_round(silly)
+		_say("🏰 [ROUND] %d is a silly round: %s" % [round_no, P.silly_name(silly, sim.season)])
+	seats_dirty = true         # (the pages read the round's surprise from the seats message)
 	round_first = true     # p4.11
 	last_pos.clear()
 	if pu_gallery:
@@ -1220,7 +1232,23 @@ func _stop_match() -> void:
 	_out(0, JSON.stringify({"kind": "note", "text": "The match stopped: a match needs 2 fighters."}))
 	_to_lobby()
 
+# p4.20: this round's surprise. Rounds 3, 6, 9... of a match, when power-ups are on; one the
+# season plays, and not the one played last.
+func _pick_silly() -> int:
+	if silly_force > 0:
+		return silly_force
+	if silly_every <= 0 or not sim.powerups or round_no < silly_every or round_no % silly_every != 0:
+		return 0
+	var kinds: Array = P.silly_kinds(sim.season)
+	if kinds.size() > 1:
+		kinds.erase(silly_last)
+	if kinds.is_empty():
+		return 0
+	silly_last = int(kinds[randi() % kinds.size()])
+	return silly_last
+
 func _to_lobby() -> void:
+	silly = 0
 	sim.clear()
 	sim.reset_powers()
 	sim.frozen = false
@@ -1305,6 +1333,7 @@ func _send_seats(target: int) -> void:
 		"awards": last_awards,
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"season": _season(), "season_pick": season_pick,
+		"silly": silly if phase >= P.PH_ROUND_START else 0,     # p4.20: this round's surprise (the ROUND banner says it)
 		"names": _names_list(),
 		"seats": list}
 	_out(target, JSON.stringify(msg))

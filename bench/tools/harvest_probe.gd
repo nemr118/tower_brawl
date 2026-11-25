@@ -81,6 +81,7 @@ func _init() -> void:
 	_pie()
 	_catch_up()
 	_lunge()
+	_silly()
 	_rounds(40)
 	_say("%s (%d fail) in %d ms" % ["PASS" if fails == 0 else "FAIL", fails, Time.get_ticks_msec() - t0])
 	quit(0 if fails == 0 else 1)
@@ -414,3 +415,57 @@ func _lunge() -> void:
 	for k in SimScript.KNIFE_TICKS + 2:
 		s.step()
 	_check(near.state == P.F_DEAD and far.state != P.F_DEAD, "the lunge reaches a fighter 112 px in front, not one 230 px away")
+
+# p4.20 silly rounds (proto.gd SILLY_*; sim.gd silly_round): every fighter gets the same thing,
+# nothing of it is kept for the next round, and 12 whole bot rounds of each kind end.
+func _silly() -> void:
+	for season in ["harvest", "halloween", ""]:
+		for kind in P.silly_kinds(season):
+			_check(P.silly_name(kind, season) != "", "silly round %d has a name in season '%s'" % [kind, season])
+	_check(not P.silly_kinds("").has(P.SILLY_COSTUME), "no costume round out of a season")
+	var told: Array = []
+	for kind in P.silly_kinds("harvest"):
+		var s = SimScript.new(0, 24, 700 + kind)
+		s.respawn = false
+		s.powerups = true
+		s.season = "harvest"
+		s.walls_start = 25 * 60
+		s.set_arena(KEEP)
+		var endless := 0
+		var secs: Array = []
+		var all_have := true
+		var kept := 0
+		for r in 12:
+			var list := []
+			for i in 6:
+				list.append({"id": i, "bot": true})
+			s.reset_powers()
+			s.start_round(list)
+			s.silly_round(kind)
+			kept += s.keep.size()
+			s.frozen = false
+			for f in s.fighters:
+				var has: bool = [false, f.pw_kind == P.A_PIE, f.mask, f.trick == 3 and f.trick_t > 3600, f.fly, f.inf and f.big][kind]
+				all_have = all_have and has
+			var t := 0
+			while s.alive_count() > 1 and t < 3600:
+				t += 1
+				s.step()
+				s.take_events()
+			if t >= 3600:
+				endless += 1
+			secs.append(t / 60.0)
+		_check(all_have, "%s: every fighter has it at the start" % P.silly_name(kind, "harvest"))
+		_check(kept == 0, "%s: nothing of it is kept for the match (%d kept)" % [P.silly_name(kind, "harvest"), kept])
+		_check(endless == 0, "%s: every round ends within 60 s (%d did not)" % [P.silly_name(kind, "harvest"), endless])
+		secs.sort()
+		told.append("%s a median %.1f s (the longest %.1f)" % [P.silly_name(kind, "harvest"), secs[secs.size() / 2], secs[secs.size() - 1]])
+		# the next round is plain again (a new match's first rounds: nothing picked up in between)
+		s.reset_powers()
+		s.start_round([{"id": 0, "bot": true}, {"id": 1, "bot": true}])
+		s.silly_round(kind)
+		s.start_round([{"id": 0, "bot": true}, {"id": 1, "bot": true}])
+		var f0 = s.fighters[0]
+		_check(f0.pw_kind == 0 and not f0.mask and f0.trick == 0 and not f0.fly and not f0.inf and not f0.big,
+			"%s: the round after is plain" % P.silly_name(kind, "harvest"))
+	_say("silly rounds, 12 rounds of 6 bots each on THE KEEP: " + "; ".join(told))

@@ -252,6 +252,33 @@ const TRICK_NAMES := ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"]
 const HARVEST_TRICKS := ["TREAT", "TURKEY TIME", "TOO MUCH PIE", "PEA-SIZED", "THE BIG TURKEY"]
 const TRICK_TIPS := ["", "no shooting", "left is right!", "so small", ""]
 
+# p4.20 silly rounds (the user picked them on 2026-11-24): every third round the same surprise
+# for every fighter, from rules the game already has (sim.gd silly_round; the server picks:
+# game_server.gd _pick_silly). The names by the season; "": that one is not played in that season.
+const SILLY_PIES := 1       # everyone shoots pies (out of the Harvest season: bombs)
+const SILLY_COSTUME := 2    # everyone is THE BIG TURKEY (Halloween: GHOSTFACE): no bows this round
+const SILLY_TINY := 3       # everyone is tiny all round
+const SILLY_FLY := 4        # everyone flies
+const SILLY_STORM := 5      # everyone has big arrows and a quiver that never empties
+const SILLY_NAMES := {
+	"harvest": ["", "PIE FIGHT!", "TURKEY TROT!", "PEA-SIZED!", "EVERYBODY FLIES!", "ARROW STORM!"],
+	"halloween": ["", "PUMPKIN BOMBS!", "SCREAM PARTY!", "TINY TERRORS!", "EVERYBODY FLIES!", "ARROW STORM!"],
+	"": ["", "BOOM ROUND!", "", "TINY ROUND!", "EVERYBODY FLIES!", "ARROW STORM!"],
+}
+
+static func silly_name(kind: int, season: String) -> String:
+	var list: Array = SILLY_NAMES.get(season, SILLY_NAMES[""])
+	return str(list[kind]) if kind >= 0 and kind < list.size() else ""
+
+# The silly rounds a season can play.
+static func silly_kinds(season: String) -> Array:
+	var out: Array = []
+	var list: Array = SILLY_NAMES.get(season, SILLY_NAMES[""])
+	for k in range(1, list.size()):
+		if str(list[k]) != "":
+			out.append(k)
+	return out
+
 # p4.19 the bots' names, by the season (the user: "a fun, balanced, silly game"): seat i's
 # bot is BOT_NAMES[season][i], so a banner says GRAVY WINS THE ROUND, not BOT 3. The lobby's
 # cards and the HUD still mark them as bots.

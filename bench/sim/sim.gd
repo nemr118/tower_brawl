@@ -924,6 +924,33 @@ func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1
 # (the review's bug 3): the fighter of a freed seat played on as a bot and could win
 # the round: the banner then said " WINS THE ROUND" with no name, and the point went
 # to an empty seat (6 times in the two October nights).
+# p4.20 a silly round (proto.gd SILLY_*): the same surprise for every fighter, from rules the
+# game already has. Called right after start_round. Nothing goes into `keep` (the arrow kind
+# a fighter keeps for the match): the next round everyone has their own things back.
+func silly_round(kind: int) -> void:
+	for f in fighters:
+		if kind == P.SILLY_PIES:
+			f.pw_kind = P.A_PIE if season == "harvest" else (P.A_PUMPKIN if season == "halloween" else P.A_BOMB)
+			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_PIE if season == "harvest" else (P.PU_PUMPKIN if season == "halloween" else P.PU_BOMB))
+		elif kind == P.SILLY_COSTUME:
+			f.mask = true
+			f.drawn = false
+			f.aiming = false
+			f.shot_wait = false
+			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_MASK)
+		elif kind == P.SILLY_TINY:
+			f.trick = 3
+			f.trick_t = 100000        # all round (a round ends long before)
+			_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, 3)
+		elif kind == P.SILLY_FLY:
+			f.fly = true
+			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_FLY)
+		elif kind == P.SILLY_STORM:
+			f.inf = true
+			f.big = true
+			f.arrows = maxi(f.arrows, START_QUIVER)
+			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_INF)
+
 # p4.19 a taunt (the GOBBLE button; a bot now and then after a knockout): only a word in a
 # bubble and a sound on the pages, nothing in the rules. At most one every TAUNT_EVERY ticks.
 const TAUNT_EVERY := 75
