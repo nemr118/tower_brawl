@@ -179,6 +179,14 @@ func _ready() -> void:
 	slow_ms = float(opts.get("slow", 0))
 	if opts.has("slowmo"):         # p4.21 a test knob for film clips: ?slowmo=4 runs every animation 4 times slower
 		Engine.time_scale = 1.0 / clampf(float(opts["slowmo"]), 1.0, 20.0)   # (tools/v2_motion_clip.py plays the frames back at full speed)
+		# p4.22: Godot gives one frame at most 8 physics steps of time (0.13 s). The test page draws a frame every
+		# 0.3 to 0.8 s, so every animation ran 3 to 6 times too slow in a film (p4.21's menu film did). With room for
+		# 300 steps a frame gets its whole time, and a film shows the true speed.
+		Engine.max_physics_steps_per_frame = 300
+	if opts.has("slowmatch"):      # p4.22 a test knob for films of a MATCH: the server runs --slowmo N, and this page's clock with it
+		Net.time_div = clampf(float(opts["slowmatch"]), 1.0, 20.0)
+		Engine.time_scale = 1.0 / Net.time_div
+		Engine.max_physics_steps_per_frame = 300
 	display.texture = sub.get_texture()
 	hud = Hud.new()
 	add_child(hud)

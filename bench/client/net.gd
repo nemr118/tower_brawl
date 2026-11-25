@@ -165,8 +165,12 @@ func _connect() -> void:
 	connect_ms = 0.0
 	_quiet_poll_ms = now_ms()
 
+# p4.22 a test knob for films of a match (the page's ?slowmatch=N with the server's --slowmo N):
+# the page's clock runs N times slower, as the server's ticks do, so the two stay in step.
+static var time_div := 1.0
+
 func now_ms() -> float:
-	return Time.get_ticks_usec() / 1000.0
+	return Time.get_ticks_usec() / 1000.0 / time_div
 
 func poll() -> void:
 	ws.poll()

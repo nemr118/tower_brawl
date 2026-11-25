@@ -14,6 +14,7 @@
 # --no-powerups: no power-up orbs (p4.9; the lobby's POWER-UPS switch starts ON).
 # --pu-gallery: a test knob: every round starts with every power-up's look (sim.gallery).
 # --pin-demo: a test knob: at FIGHT seat 7 is pinned to a wall, seat 6 carried (sim.pin_demo).
+# --slowmo N: p4.22 a test knob: the server's ticks come N times slower (a film of a match: the page's ?slowmatch=N keeps step).
 # --hw-gallery: a test knob: at FIGHT the Halloween looks (GHOSTFACE, the tricks, the cat, bats; sim.hw_gallery).
 # --xmas-gallery: p4.22 a test knob: at FIGHT the Christmas looks (KRAMPUS, the snowmen, a rider, the reindeer, presents; sim.xmas_gallery).
 # --candy-trick N: a test knob: every candy gives N (0 a treat, 1 PUMPKIN HEAD, 2 BACKWARDS, 3 TINY, 4 GHOSTFACE).
@@ -380,6 +381,9 @@ func _ready() -> void:
 	start_power = int(o.get("start-power", 0))
 	silly_every = maxi(0, int(o.get("silly-every", 3)))
 	silly_force = int(o.get("silly", 0))
+	if o.has("slowmo"):      # p4.22 a test knob for films (tools/v2_motion_clip.py --script match): the whole game N times slower:
+		# fewer ticks a second (Engine.time_scale would not do it: it changes a tick's length, not how many come)
+		Engine.physics_ticks_per_second = maxi(1, int(round(60.0 / clampf(float(o["slowmo"]), 1.0, 20.0))))
 	if o.has("season") and P.SEASON_PICKS.has(str(o["season"]).to_lower()):
 		season_pick = str(o["season"]).to_lower()
 	sim.season = _season()
