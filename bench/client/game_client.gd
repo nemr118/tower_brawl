@@ -493,7 +493,7 @@ func _watch_frames(in_match: bool) -> void:
 		look = LOOKS[LOOKS.find(look) - 1]
 		world.set_tier(LOOK_TIER[look])
 		_show_look()
-		hud.say("LOOK: AUTO stepped down to %s to stay smooth (pick a look in the lobby to keep one)" % look.to_upper(), 5.0)
+		hud.say("Picture set to %s to stay smooth. You can change it in SETTINGS." % look.to_upper(), 5.0)   # p4.19: plain words
 		rep_step_downs += 1
 		_send_report("step")
 		print("🎮 [Look] step down %s -> %s: %d of %d frames over %d ms in %.0f s" % [
