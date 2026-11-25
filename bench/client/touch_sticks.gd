@@ -32,6 +32,7 @@
 extends CanvasLayer
 
 signal taunt_pressed              # p4.19: the small taunt button (GOBBLE! in the Harvest season)
+signal menu_pressed               # p4.20: the small MENU button at the bottom in the middle
 
 const P = preload("res://sim/proto.gd")
 const Season = preload("res://client/season.gd")
@@ -152,6 +153,10 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			if event.index == taunt_touch:
 				taunt_touch = -1            # a new touch with that number: the taunt finger is long gone
+			if event.position.distance_to(_menu_center()) <= (MENU_R + HIT_PAD) * k:   # p4.20: the MENU button
+				taunt_touch = event.index   # (this finger is no stick's either, to its lift)
+				menu_pressed.emit()
+				return
 			if event.position.distance_to(_taunt_center()) <= (TAUNT_R + HIT_PAD) * k:   # p4.19: a tap on the taunt button
 				_taunt_ms = Time.get_ticks_msec()
 				taunt_touch = event.index
@@ -172,6 +177,11 @@ func _input(event: InputEvent) -> void:
 
 var _taunt_ms := -9999            # when the taunt button was last tapped (it flashes)
 var taunt_touch := -1             # the finger on the taunt button
+
+const MENU_R := 40.0
+
+func _menu_center() -> Vector2:
+	return Vector2(win.x * 0.5, win.y - 56.0 * k)
 
 func _taunt_center() -> Vector2:
 	return Vector2(118.0 * k, win.y - 690.0 * k)
@@ -605,6 +615,12 @@ func _paint2(n: Node2D) -> void:
 		for i in 33:
 			pts.append(dfc + Vector2.from_angle(-PI * 0.5 + TAU * dodge_wait * i / 32.0) * dr)
 		n.draw_colored_polygon(pts, Color(0.0, 0.0, 0.0, 0.5))
+	# p4.20 MENU: a small quiet button at the bottom in the middle (three lines)
+	var mn := _menu_center()
+	n.draw_circle(mn, MENU_R * k, Color(0.05, 0.05, 0.1, 0.45))
+	n.draw_arc(mn, MENU_R * k, 0.0, TAU, 32, Color(1, 1, 1, 0.55), 2.5 * k, true)
+	for j in 3:
+		n.draw_line(mn + Vector2(-16.0 * k, (j - 1) * 11.0 * k), mn + Vector2(16.0 * k, (j - 1) * 11.0 * k), Color(1, 1, 1, 0.85), 4.0 * k, true)
 	# p4.19 the taunt: a small yellow button at the left edge (the word by the season)
 	var word: String = {"harvest": "GOBBLE", "halloween": "BOO"}.get(Season.now, "HA HA")
 	_button2(n, _taunt_center(), TAUNT_R * k, Color(0.95, 0.75, 0.15), word, Time.get_ticks_msec() - _taunt_ms < 180, 22.0, 1.0)

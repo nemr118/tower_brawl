@@ -51,7 +51,7 @@ const LEVEL_NAMES := ["OLD", "EASY", "NORMAL", "HARD"]   # sim/brain.gd NAMES
 # The controls line: [kind, words]; kind "k" a key cap, "t" words, "-" a gap.
 const HELP_PC := [["k", "A"], ["k", "D"], ["t", "RUN"], ["-", ""], ["k", "W"], ["t", "OR"], ["k", "SPACE"], ["t", "JUMP"], ["-", ""],
 	["k", "S"], ["t", "DOWN (+ JUMP: DROP)"], ["-", ""], ["k", "SHIFT"], ["t", "DODGE"], ["-", ""], ["t", "HOLD"], ["k", "MOUSE"],
-	["t", "TO AIM, LET GO TO FIRE"], ["-", ""], ["k", "G"], ["t", "TAUNT"]]
+	["t", "TO AIM, LET GO TO FIRE"], ["-", ""], ["k", "G"], ["t", "TAUNT"], ["-", ""], ["k", "ESC"], ["t", "MENU"]]
 const HELP_PHONE := [["t", "LEFT STICK RUNS, PUSH IT UP TO JUMP"], ["-", ""], ["t", "RIGHT THUMB: PULL BACK, LET GO TO FIRE"],
 	["-", ""], ["k", "DODGE"], ["t", "OR FLICK THE STICK"]]
 const HELP_BUTTONS := [["t", "LEFT STICK RUNS"], ["-", ""], ["k", "JUMP"], ["k", "DODGE"], ["t", "BOTTOM RIGHT"], ["-", ""],

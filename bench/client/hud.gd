@@ -554,7 +554,7 @@ func _power_card2(c: Control) -> void:
 func _note_pill(c: Control) -> void:
 	var a := _step_a(note_t * 2.0)
 	var w := minf(Art.BODY.get_string_size(note, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x + 64.0, 1800.0)
-	var r := Rect2(960.0 - w * 0.5, 992.0, w, 52.0)
+	var r := Rect2(960.0 - w * 0.5, 912.0, w, 52.0)     # (above a phone's MENU button at the bottom)
 	c.draw_style_box(Art.box(Color(0.05, 0.04, 0.09, 0.88 * a), Color(1.0, 0.82, 0.3, 0.8 * a), 26, 2, 4, Color(0, 0, 0, 0.4 * a), 8), r)
 	c.draw_string(Art.BODY, Vector2(r.position.x + 32.0, r.position.y + 35.0), note, HORIZONTAL_ALIGNMENT_LEFT, w - 64.0, 28, Color(1.0, 0.95, 0.8, a))
 

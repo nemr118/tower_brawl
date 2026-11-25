@@ -13,6 +13,7 @@ signal look_picked(pick: String)
 signal controls_picked(buttons: bool)
 signal sound_picked(on: bool)
 signal music_picked(on: bool)        # p4.20
+signal leave_pressed                 # p4.20: the match's menu: LEAVE THE MATCH
 signal season_picked(pick: String)
 
 const Art = preload("res://client/lobby_art.gd")
@@ -26,6 +27,8 @@ var t := 0.0
 # a row: its key, its words, its choices ([value, words]), the value in use, its buttons
 var rows: Array = []
 var done = Art.Btn.new()
+var leave = Art.Btn.new()         # p4.20: only in a match's menu
+var in_match := false             # p4.20: this panel is the match's MENU (no SEASON row; a LEAVE button; the match goes on)
 var phone := false
 var season_ok := false            # may this player change the season now?
 
@@ -40,6 +43,11 @@ func _init() -> void:
 	_row("season", "SEASON", "The game's holiday.", [["auto", "AUTO"], ["off", "OFF"], ["halloween", "HALLOWEEN"], ["harvest", "HARVEST"]])
 	add_child(done)
 	done.pressed.connect(close)
+	add_child(leave)
+	leave.visible = false
+	leave.pressed.connect(func():
+		close()
+		leave_pressed.emit())
 	_layout()
 
 func _row(key: String, label: String, hint: String, choices: Array) -> void:
@@ -76,6 +84,8 @@ func _layout() -> void:
 	var y := CARD.position.y + 196.0
 	var shown_n := 0
 	for r in rows:
+		if r["key"] == "season":
+			r["shown"] = not in_match      # the season is the lobby's to change
 		if r["shown"]:
 			shown_n += 1
 	var row_h := ROW_H if shown_n <= 4 else 102.0     # five rows (a phone with SOUND and MUSIC): closer together
@@ -106,10 +116,16 @@ func _layout() -> void:
 			b.size = Vector2(w, 92.0 if shown_n <= 4 else 84.0)
 			b.disabled = r["key"] == "season" and not season_ok and not picked
 		y += row_h
-	done.setup(pal["accent"], Color(0.13, 0.05, 0.0), 52)
-	done.say("", "DONE")
-	done.position = Vector2(760, CARD.end.y - 124.0)
-	done.size = Vector2(400, 100)
+	done.setup(pal["accent"], Color(0.13, 0.05, 0.0), 52 if not in_match else 44)
+	done.say("", "DONE" if not in_match else "BACK TO THE GAME")
+	done.position = Vector2(760, CARD.end.y - 124.0) if not in_match else Vector2(980, CARD.end.y - 124.0)
+	done.size = Vector2(400, 100) if not in_match else Vector2(540, 100)
+	leave.visible = in_match
+	if in_match:
+		leave.setup(pal["danger"], Color(pal["text"]), 40)
+		leave.say("", "LEAVE THE MATCH")
+		leave.position = Vector2(400, CARD.end.y - 124.0)
+		leave.size = Vector2(520, 100)
 	queue_redraw()
 
 func set_dress(p: Dictionary) -> void:
@@ -174,10 +190,13 @@ func _gui_input(e: InputEvent) -> void:
 
 func _draw() -> void:
 	var a := roundf(clampf(t / 0.15, 0.0, 1.0) * 8.0) / 8.0   # the fade in steps: lobby_art.gd keeps every box it makes
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.01, 0.04, 0.86 * a))
+	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.04, 0.86 * a))   # (wider than the frame: a long phone's sides too)
 	var accent: Color = pal["accent"]
 	Art.panel(self, CARD, Color(pal["panel"], 0.985), accent, 30, Color(accent.r, accent.g, accent.b, 0.3), 28)
-	Art.text(self, Art.DISPLAY, Vector2(CARD.position.x, CARD.position.y + 90.0), "SETTINGS", 72, pal["accent_hi"], 8, Color(0.03, 0.01, 0.05),
+	if in_match:
+		draw_string(Art.BODY, Vector2(CARD.position.x, CARD.end.y - 150.0), "The match goes on while this is open.", HORIZONTAL_ALIGNMENT_CENTER, CARD.size.x, 26,
+			Color(pal["dim"], 0.95))
+	Art.text(self, Art.DISPLAY, Vector2(CARD.position.x, CARD.position.y + 90.0), "SETTINGS" if not in_match else "MENU", 72, pal["accent_hi"], 8, Color(0.03, 0.01, 0.05),
 		HORIZONTAL_ALIGNMENT_CENTER, CARD.size.x)
 	var dim: Color = pal["dim"]
 	var txt: Color = pal["text"]

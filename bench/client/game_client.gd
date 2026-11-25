@@ -40,6 +40,7 @@ const Present = preload("res://client/present.gd")
 const PV = preload("res://client/powers_view.gd")
 const Season = preload("res://client/season.gd")   # p4.18
 const Polish = preload("res://client/polish.gd")   # p4.20: the look's switches
+const MatchMenu = preload("res://client/lobby_settings.gd")   # p4.20: the same panel as SETTINGS, as a match's MENU
 const Music = preload("res://client/music.gd")     # p4.20: the songs (their own switch, off until picked)
 const Sfx = preload("res://client/sfx.gd")         # p4.19: the sounds
 const NAME_KEY := "towerbrawl_v2_name"
@@ -59,7 +60,8 @@ const STEP_S := 5.0            # (p4.6; it was 3 s: a few hitches from explosion
 const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
 const PROXY_S := 4.0   # p4.13: this long with no connection through the page's own address: try the game server's port
 const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb_up": [KEY_W, KEY_UP],
-	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT], "tb_taunt": [KEY_G, KEY_T]}   # p4.19: G or T taunts
+	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT], "tb_taunt": [KEY_G, KEY_T],
+	"tb_menu": [KEY_ESCAPE, KEY_M]}   # p4.19: G or T taunts
 
 var opts := {}
 var net
@@ -120,6 +122,9 @@ var rep_mouse_shots := 0
 var rep_ua := ""
 var deathcam                      # p4.8: the match end's montage of the winner's kills
 var music                         # p4.20: client/music.gd
+var menu_layer := CanvasLayer.new()   # p4.20: the match's MENU (SOUND, MUSIC, CONTROLS, LOOK, LEAVE), over everything
+var match_menu
+var _menu_shown := false
 var silly_now := 0                # p4.20: the silly round the seats message last named
 var sfx                           # p4.19: the sounds (client/sfx.gd; sfx.set_on(true or false) for the lobby's SOUND button)
 var match_msg := {}               # the match_end message, shown once the montage is done
@@ -215,6 +220,30 @@ func _ready() -> void:
 	lobby.music_picked.connect(func(v):
 		music.set_on(v)
 		lobby.set_music(music.on, true))
+	# p4.20 the match's MENU: a phone's small button (touch_sticks.gd), Esc or M on a PC. The match goes on.
+	menu_layer.layer = 24
+	add_child(menu_layer)
+	match_menu = MatchMenu.new()
+	match_menu.in_match = true
+	menu_layer.add_child(match_menu)
+	match_menu.set_dress(lobby.pal)
+	match_menu.look_picked.connect(func(p):
+		_pick_look(p)
+		_menu_state())
+	match_menu.controls_picked.connect(func(b):
+		if b != (controls == "buttons"):
+			_on_controls()
+		_menu_state())
+	match_menu.sound_picked.connect(func(v):
+		sfx.set_on(v)
+		lobby.set_sound(sfx.on, true)
+		_menu_state())
+	match_menu.music_picked.connect(func(v):
+		music.set_on(v)
+		lobby.set_music(music.on, true)
+		_menu_state())
+	match_menu.leave_pressed.connect(_on_leave)
+	sticks.menu_pressed.connect(_open_menu)
 	lobby.sound_picked.connect(func(v):
 		sfx.set_on(v)
 		lobby.set_sound(sfx.on, true))
@@ -291,6 +320,9 @@ func _fit() -> void:
 	lobby.fit(win)
 	sticks.fit(win)
 	deathcam.fit(win)
+	var mk := minf(win.y / 1080.0, win.x / 1920.0)      # the MENU: the lobby's frame, scaled to fit and centred
+	menu_layer.scale = Vector2.ONE * mk
+	menu_layer.offset = Vector2((win.x - 1920.0 * mk) * 0.5, (win.y - 1080.0 * mk) * 0.5)
 
 func _process(delta: float) -> void:
 	if net == null:
@@ -421,7 +453,9 @@ func _process(delta: float) -> void:
 	lobby.tv_sound_hint = tv and (sfx.on or music.on) and not (sfx.unlocked or music.unlocked)   # p4.19: a browser plays no sound before one click
 	music.set_scene(show_lobby, phase, P.PH_MATCH_END)   # p4.20: the lobby's song, the match's, the winner's
 	world.pview.leader = hud.sole_leader() if Polish.on("juice") else -1   # p4.20: the leader's crown in the arena
-	sticks.visible = sticks.active and not show_lobby and not deathcam.playing and phase != P.PH_MATCH_END   # the winner's screen: nobody plays
+	if match_menu.visible and (show_lobby or deathcam.playing or phase == P.PH_MATCH_END or my_seat < 0):
+		match_menu.close()            # the match is over (or the seat is gone): the MENU goes
+	sticks.visible = sticks.active and not show_lobby and not deathcam.playing and phase != P.PH_MATCH_END and not match_menu.visible   # the winner's screen: nobody plays
 	hud.visible = not deathcam.playing
 	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad, stuck_url)
 
@@ -435,6 +469,20 @@ func _device_look() -> String:
 	if OS.has_feature("web_android") or OS.has_feature("mobile"):
 		return "normal"
 	return "high"
+
+# p4.20 the match's MENU: what is picked now, then open it (only with a seat, in a match).
+func _menu_state() -> void:
+	match_menu.set_look("" if look_test else look_pick, look.to_upper(), not _picks().has("high"))
+	match_menu.set_controls(controls == "buttons", sticks.active)
+	match_menu.set_sound(sfx.on, true)
+	match_menu.set_music(music.on, true)
+
+func _open_menu() -> void:
+	if my_seat < 0 or lobby.visible or deathcam.playing or phase == P.PH_MATCH_END:
+		return
+	match_menu.set_dress(lobby.pal)
+	_menu_state()
+	match_menu.open()
 
 # p4.19: a phone buzzes for a moment when something happens to YOU: knocked out, your
 # shot lands, a pie in the face, a power-up, your shield goes, a PHEW. (Android only: an
@@ -671,7 +719,15 @@ func _physics_process(_dt: float) -> void:
 		buttons |= P.B_DODGE
 	if (Input.is_action_just_pressed("tb_taunt") or opts.has("taunt")) and not lobby.visible:   # ?taunt: a test knob, a taunt a second (pictures)
 		_taunt()
-	if not sticks.active and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not lobby.visible:
+	if opts.has("menu") and phase == P.PH_PLAY and not _menu_shown:     # ?menu: a test knob, the MENU opens once in the first round (pictures)
+		_menu_shown = true
+		_open_menu()
+	if Input.is_action_just_pressed("tb_menu") and not lobby.visible:
+		if match_menu.visible:
+			match_menu.close()
+		else:
+			_open_menu()
+	if not sticks.active and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not lobby.visible and not match_menu.visible:
 		buttons |= P.B_SHOOT
 		aim_deg10 = _mouse_aim()
 	if shoot_held and not (buttons & P.B_SHOOT) and not sticks.active:
