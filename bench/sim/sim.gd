@@ -31,6 +31,11 @@
 # calls a round when one fighter is left, and gives the point 1.5 s later. In that
 # time nothing kills the winner any more: the server sets `safe` to its seat, and
 # _kill, the one place every death goes through, lets it live and says E_PHEW.
+# TEAMS (2026-11-24): the server gives each seat a team in `teams`. Then nothing a
+# teammate does can hurt you (friends), a round is decided when one team is left
+# (decided), and every living fighter of the winning team is safe (safe_team). With
+# `teams` empty the game is FREE FOR ALL: everyone is a foe, and every rule and every
+# random number is as it was before teams came.
 # ==============================================================================
 extends RefCounted
 
@@ -403,6 +408,7 @@ class Zone:
 	var size: float = 0.0       # fire: width; miasma: radius
 	var life: int = 0
 	var max_life: int = 1
+	var owner: int = -1         # TEAMS: the seat whose arrow made it (-1: nobody's). Its teammates do not burn or choke in it
 
 var level
 var fighters: Array = []
@@ -424,6 +430,8 @@ var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
 var safe := -1                  # the seat nothing can kill: the round's winner, from the tick the server calls the round
                                 # to the next round's start (-1: nobody; start_round and clear set it back)
+var teams := {}                 # TEAMS: seat -> its team (0 or 1), set by the server before each round. Empty: FREE FOR ALL
+var safe_team := -1             # TEAMS: the team nothing can kill: the round's winners, for the same time as `safe` (-1: no team)
 var ghosts := true              # p4.11: a person's ghost rises after its death (the game; the benchmark has no people)
 var hazards = null              # THE BOILER ROOM's moving parts (sim/boiler.gd) on an arena whose theme is "nightmare"
 var pet := {}                   # p4.12 the black cat: {x, y (its feet), dir, t, gone (ticks running off)}
@@ -537,6 +545,7 @@ func _event(type: int, x: int, y: int, a: int, b: int) -> void:
 # keeps counting (the clients' clock follows it).
 func start_round(seat_list: Array) -> void:
 	safe = -1                # a new round: nobody has won it yet
+	safe_team = -1
 	fighters.clear()
 	arrows.clear()
 	zones.clear()
@@ -589,6 +598,7 @@ func _spread(spots: Array, n: int) -> Array:
 
 func clear() -> void:
 	safe = -1
+	safe_team = -1
 	fighters.clear()
 	arrows.clear()
 	zones.clear()
@@ -645,6 +655,44 @@ func last_alive() -> Fighter:
 		if f.state != P.F_DEAD:
 			return f
 	return null
+
+# ------------------------------------------------------------------ TEAMS
+# Are seats a and b teammates? Never in FREE FOR ALL (`teams` is empty: everyone is a
+# foe). Never for a == b either: you are not your own teammate, so your own arrow, bomb
+# and fire treat you just as they do in FREE FOR ALL. Every "no friendly fire" rule in
+# this file asks this one question.
+func friends(a: int, b: int) -> bool:
+	if teams.is_empty() or a == b:
+		return false
+	var ta: int = teams.get(a, -1)
+	return ta >= 0 and ta == int(teams.get(b, -2))
+
+# Nothing can kill this fighter now: the round is called and it won it (alone, or its
+# team did). The server sets `safe` or `safe_team` on the tick it calls the round.
+func is_safe(f: Fighter) -> bool:
+	return f.id == safe or (safe_team >= 0 and int(teams.get(f.id, -1)) == safe_team)
+
+# Is the round decided? FREE FOR ALL: one fighter is left, or none. TEAMS: everyone
+# still alive is on one team (or nobody is alive). From then on the power-ups, the
+# purple walls and the arena's own dangers stop, as they always did for one winner.
+func decided() -> bool:
+	if teams.is_empty():
+		return alive_count() <= 1
+	var first: Fighter = null
+	for f in fighters:
+		if f.state == P.F_DEAD:
+			continue
+		if first == null:
+			first = f
+		elif not friends(first.id, f.id):
+			return false      # two foes still stand
+	return true
+
+# The snapshot's team bits for a fighter (proto F2_TEAMS, F2_TEAM_B): 0 in FREE FOR ALL.
+func team_bits(f: Fighter) -> int:
+	if teams.is_empty() or not teams.has(f.id):
+		return 0
+	return P.F2_TEAMS | (P.F2_TEAM_B if int(teams[f.id]) == 1 else 0)
 
 # A person's buttons for this tick (proto B_*, aim in 0.1 degree steps). Sets
 # what _update_fighter reads: move_dir, the jump (pressed: want_jump with a
@@ -888,7 +936,7 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1.0) -> void:
 	if f.state == P.F_DEAD or predicting:
 		return
-	if f.id == safe:
+	if is_safe(f) and cause != P.C_LEFT:   # (a winner who gives up the seat still goes: leave)
 		# The round is called and this is its winner: it lives. Nothing about the fighter
 		# changes here (no knock, no fall), so the page's own copy of it (predict.gd), which
 		# never kills anyway, stays in step. E_PHEW tells the page to draw something silly.
@@ -1213,7 +1261,7 @@ func _update_ghost(f: Fighter) -> void:
 	if f.boo_t > 0:
 		f.boo_t -= 1
 		for o in fighters:
-			if o == f or o.state == P.F_DEAD or o.state == P.F_DODGE:
+			if o == f or o.state == P.F_DEAD or o.state == P.F_DODGE or friends(f.id, o.id):   # (TEAMS: a ghost cannot BOO its own team)
 				continue
 			var dx := wrap_d(f.gx, o.x + HALF_W, W)
 			var dy := wrap_d(f.gy, o.y + MID_Y, H)
@@ -1232,7 +1280,7 @@ func _update_ghost(f: Fighter) -> void:
 # p4.11: a flying arrow through a ghost (not its own shooter's) pops it for GHOST_POP.
 func _arrow_pops_ghosts(a: Arrow) -> void:
 	for f in fighters:
-		if not f.ghost or f.popped_t > 0 or f.id == a.owner:
+		if not f.ghost or f.popped_t > 0 or f.id == a.owner or friends(a.owner, f.id):   # (TEAMS: nor a teammate's ghost)
 			continue
 		if absf(wrap_d(a.x, f.gx, W)) < 26.0 and absf(wrap_d(a.y, f.gy, H)) < 32.0:
 			f.popped_t = GHOST_POP
@@ -1379,7 +1427,7 @@ func _aim_help(f: Fighter, ang: float) -> float:
 	var best := ang
 	var bd := INF
 	for o in fighters:
-		if o == f or o.state == P.F_DEAD:
+		if o == f or o.state == P.F_DEAD or friends(f.id, o.id):   # (TEAMS: a shot never snaps to a teammate)
 			continue
 		var dx := wrap_d(ox, o.x + HALF_W, W)
 		var dy := wrap_d(oy, o.y + MID_Y, H)
@@ -1444,7 +1492,7 @@ func _stomps() -> void:
 				_stomp(a, b)
 			elif dy <= -20.0 and b.vy > 0.0:
 				_stomp(b, a)
-			elif absf(a.vx - b.vx) > 9.0 and a.state != P.F_HURT and b.state != P.F_HURT:
+			elif absf(a.vx - b.vx) > 9.0 and a.state != P.F_HURT and b.state != P.F_HURT and not friends(a.id, b.id):   # (TEAMS: teammates only nudge each other, below)
 				var slow: Fighter = a if absf(a.vx) < absf(b.vx) else b
 				var fast: Fighter = b if slow == a else a
 				_hurt(slow, signf(fast.vx) * 10.0, -7.0)
@@ -1456,6 +1504,12 @@ func _stomps() -> void:
 # top comes down on under's head: a stomp. p4.9: SPIKED SHIELD's spikes kill the
 # stomper instead; RAIN's umbrella bounces the stomper off, nobody dies.
 func _stomp(top: Fighter, under: Fighter) -> void:
+	if friends(top.id, under.id):
+		# TEAMS: a teammate's head is a springboard. The jumper bounces off and nobody is
+		# hurt, whatever the one below wears (spikes, an umbrella, a shield).
+		top.vy = -JUMP
+		_event(P.E_JUMP, top.x + HALF_W, top.y + BODY_H, top.id, 1)
+		return
 	if under.spikes_t > 0:
 		_kill(top, under.id, 9)
 		top.vy = -JUMP * 0.6
@@ -1465,7 +1519,7 @@ func _stomp(top: Fighter, under: Fighter) -> void:
 		_event(P.E_JUMP, top.x + HALF_W, top.y + BODY_H, top.id, 1)
 		return
 	_kill(under, top.id, 3)
-	if under.id != safe:      # (the round's winner is not squashed: it stands as it stood)
+	if not is_safe(under):    # (the round's winner is not squashed: it stands as it stood)
 		under.vy = 4.0
 		under.vx = 0.0
 	top.vy = -JUMP
@@ -1542,9 +1596,9 @@ func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 	var k := BIG_FX if a.big else 1.0
 	if a.kind == P.A_FIRE:
 		if floor_hit:
-			_add_zone(P.Z_FIRE, a.x, surface_y, FIRE_WIDTH * k, FIRE_TICKS)
+			_add_zone(P.Z_FIRE, a.x, surface_y, FIRE_WIDTH * k, FIRE_TICKS, a.owner)
 		else:
-			_add_zone(P.Z_FIRE, a.x, a.y + 20.0, 60.0 * k, FIRE_TICKS / 2)
+			_add_zone(P.Z_FIRE, a.x, a.y + 20.0, 60.0 * k, FIRE_TICKS / 2, a.owner)
 		_event(P.E_IGNITE, int(a.x), int(surface_y if floor_hit else a.y), 1 if floor_hit else 0, 0)
 	elif a.kind == P.A_BOMB or a.kind == P.A_PUMPKIN:
 		a.fuse = BOMB_FUSE
@@ -1552,7 +1606,7 @@ func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 		a.dead = true
 		_pie(a)
 	elif a.kind == P.A_MIASMA:
-		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
+		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS, a.owner)
 		_event(P.E_MIASMA, int(a.x), int(a.y), 0, 0)
 	elif a.kind == P.A_SMOKE:
 		_add_zone(P.Z_SMOKE, a.x, a.y, SMOKE_R * k, SMOKE_TICKS)
@@ -1562,6 +1616,8 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 	for f in fighters:
 		if f.state == P.F_DEAD or (f.id == a.owner and a.t < ARROW_NO_SELF):
 			continue
+		if friends(a.owner, f.id):
+			continue      # TEAMS: a teammate's arrow flies through you: no hit, no catch, no shield used up
 		var dx := wrap_d(f.x, a.x, W)
 		var dy := wrap_d(f.y, a.y, H)
 		var reach := 4.0 + (BIG_REACH if a.big else 0.0)
@@ -1606,11 +1662,11 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			_pie(a)
 		elif a.kind == P.A_MIASMA:
 			a.dead = true
-			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS)
+			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS, a.owner)
 			_event(P.E_MIASMA, int(a.x), int(a.y), 0, 0)
 		else:
 			if a.kind == P.A_FIRE:
-				_add_zone(P.Z_FIRE, a.x, f.y + BODY_H, 90.0 * k, FIRE_TICKS / 2)
+				_add_zone(P.Z_FIRE, a.x, f.y + BODY_H, 90.0 * k, FIRE_TICKS / 2, a.owner)
 				_event(P.E_IGNITE, int(a.x), f.y + BODY_H, 1, 0)
 			# p4.10: the arrow stays in the body and carries it on (a wall pins it: _pin)
 			f.vx = a.vx * CARRY
@@ -1678,18 +1734,18 @@ func _explode(x: float, y: float, owner: int, k: float = 1.0, flags: int = -1) -
 	_event(P.E_EXPLODE, int(x), int(y), owner, flags if flags >= 0 else (1 if k > 1.0 else 0))
 	var r2 := EXPLODE_R * EXPLODE_R * k * k
 	for f in fighters:
-		if f.state == P.F_DEAD:
+		if f.state == P.F_DEAD or friends(owner, f.id):   # (TEAMS: a teammate's blast does nothing to you: no knockout, no throw)
 			continue
 		var dx := wrap_d(x, f.x + HALF_W, W)
 		var dy := wrap_d(y, f.y + MID_Y, H)
 		var fd2 := dx * dx + dy * dy
 		var fd := maxf(1.0, sqrt(fd2))
-		if fd2 <= r2 and f.id == owner and not self_harm and f.id != safe:
+		if fd2 <= r2 and f.id == owner and not self_harm and not is_safe(f):
 			_hurt(f, dx / fd * 19.0, -14.0)      # p4.19: your own blast throws you far; it does not knock you out
 			# (the round's winner in its own blast goes on to _kill below: PHEW, and it is not thrown)
 		elif fd2 <= r2:
 			_kill(f, owner, 2)
-			if f.id != safe:      # (the round's winner is not thrown: the client's copy knows `safe` too, from T_OWN)
+			if not is_safe(f):    # (the round's winner is not thrown: the client's copy knows `safe` too, from T_OWN)
 				f.vx = dx / fd * 16.0
 				f.vy = -12.0
 		elif fd2 <= r2 * 3.2:
@@ -1713,7 +1769,7 @@ func _pie(a: Arrow) -> void:
 	_event(P.E_PIE, int(a.x), int(a.y), a.owner, 1 if a.big else 0)
 	var r2 := PIE_R * PIE_R * k * k
 	for f in fighters:
-		if f.state == P.F_DEAD or (f.id == a.owner and not self_harm):   # p4.19: your own pie does not cream you
+		if f.state == P.F_DEAD or (f.id == a.owner and not self_harm) or friends(a.owner, f.id):   # p4.19: your own pie does not cream you (TEAMS: nor a teammate's)
 			continue
 		var dx := wrap_d(a.x, f.x + HALF_W, W)
 		var dy := wrap_d(a.y, f.y + MID_Y, H)
@@ -1788,9 +1844,9 @@ func _update_powers() -> void:
 	if rain_t > 0:
 		rain_t -= 1
 		for f in fighters:
-			if f.id != rain_owner and f.state != P.F_DEAD:
+			if f.id != rain_owner and f.state != P.F_DEAD and not friends(rain_owner, f.id):   # (TEAMS: your team's rain does not slow you)
 				f.slow_t = maxi(f.slow_t, rain_t)
-	if alive_count() <= 1 and fighters.size() > 1:
+	if decided() and fighters.size() > 1:
 		# the round is decided: the power-ups hurt nobody now (as the purple walls melt):
 		# the cats go, a warning never strikes
 		for c in cats:
@@ -1824,7 +1880,7 @@ func _update_powers() -> void:
 				orbs.remove_at(i)
 				pu_wait = PU_GAP
 				_give(f, o.kind)
-	if orbs.is_empty() and alive_count() > 1 and walls_melt_t < 0:
+	if orbs.is_empty() and not decided() and walls_melt_t < 0:
 		pu_wait -= 1
 		if pu_wait <= 0:
 			_drop()
@@ -1842,7 +1898,7 @@ func _strike(o: Orb) -> void:
 		var dy := wrap_d(o.y, f.y + MID_Y, H)
 		if dx * dx + dy * dy <= STRIKE_R * STRIKE_R:
 			_kill(f, 255, 7)
-			if f.id != safe:
+			if not is_safe(f):
 				f.vx = signf(dx) * 5.0
 				f.vy = -9.0
 
@@ -1903,7 +1959,7 @@ func _give(f: Fighter, kind: int) -> void:
 		f.invis_t = INVIS_TICKS
 	elif kind == P.PU_FREEZE:
 		for o in fighters:
-			if o != f and o.state != P.F_DEAD:
+			if o != f and o.state != P.F_DEAD and not friends(f.id, o.id):   # (TEAMS: your team is not frozen)
 				o.freeze_t = FREEZE_TICKS
 				o.drawn = false
 				o.aiming = false
@@ -2040,7 +2096,7 @@ func _knife_tick(f: Fighter) -> void:
 		return
 	f.knife_hit = true
 	for o in fighters:
-		if o == f or o.state == P.F_DEAD or o.state == P.F_DODGE:
+		if o == f or o.state == P.F_DEAD or o.state == P.F_DODGE or friends(f.id, o.id):   # (TEAMS: the knife or the peck misses a teammate)
 			continue
 		var dx := wrap_d(f.x + HALF_W, o.x + HALF_W, W) * f.facing
 		if dx > -6.0 and dx < KNIFE_REACH + HALF_W and absf(wrap_d(f.y, o.y, H)) < 56.0:
@@ -2205,7 +2261,7 @@ func _update_bats() -> void:
 	for f in fighters:
 		if f.bats_t > 0 and f.state != P.F_DEAD:
 			for a in arrows:
-				if a.dead or a.state != P.S_FLY or a.owner == f.id:
+				if a.dead or a.state != P.S_FLY or a.owner == f.id or friends(f.id, a.owner):   # (TEAMS: your bats let a teammate's arrows by)
 					continue
 				var dx := wrap_d(f.x + HALF_W, a.x, W)
 				var dy := wrap_d(f.y + MID_Y, a.y, H)
@@ -2258,7 +2314,7 @@ func _give_kept(f: Fighter) -> void:
 func _send_cats(f: Fighter) -> void:
 	var near: Array = []
 	for o in fighters:
-		if o != f and o.state != P.F_DEAD:
+		if o != f and o.state != P.F_DEAD and not friends(f.id, o.id):   # (TEAMS: the cats never hunt a teammate)
 			var dx := wrap_d(f.x, o.x, W)
 			var dy := wrap_d(f.y, o.y, H)
 			near.append([dx * dx + dy * dy, o.id])
@@ -2307,7 +2363,7 @@ func _update_cats() -> void:
 				_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 1)
 			else:
 				_kill(tgt, c.owner, 8)
-				if tgt.id != safe:
+				if not is_safe(tgt):
 					tgt.vy = -6.0
 			cats.remove_at(i)
 
@@ -2315,7 +2371,7 @@ func _cat_target(c: Cat) -> Fighter:
 	var best: Fighter = null
 	var bd := INF
 	for f in fighters:
-		if f.id == c.owner or f.state == P.F_DEAD:
+		if f.id == c.owner or f.state == P.F_DEAD or friends(c.owner, f.id):
 			continue
 		var dx := wrap_d(c.x, f.x + HALF_W, W)
 		var dy := wrap_d(c.y, f.y + MID_Y, H)
@@ -2568,7 +2624,7 @@ static func power_bits(f: Fighter) -> int:
 		| (P.PW_BATS if f.batted > 0 or f.bats_t > 0 else 0)
 
 # ------------------------------------------------------------------ zones
-func _add_zone(kind: int, x: float, y: float, size: float, life: int) -> void:
+func _add_zone(kind: int, x: float, y: float, size: float, life: int, owner: int = -1) -> void:
 	if zones.size() >= MAX_ZONES:
 		zones.remove_at(0)
 	var z := Zone.new()
@@ -2578,6 +2634,7 @@ func _add_zone(kind: int, x: float, y: float, size: float, life: int) -> void:
 	z.size = size
 	z.life = life
 	z.max_life = life
+	z.owner = owner
 	zones.append(z)
 
 func _update_zones() -> void:
@@ -2593,8 +2650,11 @@ func _fighter_zones(f: Fighter) -> void:
 	var fx := float(f.x + HALF_W)
 	var feet := float(f.y + BODY_H)
 	for z in zones:
+		# TEAMS: fire and poison from a teammate's arrow do nothing to you (smoke is only
+		# a cloud, it hurts nobody: it hides everyone from everyone, as before)
+		var friendly: bool = z.owner >= 0 and friends(z.owner, f.id)
 		if z.kind == P.Z_FIRE:
-			if absf(wrap_d(z.x, fx, W)) < z.size * 0.5 and absf(wrap_d(z.y, feet, H)) < 14.0:
+			if not friendly and absf(wrap_d(z.x, fx, W)) < z.size * 0.5 and absf(wrap_d(z.y, feet, H)) < 14.0:
 				in_fire = true
 		else:
 			var dx := wrap_d(z.x, fx, W)
@@ -2602,7 +2662,7 @@ func _fighter_zones(f: Fighter) -> void:
 			if dx * dx + dy * dy < z.size * z.size:
 				if z.kind == P.Z_SMOKE:
 					in_smoke = true
-				else:
+				elif not friendly:
 					in_miasma = true
 	f.in_smoke = in_smoke or f.pied_t > 0    # p4.18: cream in the eyes hides the others, as smoke does
 	f.burn_t = f.burn_t + 1 if in_fire else 0
@@ -2615,13 +2675,13 @@ func _fighter_zones(f: Fighter) -> void:
 # ------------------------------------------------------------------ the walls
 # The purple walls (TowerFall's miasma, D2): walls_start ticks after FIGHT they
 # grow in from the left and right edges along WALLS_STEPS, and anyone touching a
-# wall dies once it is deadly. When one fighter or none is left, they melt away
-# at once (TowerFall melts them on a kill that leaves one; ours on any end, so the
-# winner is never caught in the 1.5 s before the point).
+# wall dies once it is deadly. When one fighter or none is left (TEAMS: one team),
+# they melt away at once (TowerFall melts them on a kill that leaves one; ours on
+# any end, so the winner is never caught in the 1.5 s before the point).
 func _update_walls() -> void:
 	if walls_start <= 0 or play_t < walls_start:
 		return
-	if walls_melt_t < 0 and alive_count() <= 1:
+	if walls_melt_t < 0 and decided():
 		walls_melt_t = 0
 		walls_melt_from = walls_share
 	if walls_melt_t >= 0:
@@ -2712,7 +2772,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_u8(f.arrows)
 		buf.put_u8(mini(f.state_t, 255))
 		buf.put_u8(mini(f.points, 255))
-		buf.put_u8((P.F2_BOT if f.bot else 0) | (P.F2_AIMING if f.aiming else 0) | (0 if f.connected else P.F2_AWAY))
+		buf.put_u8((P.F2_BOT if f.bot else 0) | (P.F2_AIMING if f.aiming else 0) | (0 if f.connected else P.F2_AWAY) | team_bits(f))
 	for a in arrows:
 		if a.dead:
 			continue

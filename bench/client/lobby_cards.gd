@@ -16,6 +16,7 @@ const Polish = preload("res://client/polish.gd")
 const World = preload("res://client/world.gd")
 const P = preload("res://sim/proto.gd")
 const Season = preload("res://client/season.gd")   # p4.19: the bots' names follow the season
+const Teams = preload("res://client/teams_view.gd")   # TEAMS: a team flag on each card
 const HALO := preload("res://assets/fx_halo.png")
 const N := 8
 const TOP := 240.0               # the cards' top in the 1920 x 1080 frame
@@ -463,6 +464,7 @@ func _words(n: Control, xfs: Array) -> void:
 			var sc: Color = Color(1, 1, 0.85) if s[3] else col.lightened(0.3)
 			var sz := 9.0 * a + 3.0
 			n.draw_rect(Rect2(s[0] - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), Color(sc.r, sc.g, sc.b, a))
+	Teams.lobby_flags(n, self, xfs)   # TEAMS: each seat's team flag, on the card's top edge
 
 # The award ribbon's own place: its middle on the card, squashed while it flips.
 func _ribbon_xf(n: Control, xf: Array, y: float, sy: float) -> void:

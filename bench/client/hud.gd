@@ -17,6 +17,7 @@ const Banner = preload("res://client/hud_banner.gd")    # p4.17: the round's big
 const Art = preload("res://client/lobby_art.gd")
 const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")        # p4.18: the season's names
+const Teams = preload("res://client/teams_view.gd")     # TEAMS: the flag on each card, the team's colour on its banner
 const BANNER_S := 2.6
 const FIGHT_S := 0.9
 const CARD_W := 210.0
@@ -115,6 +116,8 @@ func round_end(m: Dictionary) -> void:
 			gains.append([w, 0.0, _points_of(w)])
 		banner = "%s WINS THE ROUND" % str(m.get("name", "")).to_upper()
 		banner_color = World.TEAM[w % 8]
+		if Teams.msg_team(m) >= 0:     # TEAMS: a team won: its name is in the message already, the banner takes its colour
+			banner_color = Teams.color(Teams.msg_team(m))
 
 # p4.18: the server's season: ROUND N wears its title colours.
 func set_season(season: String) -> void:
@@ -282,6 +285,7 @@ func _paint(c: Control) -> void:
 			for v in CROWN:
 				crown.append(v + Vector2(x + CARD_W - 32, CARD_Y + 14))
 			c.draw_colored_polygon(crown, Color(1.0, 0.82, 0.2))
+		Teams.hud_flag(c, i, x, CARD_Y)   # TEAMS: the seat's team flag
 		if dead:
 			c.draw_rect(Rect2(x, CARD_Y, CARD_W, CARD_H), Color(0, 0, 0, 0.35))
 		var pw: Dictionary = snap.get("powers", {}).get(i, {})
@@ -474,6 +478,7 @@ func _card2(c: Control, st: Dictionary, f: Dictionary, x: float, leader: bool) -
 	if Polish.on("juice") and goal > 1 and int(st.get("points", 0)) == goal - 1 and phase >= P.PH_ROUND_START and phase <= P.PH_ROUND_END:
 		var blink := 0.95 if fmod(Time.get_ticks_msec() / 1000.0, 0.9) < 0.45 else 0.45
 		c.draw_style_box(Art.box(Color(0, 0, 0, 0), Color(1.0, 0.82, 0.25, blink), 14, 3, 6), r)
+	Teams.hud_flag(c, i, x, CARD_Y)   # TEAMS: the seat's team flag
 	var pw: Dictionary = snap.get("powers", {}).get(i, {})
 	if not pw.is_empty() and not waiting:
 		_chips2(c, x, pw, me)

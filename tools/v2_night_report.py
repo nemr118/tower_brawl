@@ -119,6 +119,27 @@ def main():
               f"{sum(1 for r in rounds if r.get('draw'))} draws")
         print("  arenas: " + ", ".join(f"{k} {v}" for k, v in arenas.most_common()))
         print("  deaths by: " + ", ".join(f"{k} {v}" for k, v in causes.most_common()))
+        # TEAMS (a round line says its mode since 2026-11-24; older lines: FREE FOR ALL): the rounds
+        # played in teams, which team won how often, and a knockout by a teammate (there must be none)
+        team_rounds = [r for r in rounds if r.get("mode") == "teams"]
+        if team_rounds:
+            won = Counter()
+            for r in team_rounds:
+                tn = r.get("team_names") or ["the first team", "the second team"]
+                tw = r.get("team_won", -1)
+                won[tn[tw] if isinstance(tw, int) and 0 <= tw < len(tn) and not r.get("draw") else "a draw"] += 1
+            tsecs = [r["secs"] for r in team_rounds]
+            print(f"  TEAMS: {len(team_rounds)} of the {len(rounds)} rounds (a median {med(tsecs):.1f} s); " + ", ".join(f"{k} {v}" for k, v in won.most_common())
+                  + f"; matches won by a team: {sum(1 for m in matches if m.get('mode') == 'teams')}")
+            friendly = 0
+            for r in team_rounds:
+                teams = r.get("teams") or []
+                for d in r.get("deaths", []):
+                    victim, killer = d[0], d[1]
+                    if killer != victim and killer < len(teams) and victim < len(teams) and teams[killer] >= 0 and teams[killer] == teams[victim]:
+                        friendly += 1
+            if friendly:
+                look_at.append(f"TEAMS: {friendly} knockouts by a teammate (friendly fire should be off)")
         long = [r for r in rounds if r["secs"] > 55]
         if long:
             look_at.append(f"{len(long)} rounds ran past 55 s")
@@ -145,7 +166,12 @@ def main():
             if n and not is_bot(i):
                 people[n] += 1
         w = r.get("winner", 255)
-        if not r.get("draw") and isinstance(w, int) and w < len(names) and names[w] and not is_bot(w):
+        if r.get("mode") == "teams":      # TEAMS: the round is won by every person who fought for the winning team
+            teams = r.get("teams") or []
+            for i, n in enumerate(names):
+                if n and not is_bot(i) and not r.get("draw") and i < len(teams) and teams[i] >= 0 and teams[i] == r.get("team_won", -1):
+                    wins[n] += 1
+        elif not r.get("draw") and isinstance(w, int) and w < len(names) and names[w] and not is_bot(w):
             wins[names[w]] += 1
     if people:
         print("  people (rounds played, rounds won): " + ", ".join(f"{n} {c}/{wins[n]}" for n, c in people.most_common()))

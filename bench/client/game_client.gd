@@ -43,6 +43,7 @@ const Polish = preload("res://client/polish.gd")   # p4.20: the look's switches
 const MatchMenu = preload("res://client/lobby_settings.gd")   # p4.20: the same panel as SETTINGS, as a match's MENU
 const Music = preload("res://client/music.gd")     # p4.20: the songs (their own switch, off until picked)
 const Sfx = preload("res://client/sfx.gd")         # p4.19: the sounds
+const Teams = preload("res://client/teams_view.gd")   # TEAMS: what the page knows about the teams, and all of their look
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
@@ -194,6 +195,8 @@ func _ready() -> void:
 	lobby.season_picked.connect(func(pick): net.send({"kind": "season", "pick": pick}))   # p4.18
 	lobby.look_picked.connect(_pick_look)          # p4.19 SETTINGS: a choice by name, not the next one
 	lobby.controls_picked.connect(func(b): if b != (controls == "buttons"): _on_controls())
+	lobby.mode_picked.connect(func(pick): net.send({"kind": "mode", "pick": pick}))   # TEAMS: SETTINGS' MODE, for everyone
+	lobby.team_pressed.connect(func(): net.send({"kind": "team"}))                    # TEAMS: a tap on your own card: change sides
 	world.pview.test_cream = opts.has("cream")   # p4.18 a test knob for pictures: PIE's cream on your own screen
 	world.pview.test_phew = opts.has("phew")     # p4.19 a test knob for pictures: a PHEW on your own fighter every 3 s
 	_show_look()
@@ -832,6 +835,7 @@ func _on_message(m: Dictionary) -> void:
 			sfx.play("lid")
 			print("🎮 [Silly] %s" % P.silly_name(sl, str(m.get("season", Season.now))))
 		silly_now = sl
+		Teams.read(m)              # TEAMS: the mode and each seat's team
 		if m.has("season") and str(m["season"]) != Season.now:   # p4.18: the server's season dresses the page
 			Season.now = str(m["season"])
 			print("🎮 [Season] %s" % P.SEASON_LABEL.get(Season.now, "NONE"))
@@ -854,6 +858,7 @@ func _on_message(m: Dictionary) -> void:
 		for st in seats_msg.get("seats", []):
 			seat_names.append(str(st.get("name", "")))
 		match_msg = m
+		Teams.match_end(m, seat_names)   # TEAMS: the winning team, for the replay's title and the winner's screen
 		deathcam.can_skip = my_seat >= 0
 		if not opts.has("nocam"):   # p4.13 test knob ?nocam: straight to the winner's screen (pictures)
 			deathcam.start(int(m.get("winner", -1)), seat_names)   # p4.8: the winner's kills first, if any

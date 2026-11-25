@@ -18,6 +18,7 @@ const World = preload("res://client/world.gd")
 const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")   # p4.18
 const AwardArt = preload("res://client/award_art.gd")   # p4.13 polish "award_art": a picture on each award card
+const Teams = preload("res://client/teams_view.gd")     # TEAMS: the winning team's members under its name
 const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
 const FIGHTER := 3.0              # the fighter: 3 x its 128 px frame
@@ -111,8 +112,9 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 		c.draw_set_transform(Vector2(MID.x, words_y), 0.0, Vector2.ONE * (0.6 + 0.4 * pop))
 		Art.text(c, Art.DISPLAY, Vector2(-420, -100), "WINNER!", 66, gold, 9, edge, HORIZONTAL_ALIGNMENT_CENTER, 840)
 		var ns := Art.fit_size(Art.DISPLAY, who.to_upper(), 124, 800, 40)
-		Art.text(c, Art.DISPLAY, Vector2(-420, 20), who.to_upper(), ns, col.lightened(0.25), 12, edge, HORIZONTAL_ALIGNMENT_CENTER, 840)
+		Art.text(c, Art.DISPLAY, Vector2(-420, 20), who.to_upper(), ns, Teams.winner_color(col.lightened(0.25)), 12, edge, HORIZONTAL_ALIGNMENT_CENTER, 840)   # (TEAMS: the team's own colour)
 		Art.text(c, Art.DISPLAY, Vector2(-420, 84), "WINS THE MATCH", 48, Color(0.96, 0.94, 1.0), 8, edge, HORIZONTAL_ALIGNMENT_CENTER, 840)
+		Teams.winner_names(c, 140.0, 1.0)   # TEAMS: who is on the team (nothing in FREE FOR ALL)
 		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# the awards, one card each, sliding in one after another
 	if not awards.is_empty():

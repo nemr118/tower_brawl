@@ -15,6 +15,7 @@ signal sound_picked(on: bool)
 signal music_picked(on: bool)        # p4.20
 signal leave_pressed                 # p4.20: the match's menu: LEAVE THE MATCH
 signal season_picked(pick: String)
+signal mode_picked(pick: String)     # TEAMS: the MODE row, "ffa" or "teams"
 
 const Art = preload("res://client/lobby_art.gd")
 const CARD := Rect2(330, 70, 1260, 940)    # tall enough for four rows and DONE (a phone has CONTROLS too)
@@ -41,6 +42,7 @@ func _init() -> void:
 	_row("sound", "SOUND", "Silly sounds, on this device.", [["off", "OFF"], ["on", "ON"]])
 	_row("music", "MUSIC", "Songs, on this device.", [["off", "OFF"], ["on", "ON"]])   # p4.20
 	_row("season", "SEASON", "The game's holiday.", [["auto", "AUTO"], ["off", "OFF"], ["halloween", "HALLOWEEN"], ["harvest", "HARVEST"]])
+	_row("mode", "MODE", "Everyone alone, or two teams.", [["ffa", "FREE FOR ALL"], ["teams", "TEAMS"]])   # TEAMS: for everyone, like SEASON
 	add_child(done)
 	done.pressed.connect(close)
 	add_child(leave)
@@ -72,6 +74,8 @@ func _picked(key: String, v: String) -> void:
 			music_picked.emit(v == "on")
 		"season":
 			season_picked.emit(v)
+		"mode":
+			mode_picked.emit(v)
 
 func _row_of(key: String) -> Dictionary:
 	for r in rows:
@@ -84,11 +88,13 @@ func _layout() -> void:
 	var y := CARD.position.y + 196.0
 	var shown_n := 0
 	for r in rows:
-		if r["key"] == "season":
-			r["shown"] = not in_match      # the season is the lobby's to change
+		if r["key"] == "season" or r["key"] == "mode":
+			r["shown"] = not in_match      # the season and the mode are the lobby's to change
 		if r["shown"]:
 			shown_n += 1
-	var row_h := ROW_H if shown_n <= 4 else 102.0     # five rows (a phone with SOUND and MUSIC): closer together
+	# more rows sit closer together: 5 (a PC: LOOK, SOUND, MUSIC, SEASON, MODE) and 6 (a phone has CONTROLS too)
+	var row_h := ROW_H if shown_n <= 4 else (102.0 if shown_n == 5 else 90.0)
+	var btn_h := 92.0 if shown_n <= 4 else (84.0 if shown_n == 5 else 74.0)
 	for r in rows:
 		var btns: Array = r["btns"]
 		var live: Array = []
@@ -100,7 +106,7 @@ func _layout() -> void:
 		if not r["shown"]:
 			continue
 		if r["key"] == "season":
-			y += 58.0             # room for the EVERYONE heading
+			y += 58.0 if shown_n <= 5 else 44.0     # room for the EVERYONE heading
 		r["y"] = y
 		var n := live.size()
 		var w := (SEG_W - (n - 1) * 12.0) / n
@@ -113,8 +119,8 @@ func _layout() -> void:
 				b.setup(Color(pal["button"]).darkened(0.25), Color(pal["text"], 0.9), 38)
 			b.say("", str(r["choices"][live[k]][1]))
 			b.position = Vector2(SEG_X + k * (w + 12.0), y)
-			b.size = Vector2(w, 92.0 if shown_n <= 4 else 84.0)
-			b.disabled = r["key"] == "season" and not season_ok and not picked
+			b.size = Vector2(w, btn_h)
+			b.disabled = (r["key"] == "season" or r["key"] == "mode") and not season_ok and not picked   # (MODE: as SEASON, a seat in the lobby)
 		y += row_h
 	done.setup(pal["accent"], Color(0.13, 0.05, 0.0), 52 if not in_match else 44)
 	done.say("", "DONE" if not in_match else "BACK TO THE GAME")
@@ -169,6 +175,13 @@ func set_season(pick: String, now_label: String, can_set: bool) -> void:
 	season_ok = can_set
 	_layout()
 
+# TEAMS: the MODE in use ("ffa" or "teams"). Who may change it: whoever may change the SEASON (set_season's can_set).
+func set_mode(pick: String) -> void:
+	var r := _row_of("mode")
+	if r["value"] != pick:
+		r["value"] = pick
+		_layout()
+
 func open() -> void:
 	t = 0.0
 	visible = true
@@ -214,6 +227,8 @@ func _draw() -> void:
 			hint = r["note"]
 		elif r["key"] == "season":
 			hint = "Now: %s." % r["note"] if season_ok else "Take a seat to change it."
+		elif r["key"] == "mode" and not season_ok:
+			hint = "Take a seat to change it."
 		draw_string(Art.BODY, Vector2(x, y + 80.0), hint, HORIZONTAL_ALIGNMENT_LEFT, SEG_X - x - 24.0, 22, Color(dim, 0.95))
 
 func _heading(x: float, y: float, words: String) -> void:

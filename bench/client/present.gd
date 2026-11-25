@@ -110,6 +110,14 @@ func _rebuild(snap: Dictionary, me, my_seat: int) -> void:
 		a.big = d.get("big", false)
 		owners[id] = a.owner
 		sim.arrows.append(a)
+	# TEAMS: who is with whom, from the snapshot's own team bits (proto F2_TEAMS). The
+	# server lets a teammate's arrow fly through a teammate, so this copy must too: without
+	# it the arrow would wait at your teammate for a snapshot or two, then jump on.
+	# In FREE FOR ALL no fighter has the bits and the copy has no teams, as before.
+	sim.teams = {}
+	for f in snap["fighters"]:
+		if (int(f.get("flags2", 0)) & P.F2_TEAMS) != 0:
+			sim.teams[int(f["id"])] = 1 if (int(f["flags2"]) & P.F2_TEAM_B) != 0 else 0
 	# the stoppers: you where the prediction has you, the others where the snapshot has them
 	var stops: Array = []
 	stop_v.clear()

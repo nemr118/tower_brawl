@@ -788,6 +788,8 @@ static func _dodge(sim, f, m: Mind) -> int:
 	for a in sim.arrows:
 		if a.dead or a.state != P.S_FLY or (a.owner == f.id and a.t < SimScript.ARROW_NO_SELF):
 			continue
+		if sim.friends(f.id, a.owner):
+			continue       # TEAMS: a teammate's arrow flies through it: no threat, nothing to dodge
 		var dx := SimScript.wrap_d(a.x, cx, W)
 		var dy := SimScript.wrap_d(a.y, cy, H)
 		if dx * dx + dy * dy > SEE_R2 or dx * a.vx + dy * a.vy <= 0.0:
@@ -868,7 +870,7 @@ static func _pick_shot(sim, f) -> Array:
 	if f.in_smoke:
 		return []          # p4.9: inside smoke it sees nobody
 	for o in sim.fighters:
-		if o == f or o.state == P.F_DEAD or SimScript.hidden(o):
+		if o == f or o.state == P.F_DEAD or SimScript.hidden(o) or sim.friends(f.id, o.id):   # (TEAMS: never a teammate)
 			continue
 		var dx := SimScript.wrap_d(f.x, o.x, W)
 		var dy := SimScript.wrap_d(f.y, o.y, H)
@@ -990,13 +992,14 @@ static func fly(sim, x: float, y: float, vx: float, vy: float, max_t: int, box: 
 # The nearest living enemy (one hidden in smoke only up close); a person's distance
 # times people_w (PEOPLE by level; OLD: 1). p4.9: none while it stands in smoke
 # (smoke blinds whoever is inside), and never an INVISIBLE one out of sight.
+# TEAMS: never a teammate (sim.friends), so a bot never hunts, aims at or stabs one.
 static func nearest_enemy(sim, f, people_w := 1.0):
 	var best = null
 	var bd := INF
 	if f.in_smoke:
 		return null
 	for o in sim.fighters:
-		if o == f or o.state == P.F_DEAD or SimScript.hidden(o):
+		if o == f or o.state == P.F_DEAD or SimScript.hidden(o) or sim.friends(f.id, o.id):   # (TEAMS: a teammate is no enemy)
 			continue
 		var dx := SimScript.wrap_d(f.x, o.x, W)
 		var dy := SimScript.wrap_d(f.y, o.y, H)
@@ -1028,7 +1031,7 @@ static func arrow_incoming(sim, f) -> bool:
 	var cx := float(f.x + SimScript.HALF_W)
 	var cy := float(f.y + SimScript.MID_Y)
 	for a in sim.arrows:
-		if a.dead or a.state != P.S_FLY or a.owner == f.id:
+		if a.dead or a.state != P.S_FLY or a.owner == f.id or sim.friends(f.id, a.owner):   # (TEAMS: nor a teammate's)
 			continue
 		var dx := SimScript.wrap_d(a.x, cx, W)
 		var dy := SimScript.wrap_d(a.y, cy, H)

@@ -24,6 +24,7 @@ const BG_FAR_CASTLE := preload("res://assets/bg_castle_far.png")   # polish "cas
 const BG_MID_CASTLE := preload("res://assets/bg_castle_mid.png")
 const BG_FAR_AUTUMN := preload("res://assets/bg_autumn_far.png")   # p4.18: the castle arenas' far backdrop in the Harvest season (ComfyUI)
 const LeavesView = preload("res://client/leaves_view.gd")
+const TeamsView = preload("res://client/teams_view.gd")   # TEAMS: a team flag over each fighter (all of its look is in that file)
 const ARROWS2 := preload("res://assets/fx_arrows2.png")           # polish "arrows2"
 const SH_SHAFT2 := preload("res://shaders/shaft2.gdshader")       # polish "shaft_motes": the shafts with dust in them
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
@@ -148,6 +149,7 @@ var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd
 var barn                         # THE HARVEST BARN's look (client/barn_view.gd), theme "barn"
 var table                        # THE BIG TABLE's look (client/table_view.gd), theme "table"
 var dress                        # polish: the castle arenas' dressing, over the tiles (client/dress_view.gd)
+var team_marks = TeamsView.Marks.new()   # TEAMS: the flags over the fighters (nothing is drawn in FREE FOR ALL)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -336,6 +338,7 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		m.set_shader_parameter("glow_color", TEAM[i % 8].lightened(0.3))
 		bodies.add_child(s)
 		fighters.append([s, m, FIGHTER_TEX[i % 8], null, 0.0, -1])   # [3]: the lit texture until p4.3
+	bodies.add_child(team_marks)   # TEAMS: over the fighters, in the layer the night never darkens
 	rain = fx.take_loop("rain")
 	rain.position = Vector2(860, -60)
 	splash = fx.take_loop("rain_splash")
@@ -791,6 +794,7 @@ func render(s: Dictionary, delta: float) -> void:
 			if slot[4] <= 0.0:
 				slot[4] = 0.035
 				fx.ghost(FIGHTER_TEX[i % 8], spr.region_rect, spr.position + Vector2(0, -58), spr.flip_h, TEAM[i % 8])
+	team_marks.show_view(fl if by_seat else [], fighters)   # TEAMS: a flag over each fighter the page shows
 	_render_ring(fl, delta)
 	_render_arrows(s["arrows"])
 	_render_zones(s["zones"])

@@ -27,7 +27,8 @@ ap.add_argument("--ios", action="store_true", help="with --phone: an iPhone's us
 ap.add_argument("--extra", default="", help="more page options, a=1&b=2")
 ap.add_argument("--watch", type=float, default=0.0, help="after the fight shots, wait this long and shoot <out>_late.png")
 ap.add_argument("--look-tap", action="store_true", help="open the lobby's SETTINGS and pick LOOK: LOW, then reload the page (the pick is kept)")
-ap.add_argument("--lobby-tap", default="", help="X,Y in the 1920 x 1080 design: tap there in the lobby and shoot <out>_lobby_tap.png, then tap it again (2026-10-26: the ARENA picker is 320,732)")
+ap.add_argument("--lobby-tap", default="", help="X,Y in the 1920 x 1080 design: tap there in the lobby and shoot <out>_lobby_tap.png, then tap it again (2026-10-26: the ARENA picker is 320,732). "
+                "Several taps: X,Y;X,Y;... one after another, a picture after each (<out>_lobby_tap1.png, 2, ...), and no closing tap (TEAMS: SETTINGS, then MODE, then DONE, then your own card)")
 ap.add_argument("--burst", type=float, default=0.0, help="SECS: after START, every frame the page draws for SECS s (the browser's screencast: "
                 "<out>_burst/NNN.jpg) in place of round/fight/fight2 (p4.17: the banners' pop; one PNG shot takes about 3 s)")
 ap.add_argument("--until", action="append", default=[], help="TEXT@D1,D2: wait for a page console line with TEXT, then shoot <out>_<word>_<D>.png D s after it; "
@@ -39,10 +40,11 @@ ap.add_argument("--host-start", type=int, default=0, help="p4.18: start the matc
 ap.add_argument("--port", type=int, default=9334)
 ap.add_argument("--wait", type=float, default=9.0, help="seconds for the page to load and join")
 ap.add_argument("--round-wait", type=float, default=4.3, help="seconds from START to the round shot (3 s countdown + the ROUND banner; less on a slow page)")
+ap.add_argument("--size", default="1280x720", help="the window, WxH (a phone on its side: 844x390)")
 a = ap.parse_args()
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-W, H = 1280, 720
+W, H = (int(v) for v in a.size.lower().split("x"))
 prof = tempfile.mkdtemp(prefix="tb-v2shot-")
 # p4.19: the browser's throw-away profile goes when the tool ends, however it ends. (It was
 # left behind: 92 of them, 3.7 GB, sat in /tmp, which is memory on this PC.)
@@ -181,7 +183,13 @@ if a.look_tap:
     cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('fs-gate'); if(g){g.click(); g.remove();} return 'ok'})()")
     drain(1.0)
     shot("lobby_reload")
-if a.lobby_tap:
+if ";" in a.lobby_tap:
+    for n, spot in enumerate(a.lobby_tap.split(";"), 1):
+        lx, ly = (float(v) for v in spot.split(","))
+        tap(lx, ly)
+        drain(1.2)
+        shot(f"lobby_tap{n}")
+elif a.lobby_tap:
     lx, ly = (float(v) for v in a.lobby_tap.split(","))
     tap(lx, ly)
     drain(1.0)

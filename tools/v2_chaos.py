@@ -6,16 +6,21 @@
 # close the tab, lose the socket with no close, go silent with a button held, come
 # back with their token, come back on a second socket while the first is still open,
 # send junk. A fake host starts and stops matches, kicks, and changes the arena, the
-# season, the bots and the power-ups. All the while the tool checks:
+# season, the bots and the power-ups. TEAMS (2026-11-24): fake players change sides
+# (in the lobby, in a match, in the countdown: only the lobby's tap may count) and
+# change the MODE, and the host flips the MODE at any time. All the while the tool checks:
 #   - no SCRIPT ERROR (or any ERROR) in the server's output, and the server stays up
 #   - no phase stuck (each phase has a longest time), so every round ends
 #   - seats and points stay sane: an empty seat has no name and no points, no two
 #     seats for one fake player, no client on two seats, points from 0 to the goal
 #   - no round or match winner without a name
+#   - TEAMS: every seated fighter has a team, every seat of a team shows its team's
+#     points, a team's win names the team and its members, the fighters' team flags in
+#     the snapshot are the seats' teams, and nobody is ever knocked out by a teammate
 #   - the server's tick stays fast (its own report line every 5 s)
 #
 #   ./venv/bin/python tools/v2_chaos.py --spawn --port 8110 --admin-port 8120 --minutes 15 \
-#       --season harvest --arena mix --bots 3 [--seed 1] [--fakes 10] [--out DIR]
+#       --season harvest --arena mix --bots 3 [--mode teams] [--seed 1] [--fakes 10] [--out DIR]
 #   --spawn starts its own test server (ws, no TLS) and stops it by its PID at the end.
 #   Without it: --url ws://host:port --admin-port N [--server-log FILE] for a server
 #   that already runs (it must have --admin-port).
@@ -37,6 +42,7 @@ PHASES = ["LOBBY", "COUNTDOWN", "ROUND START", "PLAYING", "ROUND END", "MATCH EN
 E_DEATH, E_KILL, E_PHEW = 9, 19, 45
 F_DEAD = 2
 F2_BOT, F2_AWAY = 1, 4
+F2_TEAMS, F2_TEAM_B = 8, 16      # TEAMS: a fighter's team in the snapshot (proto.gd)
 OWN_FIGHTER, OWN_BRAIN, OWN_SAFE = 1, 2, 4
 NO_ONE = 255
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -94,6 +100,8 @@ class Client:
         self.snap_tick, self.snap_t = 0, 0.0
         self.own = None                      # the last T_OWN: {tick, used, margin, late, flags}
         self.events = collections.deque(maxlen=20000)
+        self.friendly = []                   # TEAMS: knockouts by a teammate seen in a snapshot (there must be none): text lines
+        self.team_kills = 0                  # and the knockouts by a foe seen in TEAMS rounds (so "none" means something)
         self.mode = "brain"                  # brain (v2_synth's small brain), hold (fixed buttons), idle (no buttons)
         self.hold_buttons = 0
         self.silent = False                  # send nothing at all (a frozen page)
@@ -203,6 +211,17 @@ class Client:
                     self.snap = s
                     self.snap_tick, self.snap_t = s["tick"], time.monotonic()
                     self.events.extend(s["events"])
+                    # TEAMS: a knockout whose killer is on the victim's team, by this same snapshot's
+                    # team flags (the event: tick, type, x, y, killer, victim)
+                    for e in s["events"]:
+                        if e[1] != E_KILL or e[4] == e[5]:
+                            continue
+                        fk, fv = s["fighters"].get(e[4]), s["fighters"].get(e[5])
+                        if fk and fv and (fk["flags2"] & F2_TEAMS) and (fv["flags2"] & F2_TEAMS):
+                            if (fk["flags2"] & F2_TEAM_B) == (fv["flags2"] & F2_TEAM_B):
+                                self.friendly.append(f"tick {s['tick']}: seat {e[4]} knocked out its teammate seat {e[5]}")
+                            else:
+                                self.team_kills += 1
                 elif data[0] == T_OWN and len(data) >= 16:
                     tick, used, margin, late, flags, moves = struct.unpack_from("<IIbBBI", data, 1)
                     self.own = {"tick": tick, "used": used, "margin": margin, "late": late, "flags": flags}
@@ -361,6 +380,8 @@ JUNK_TEXT = [
     '{"kind": "tv"}', '{"kind": "leave", "seat": 3}', '{"kind": "kick", "seat": 0}', '{"kind": "nope"}', '{"KIND": "join"}',
     '{"kind": "join", "name": "' + "A" * 5000 + '"}', '{"kind": "name", "name": "\\u0000\\u0007\\u202e<b>x</b>"}',
     '{"kind": "bots", "n": NaN}', "���", '{"kind": "join"' * 50,
+    '{"kind": "mode"}', '{"kind": "mode", "pick": 7}', '{"kind": "mode", "pick": "pancakes"}', '{"kind": "mode", "pick": ["teams"]}',
+    '{"kind": "team", "n": []}', '{"kind": "team", "seat": 3, "team": 9}', '{"kind": "team", "team": "TURKEY"}',
 ]
 
 
@@ -408,6 +429,8 @@ def main():
     ap.add_argument("--bots", type=int, default=3)
     ap.add_argument("--season", default="harvest")
     ap.add_argument("--arena", default="mix")
+    ap.add_argument("--mode", default="ffa", help="the MODE the spawned server starts in: ffa or teams")
+    ap.add_argument("--no-mode-moves", action="store_true", help="nobody changes the MODE or a team (with --mode ffa: a soak of FREE FOR ALL alone)")
     ap.add_argument("--goal", type=int, default=0, help="points to win (0: the server's rule)")
     ap.add_argument("--calm", action="store_true", help="no host stop, no kick: matches run to their end (more rounds, more winner's screens)")
     ap.add_argument("--bench", default="", help="with --spawn: the server from another copy of bench/ (an older commit: the soak should find its bugs)")
@@ -417,7 +440,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     server = None
     if a.spawn:
-        extra = ["--bots", str(a.bots), "--season", a.season, "--arena", a.arena]
+        extra = ["--bots", str(a.bots), "--season", a.season, "--arena", a.arena, "--mode", a.mode]
         if a.goal > 0:
             extra += ["--goal", str(a.goal)]
         server = Server(a.port, a.admin_port, a.out, extra, a.bench or None)
@@ -519,6 +542,14 @@ def main():
         elif k < 0.50:
             c.mode = rng.choice(["brain", "brain", "brain", "idle", "hold"])
             c.hold_buttons = rng.randrange(256)
+        elif k < 0.58 and not a.no_mode_moves:
+            # TEAMS: a tap on its own card (at any time: only one in the lobby may count)
+            for _ in range(rng.choice([1, 1, 1, 2, 5])):
+                c.send({"kind": "team"})
+            did["change sides (a player)"] += 1
+        elif k < 0.60 and not a.no_mode_moves:
+            c.send({"kind": "mode", "pick": rng.choice(["teams", "teams", "ffa"])})
+            did["mode (a player)"] += 1
 
     def _quiet_close(s):
         try:
@@ -542,9 +573,13 @@ def main():
             if not a.calm:
                 host.cmd("kick", seat=rng.randrange(8))
                 did["host: kick"] += 1
-        elif k < 0.80:
+        elif k < 0.74:
             host.cmd("arena", n=rng.choice([-1, -1, -1, 1, 2, 3, 4, 5, 6]))
             did["host: arena"] += 1
+        elif k < 0.80:
+            if not a.no_mode_moves:
+                host.cmd("mode", pick=rng.choice(["teams", "teams", "teams", "ffa"]))     # TEAMS: in a match it counts from the next one
+                did["host: mode"] += 1
         elif k < 0.87:
             host.cmd("season", pick=rng.choice(["harvest", "harvest", "harvest", "auto", "off", "halloween"]))
             did["host: season"] += 1
@@ -604,6 +639,24 @@ def main():
                     cids[s["client"]] = i
                 if s["name"] == "":
                     find(f"a person's seat with no name: seat {i}", f"noname {i}")
+        # TEAMS, from the host port's own view of the seats
+        in_match = st["phase"] not in (PH_LOBBY, PH_COUNTDOWN)
+        if st.get("mode_now") == "teams":
+            counts["checks in TEAMS"] += 1
+            tp = st.get("team_points", [0, 0])
+            for s in st["seats"]:
+                if s["kind"] == 0:
+                    continue
+                if s.get("team") not in (0, 1):
+                    find(f"TEAMS: a seated fighter with no team: seat {s['i']} '{s['name']}' team {s.get('team')}", f"noteam {s['i']}")
+                elif in_match and s["points"] != tp[s["team"]]:
+                    find(f"TEAMS: seat {s['i']} '{s['name']}' shows {s['points']} points, its team {s['team']} has {tp[s['team']]}", f"teampoints {s['i']}")
+            if in_match and (min(tp) < 0 or (st["goal"] > 0 and max(tp) > st["goal"])):
+                find(f"TEAMS: team points out of range: {tp} (goal {st['goal']})", "teampoints range")
+        elif in_match:
+            counts["checks in FREE FOR ALL"] += 1
+            if st.get("team_points", [0, 0]) != [0, 0]:
+                find(f"FREE FOR ALL: team points are not 0: {st.get('team_points')}", "ffa teampoints")
         t = st.get("tick", {})
         worst["rss_mb"] = max(worst["rss_mb"], float(t.get("rss_mb", 0.0)))
         if rss_first[0] is None and float(t.get("rss_mb", 0.0)) > 0:
@@ -615,14 +668,42 @@ def main():
                 counts["round_end messages"] += 1
                 if not m.get("draw") and (str(m.get("name", "")) == "" or int(m.get("winner", 255)) > 7):
                     find(f"a round's winner with no name: round_end {json.dumps({k: m[k] for k in ('round', 'winner', 'name', 'draw')})}", "round noname")
+                if "team" in m:      # TEAMS: a team won: its name, its members, and the seat that stands for it is one of them
+                    counts["rounds won by a team (messages)"] += 1
+                    if m.get("draw") or m["team"] not in (0, 1) or not str(m.get("name", "")).startswith("TEAM ") \
+                            or not m.get("members") or int(m.get("winner", 255)) not in [int(x) for x in m.get("members", [])]:
+                        find(f"TEAMS: an odd round_end: {json.dumps({k: m.get(k) for k in ('round', 'winner', 'name', 'draw', 'team', 'members')})}", "team round odd")
             for m in c.take_msgs("match_end"):
                 counts["match_end messages"] += 1
                 if str(m.get("name", "")) == "":
                     find(f"a match's winner with no name: seat {m.get('winner')}", "match noname")
+                if "team" in m:
+                    counts["matches won by a team (messages)"] += 1
+                    if not str(m.get("name", "")).startswith("TEAM ") or not m.get("members") or str(m.get("best", "")) == "" \
+                            or int(m.get("winner", 255)) not in [int(x) for x in m.get("members", [])]:
+                        find(f"TEAMS: an odd match_end: {json.dumps({k: m.get(k) for k in ('winner', 'name', 'team', 'members', 'best')})}", "team match odd")
             c.take_msgs("note")
             c.take_msgs("full")
             c.take_msgs("version_error")
             c.events.clear()
+            # TEAMS: no friendly fire, as this fake player saw it in its snapshots
+            for line in c.friendly:
+                find(f"TEAMS: friendly fire: {line} (seen by {c.name})", "friendly " + line)
+            c.friendly = []
+            counts["knockouts by a foe in TEAMS rounds (as the fakes saw them)"] += c.team_kills
+            c.team_kills = 0
+            # and each fighter's team flag in the snapshot is its seat's team (a seat taken over in the
+            # middle of a round is left out: its fighter keeps the round's team, "in" is false)
+            sm, sn = c.seats_msg, c.snap
+            if c.alive and sm and sn and sm.get("mode") == "teams" and sn["phase"] == PH_PLAY and sm.get("phase") == PH_PLAY \
+                    and sm.get("round") == sn["round"]:
+                for s in sm.get("seats", []):
+                    f = sn["fighters"].get(s["i"])
+                    if f is None or not s.get("in") or s.get("kind") == 0:
+                        continue
+                    flag = (1 if f["flags2"] & F2_TEAM_B else 0) if f["flags2"] & F2_TEAMS else -1
+                    if flag != s.get("team"):
+                        find(f"TEAMS: seat {s['i']} '{s['name']}' is on team {s.get('team')} in the seats message, its fighter's flag says {flag}", f"flag {s['i']}")
 
     def check_log():
         if not log_path or not os.path.exists(log_path):
@@ -660,7 +741,11 @@ def main():
                 round_open[0] = False
             if "[SLOW]" in line:
                 slow_lines.append(line.strip()[:260])
-            for word, name in (("PHEW:", "PHEW lines (the winner was saved)"), ("[MATCH] end after", "matches ended with a winner"),
+            for word, name in (("is the last team standing", "rounds won by a team"), ("joins TEAM", "taps that changed sides"),
+                               ("[LOBBY] mode ", "MODE changes"), ("countdown stopped: a team has no fighter", "countdowns stopped (a team was empty)"),
+                               ("left (a team has none)", "matches stopped (a team was empty)"), ("TEAMS, first to", "matches started in TEAMS"),
+                               ("FREE FOR ALL, first to", "matches started in FREE FOR ALL"), ("no point: nobody of", "no-point lines (the whole team left)"),
+                               ("PHEW:", "PHEW lines (the winner was saved)"), ("[MATCH] end after", "matches ended with a winner"),
                                ("[MATCH] start", "matches started"), ("is back from", "seats taken back by a token"),
                                (": held ", "seats held after a drop"), ("went silent", "silent sockets dropped"), ("no point:", "no-point lines"),
                                ("took over", "seats taken over by a second socket"), ("is free again", "held seats freed"),
@@ -750,7 +835,8 @@ def main():
         for t, text in findings:
             print(f"     {t:7.1f} s  {text}")
     else:
-        print("   found nothing: no error in the server's output, no phase stuck, seats and points sane, every winner had a name")
+        print("   found nothing: no error in the server's output, no phase stuck, seats and points sane, every winner had a name, "
+              "teams and their points sane, no knockout by a teammate")
     with open(os.path.join(a.out, "chaos_report.json"), "w") as f:
         json.dump({"seconds": round(secs, 1), "seed": a.seed, "fakes": a.fakes, "moves": did, "seen": counts, "worst": worst,
                    "rss_first_mb": rss_first[0], "findings": findings}, f, indent=1)

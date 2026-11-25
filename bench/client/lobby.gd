@@ -31,6 +31,8 @@ signal look_picked(pick: String)     # p4.19 SETTINGS (lobby_settings.gd): auto,
 signal controls_picked(buttons: bool)
 signal sound_picked(on: bool)
 signal music_picked(on: bool)        # p4.20 SETTINGS' MUSIC row
+signal mode_picked(pick: String)     # TEAMS: SETTINGS' MODE row: "ffa" or "teams"
+signal team_pressed                  # TEAMS: a tap on your own card: change sides
 
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
@@ -45,6 +47,7 @@ const Names = preload("res://client/lobby_names.gd")   # p4.18: WHO ARE YOU? the
 const Champs = preload("res://client/lobby_champs.gd")       # p4.20: TONIGHT'S CHAMPIONS
 const Settings = preload("res://client/lobby_settings.gd")   # p4.19: one panel for LOOK, CONTROLS, SOUND, SEASON
 const Polish = preload("res://client/polish.gd")
+const Teams = preload("res://client/teams_view.gd")          # TEAMS: the tap on your own card (the flags: lobby_cards.gd)
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
 const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
 enum { IC_BOTS, IC_LEVEL, IC_LOOK, IC_CONTROLS, IC_LEAVE, IC_CROWN }
@@ -95,6 +98,7 @@ var champs: Array = []            # the seats message's "champs"
 var settings_btn = Art.Btn.new()  # p4.19: top right, in place of LOOK and CONTROLS (polish "settings")
 var one_panel := false            # is that polish on?
 var who := Names.new()
+var team_tap = Teams.Tap.new()    # TEAMS: a see-through button over your own card
 var known_names: Array = []       # the seats message's "names"
 var seated_names: Array = []
 var tv := false                   # p4.18 THE BIG SCREEN: no buttons; a QR code and the address to join
@@ -167,6 +171,8 @@ func _init() -> void:
 	logo.set_dress(pal, hw)
 	root.add_child(cards)
 	cards.set_dress(pal, hw)
+	root.add_child(team_tap)          # TEAMS: over the cards, under every panel that opens
+	team_tap.pressed.connect(func(): team_pressed.emit())
 	for c in [dock, notice, corner]:
 		c.lobby = self
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -268,6 +274,7 @@ func _init() -> void:
 	settings.sound_picked.connect(func(on): sound_picked.emit(on))
 	settings.music_picked.connect(func(on): music_picked.emit(on))
 	settings.season_picked.connect(func(pick): season_picked.emit(pick))
+	settings.mode_picked.connect(func(pick): mode_picked.emit(pick))   # TEAMS
 	visibility_changed.connect(_on_visibility)
 
 # The ARENA button: the picker of painted cards (polish "arena_cards"), or the next arena as before.
@@ -542,6 +549,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	level_btn.disabled = not can_set
 	season_btn.disabled = not can_set
 	settings.set_season(season_pick, season_label, can_set)
+	settings.set_mode(Teams.pick)     # TEAMS: the MODE row, and the tap on your own card (only in the lobby)
+	team_tap.place(cards, my_seat, Teams.on and can_set and connected and not tv)
 	if settings.visible and phase != P.PH_LOBBY and phase >= 0 and seated:
 		settings.close()                # the match starts: out of the way
 	tv_line = "ARENA: %s  ·  BOTS: %d %s  ·  POWER-UPS %s" % ["MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick), bots_wanted, lvl,
@@ -564,7 +573,7 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 		_main("GET READY", 0, true)
 		main_glow = 2
 	elif in_lobby or phase < 0:
-		var ok := people + bots >= 2
+		var ok := people + bots >= 2 and (Teams.ok or not Teams.on)   # (TEAMS: and a fighter on each team)
 		_main("START", 1, not ok)
 		main_glow = 1 if ok else 0
 	else:
@@ -582,6 +591,9 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 			line = "Type your name and tap JOIN." if people < 8 else "All 8 seats are taken. JOIN when one frees up."
 		elif phase == P.PH_COUNTDOWN:
 			line = "Here we go."
+		elif in_lobby and Teams.team(my_seat) >= 0 and people + bots >= 2:     # TEAMS: your team by name, and how to change it
+			line = ("You are on %s. Tap your card to change teams." % Teams.team_name(Teams.team(my_seat))) if Teams.ok \
+				else "TEAMS needs a fighter on each team: tap your card to change sides, or add a bot."
 		elif in_lobby:
 			line = "Tap START when everyone is in." if people + bots >= 2 else "A match needs 2 fighters: add a bot or wait for a friend."
 		else:

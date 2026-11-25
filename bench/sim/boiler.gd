@@ -229,7 +229,7 @@ func step(sim) -> void:
 		hook.wait += rng.randi_range(0, 240 if not demo else 30)
 		lights_wait = rng.randi_range(timing["lights_first"][0], timing["lights_first"][1])
 		surge_wait = rng.randi_range(timing["surge_first"][0], timing["surge_first"][1])
-	var live: bool = sim.alive_count() > 1
+	var live: bool = not sim.decided()     # (TEAMS: decided when one team is left)
 	if demo:   # (the timeline: someone through a locker, someone knocked)
 		for f in sim.fighters:
 			var lx: int = demo_x.get(f.id, f.x)
@@ -315,7 +315,7 @@ func _burn(sim, i: int, t: int) -> void:
 		var body := Rect2(f.x + BURN_MARGIN, f.y + BURN_MARGIN, 36 - BURN_MARGIN * 2, 63 - BURN_MARGIN * 2)
 		if _hits(r, body):
 			sim._kill(f, 255, 10)
-			if f.id != sim.safe:  # (the round's winner is safe: the fire does not throw it)
+			if not sim.is_safe(f):  # (the round's winner is safe: the fire does not throw it)
 				f.vx = dir.x * 7.0
 				f.vy = -6.0 + dir.y * 5.0
 	for a in sim.arrows:

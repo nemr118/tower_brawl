@@ -25,6 +25,7 @@ const World = preload("res://client/world.gd")
 const Banner = preload("res://client/hud_banner.gd")   # p4.17: WINS THE MATCH and MATCH POINT in the banners' style
 const Art = preload("res://client/lobby_art.gd")   # p4.19: the lobby's letters and button style on the replay
 const Polish = preload("res://client/polish.gd")
+const Teams = preload("res://client/teams_view.gd")   # TEAMS: the replay's title is the winning team's name
 const REC_HZ := 20.0
 const KEEP_S := 3.0               # a clip's run-up
 const AFTER_S := 0.8              # and what follows the kill
@@ -252,7 +253,10 @@ func _title_banner(delta: float) -> void:
 	var extra: Array = []
 	var fade := clampf(ending / FADE_S, 0.0, 1.0) if ending >= 0.0 else 1.0   # the replay's fade to black takes the words too
 	if t_play < TITLE_S:
-		main = [_name(winner).to_upper(), 112, col.lerp(Color.WHITE, 0.55), col, col.darkened(0.6), 190,
+		# TEAMS: the title is the winning team's name in its own colour (the kills shown are its best player's)
+		var who: String = Teams.won_name() if Teams.won_team >= 0 else _name(winner)
+		var tcol: Color = Teams.winner_color(col)
+		main = [who.to_upper(), 112, tcol.lerp(Color.WHITE, 0.55), tcol, tcol.darkened(0.6), 190,
 			clampf((TITLE_S - t_play) / 0.4, 0.0, 1.0) * fade]
 		rib = "WINS THE MATCH"
 		if last:

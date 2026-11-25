@@ -35,7 +35,7 @@
 #             after ROUND START; 0 when that is not ahead), then the fighter's whole
 #             state (sim.gd write_fighter_state) when OWN_FIGHTER. To each seated person
 #             after each snapshot (P2: their clock, prediction and reconciliation).
-# Text frames are JSON, {"kind": ...}: hello, join, leave, start, bots, arena, name from a
+# Text frames are JSON, {"kind": ...}: hello, join, leave, start, bots, arena, name, mode, team from a
 # client; welcome, version_error, full, seats, round_end, match_end from the server
 # (the fields are listed in server/game_server.gd). The benchmark adds bench_card.
 extends RefCounted
@@ -223,10 +223,13 @@ const E_PHEW := 45       # p4.19 the round's winner would have died after the ro
 const E_TAUNT := 46      # p4.19 a fighter taunts (the GOBBLE button; a bot after a knockout): x, y its head; a = fighter
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
-# fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)
+# fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held),
+# 8 the round is played in TEAMS and this fighter has a team, 16 it is on the second team
 const F2_BOT := 1
 const F2_AIMING := 2
 const F2_AWAY := 4
+const F2_TEAMS := 8       # TEAMS: this fighter is on a team (never set in FREE FOR ALL: the snapshot's bytes stay as they were)
+const F2_TEAM_B := 16     # with F2_TEAMS: it is on the second team (TEAM_NAMES[season][1]); without it, on the first
 
 # the death causes, for the log lines
 const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
@@ -287,6 +290,25 @@ const BOT_NAMES := {
 	"halloween": ["BOO", "FANG", "CREEPY", "GOOP", "BONES", "SPOOKS", "WEBBY", "CACKLE"],
 	"": ["BOLT", "RUSTY", "CLANK", "BEEP", "GIZMO", "SPROCKET", "WIDGET", "ZAP"],
 }
+
+# TEAMS (2026-11-24, for Thanksgiving: a grandparent can pair with a small kid). The lobby's
+# MODE is FREE FOR ALL (the game as it always was) or TEAMS: two teams, no friendly fire, a
+# round goes to the last team standing. The two teams' names, by the season, the first team
+# then the second. Each has a colour (client/teams_view.gd: orange, teal) and a letter on its flag.
+const TEAM_NAMES := {
+	"harvest": ["TEAM TURKEY", "TEAM PIE"],
+	"halloween": ["TEAM GHOST", "TEAM PUMPKIN"],
+	"": ["TEAM GOLD", "TEAM SILVER"],
+}
+const MODES := ["ffa", "teams"]          # the MODE setting's two choices, as the server and the page say them
+const MODE_LABEL := {"ffa": "FREE FOR ALL", "teams": "TEAMS"}
+
+static func team_names(season: String) -> Array:
+	return TEAM_NAMES.get(season, TEAM_NAMES[""])
+
+static func team_name(team: int, season: String) -> String:
+	var list: Array = team_names(season)
+	return str(list[clampi(team, 0, list.size() - 1)])
 
 static func bot_name(seat: int, season: String) -> String:
 	var list: Array = BOT_NAMES.get(season, BOT_NAMES[""])

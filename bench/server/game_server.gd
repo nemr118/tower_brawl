@@ -29,6 +29,9 @@
 #   BOTS level button changes it (EASY, NORMAL, HARD).
 # --soak: a bot soak (G6): bots in all 8 seats, no people needed, and a match
 #   starts by itself whenever the lobby comes back (tools/v2_soak_report.py).
+# --mode ffa|teams: the lobby's MODE to start with: ffa (FREE FOR ALL, the default)
+#   or teams (two teams, no friendly fire: "TEAMS" below). The lobby's SETTINGS and
+#   the host port's /mode change it.
 # --admin-port N: the host port (p4.2, for the host page in Ignition,
 #   ~/Work/tower_brawl_ignition/build_host.py): plain http on 127.0.0.1 only
 #   (--admin-bind to change that), JSON in and out. GET /state: the seats (with
@@ -37,7 +40,8 @@
 #   (P.ARENA_MIX or an arena of LevelScript.PLAY): any time, in a match from the
 #   next round; /power {n} (p4.9: the power-up orbs on or off, at once; it was p4.5's power arrows);
 #   /kick {seat} (a person goes back to watching), /start, /stop (the match ends,
-#   back to the lobby). A reply: {ok, text, state}. 0 (the default): off.
+#   back to the lobby), /mode {pick} ("ffa" or "teams"; in a match: from the next
+#   match). A reply: {ok, text, state}. 0 (the default): off.
 # Inputs land on their tick (P2): each input carries the server tick it is for,
 # the server keeps a small queue per seat and applies input N just before tick N
 # (a late one at once, so no press is lost; the held buttons when none came), and
@@ -51,16 +55,22 @@
 # join {name, seat (the seat it had before its socket went: it gets that one again when it is free)}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
 # bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.9: 1 the power-up orbs on, 0 off), name {name},
 # skip (p4.8: a seated player ends the match's end, the deathcam's montage, for everyone: the lobby),
+# mode {pick} ("ffa" or "teams": the lobby's MODE, for everyone), team (TEAMS: you change sides; both only in the lobby),
 # report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
 # step_downs, shots_armed, shots_cancelled, mouse_shots, errors [], errors_total; p4.15: stick, jumps, rim_dodges,
 # button_dodges, mem_mb, tex_mb; p4.16: late_pct, eased, eased_px} (p4.7: a phone's own
 # numbers every 30 s and at a look change or a page error; logged as a "client" line, kept for /state). From the server: welcome {seat, version, name, phase},
 # version_error {server, yours}, full, note {text}, seats {phase, round, goal,
 # bots, bots_wanted, bot_level, power, people, arena (the pick), arena_now (the round's,
-# or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
+# or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in, team}]},
 # round_end {round, winner, name,
 # draw, points}, match_end {winner, name, points, awards, replay_s (how long the replay of the winner's kills
 # plays), screen_s (the winner's screen after it)}.
+# TEAMS adds to seats: mode ("ffa" or "teams": what is played now), mode_pick (the lobby's
+# MODE), team_names [2], team_points [2], teams_ok (both teams have a fighter), and each
+# seat's team (0, 1, or -1); to round_end and match_end: team (the winning team), members
+# (its seats), and name is the team's name; match_end also best (the name of its player
+# with the most knockouts, whose seat is winner: the page shows that hero and those kills).
 # Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s; G6: a
 # round line at each round's end with every death, its cause and spot, and a
 # match line at each match's end), <out>/<date>/v2_stats.json (the players'
@@ -226,6 +236,7 @@ class Seat:
 	var buttons: int = 0        # the last buttons applied (held while no input comes)
 	var aim: int = 0
 	var in_round: bool = false  # has a fighter this round
+	var team: int = 0           # TEAMS: the seat's team, 0 or 1 (a person picks it in the lobby; a bot gets one each round)
 	var input_tick: int = -1    # the sim tick a late input was applied on
 	var queue := {}             # input tick -> [buttons, aim]: applied just before that tick
 	var used: int = 0           # the newest input tick applied
@@ -310,6 +321,11 @@ var last_awards: Array = []      # the last match's awards (match_end, and the l
 var pin_demo := false            # --pin-demo (a test knob: sim.pin_demo at each FIGHT)
 var hw_gallery := false          # --hw-gallery (a test knob: sim.hw_gallery at each FIGHT)
 var last_rec := {}               # the last report line (the host page shows its tick numbers)
+# TEAMS (the rules: the "TEAMS" part below, and sim.gd friends / decided / safe_team)
+var mode_teams := false          # the lobby's MODE: false FREE FOR ALL, true TEAMS
+var match_teams := false         # is the match that is on played in TEAMS? (the MODE as it was when the match began)
+var team_points := [0, 0]        # TEAMS: each team's points in this match (every seat of a team shows its team's)
+var win_team := -1               # TEAMS: the team that won the round just called (-1: none, a draw, or FREE FOR ALL)
 
 func _ready() -> void:
 	var o := _args()
@@ -356,6 +372,7 @@ func _ready() -> void:
 		arena_pick = _arena_arg(str(o["arena"]))
 	if o.has("bot-level"):
 		sim.bot_level = maxi(0, SimScript.BrainScript.NAMES.find(str(o["bot-level"]).to_upper()))
+	mode_teams = str(o.get("mode", "ffa")).to_lower() == "teams"
 	_load_lobby(str(o.get("out", root_dir.path_join("bench_results"))), o)   # p4.19: what the lobby picked last time
 	sim.set_arena(_next_arena())   # the lobby shows the arena that comes next
 	for i in SEATS:
@@ -383,7 +400,7 @@ func _ready() -> void:
 			printerr("🏰 [NET] cannot open the host port %s:%d" % [bind, host_port])
 			host_port = 0
 		else:
-			print("🏰 [NET] the host port: http://%s:%d (GET /state; POST /bots /bot_level /arena /kick /start /stop)" % [bind, host_port])
+			print("🏰 [NET] the host port: http://%s:%d (GET /state; POST /bots /bot_level /arena /kick /start /stop /mode)" % [bind, host_port])
 	started_ms = Time.get_ticks_msec()
 	sec_start_ms = started_ms
 	var info := {"kind": "start", "t": Time.get_unix_time_from_system(), "version": P.VERSION, "port": port,
@@ -391,12 +408,12 @@ func _ready() -> void:
 		"walls_s": sim.walls_start / 60, "arena": _arena_label(arena_pick), "bot_level": SimScript.BrainScript.NAMES[sim.bot_level],
 		"godot": Engine.get_version_info().string, "cpu": _cpu_model(), "cores": OS.get_processor_count(), "soak": soak,
 		"host": OS.get_environment("HOSTNAME"), "net_thread": net_thread_on, "admin_port": host_port,
-		"season": _season(), "season_pick": season_pick}
+		"season": _season(), "season_pick": season_pick, "mode": _mode_word(mode_teams)}
 	server_log.store_line(JSON.stringify(info))
 	server_log.flush()
-	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power-ups %s, %s, arena %s, cpu %s x%d, report in %s" % [
+	print("🏰 [NET] Tower Brawl %s: %s on %d, %d bots (%s) fill the empty seats, power-ups %s, %s, arena %s, mode %s, cpu %s x%d, report in %s" % [
 		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, SimScript.BrainScript.NAMES[sim.bot_level], "on" if sim.powerups else "off",
-		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls", _arena_label(arena_pick),
+		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls", _arena_label(arena_pick), P.MODE_LABEL[_mode_word(mode_teams)],
 		info["cpu"], info["cores"], log_path])
 	if net_thread_on:
 		net_thread = Thread.new()
@@ -589,6 +606,8 @@ func _on_text(c: Conn, txt: String) -> void:
 			pass
 		elif _people() + _bots_now() < 2:
 			_out(c.id, JSON.stringify({"kind": "note", "text": "A match needs 2 fighters: add a bot or a friend."}))
+		elif mode_teams and not _teams_ok():
+			_out(c.id, JSON.stringify({"kind": "note", "text": TEAMS_NEED}))
 		else:
 			phase = P.PH_COUNTDOWN
 			phase_t = COUNTDOWN_TICKS
@@ -627,6 +646,16 @@ func _on_text(c: Conn, txt: String) -> void:
 			_say("🏰 [LOBBY] power-ups %s, picked by seat %d '%s'" % ["ON" if on else "OFF", c.seat, seats[c.seat].name])
 			seats_dirty = true
 			_save_lobby()
+	elif kind == "mode":      # TEAMS: the lobby's MODE, for everyone (SETTINGS)
+		var pick := str(d.get("pick", ""))
+		if c.seat >= 0 and phase == P.PH_LOBBY and P.MODES.has(pick) and (pick == "teams") != mode_teams:
+			_set_mode(pick == "teams", "seat %d '%s'" % [c.seat, seats[c.seat].name])
+	elif kind == "team":      # TEAMS: a tap on your own card: you change sides
+		if c.seat >= 0 and phase == P.PH_LOBBY and mode_teams:
+			var ts: Seat = seats[c.seat]
+			ts.team = 1 - ts.team
+			_say("🏰 [LOBBY] seat %d '%s' joins %s" % [ts.i, ts.name, P.team_name(ts.team, _season())])
+			seats_dirty = true
 	elif kind == "name":
 		if c.seat >= 0:
 			c.name = _clean_name(str(d.get("name", "")), c.seat)
@@ -780,6 +809,9 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		s.token = c.token
 		sim.keep.erase(s.i)   # p4.9: a new person: none of the seat's kept power-ups
 		s.points = 0
+		s.team = _smaller_team(s.i)      # TEAMS: a new person goes to the smaller team
+		if match_teams:
+			s.points = team_points[s.team]   # and shows that team's points from the start
 		s.crowns = 0
 		s.in_round = false
 		s.buttons = 0
@@ -940,7 +972,7 @@ func _send_own() -> void:
 		own_buf.put_8(P.NO_MARGIN if s.margin_min >= MARGIN_NONE else clampi(s.margin_min, -128, 126))
 		own_buf.put_u8(mini(s.late_n, 255))
 		own_buf.put_u8((P.OWN_FIGHTER if f != null else 0) | (P.OWN_BRAIN if f != null and f.bot else 0)
-			| (P.OWN_SAFE if f != null and s.i == sim.safe else 0))
+			| (P.OWN_SAFE if f != null and sim.is_safe(f) else 0))   # (TEAMS: every living fighter of the winning team)
 		own_buf.put_u32(sim.tick + phase_t if phase == P.PH_ROUND_START else 0)
 		if f != null:
 			sim.write_fighter_state(own_buf, f)
@@ -961,6 +993,11 @@ func _match_tick() -> void:
 			_say("🏰 [LOBBY] countdown stopped: not enough fighters")
 			phase = P.PH_LOBBY
 			seats_dirty = true
+		elif mode_teams and not _teams_ok():     # TEAMS: someone left in these 3 s and a team is empty
+			_say("🏰 [LOBBY] countdown stopped: a team has no fighter")
+			_out(0, JSON.stringify({"kind": "note", "text": TEAMS_NEED}))
+			phase = P.PH_LOBBY
+			seats_dirty = true
 		elif phase_t <= 0:
 			_begin_match()
 	elif phase == P.PH_ROUND_START:
@@ -977,35 +1014,53 @@ func _match_tick() -> void:
 	elif phase == P.PH_PLAY:
 		phase_t += 1
 		var alive: int = sim.alive_count()
-		if alive <= 1 or phase_t >= ROUND_MAX_TICKS:
-			var draw := alive != 1
+		var over: bool = sim.decided()     # one fighter left, or none (TEAMS: one team left, or none)
+		if over or phase_t >= ROUND_MAX_TICKS:
+			var draw := alive == 0 or not over     # (FREE FOR ALL: the same as "not exactly one alive")
 			winner = P.NO_ONE if draw else sim.last_alive().id
+			# TEAMS: the round goes to a team. `winner` is one of its living fighters (the first).
+			win_team = int(sim.teams.get(winner, -1)) if match_teams and not draw else -1
 			# The winner is safe from this tick on (the review's bug 4: on 25 October the winner
 			# died in the 1.5 s before the point in 10 of 248 rounds, once on a match point).
-			sim.safe = -1 if draw else winner
+			# TEAMS: every living fighter of the winning team is.
+			sim.safe = -1 if draw or win_team >= 0 else winner
+			sim.safe_team = win_team
 			phase = P.PH_ROUND_END
 			phase_t = DRAW_TICKS if draw else ROUND_END_TICKS
 			var msg := {"kind": "round_end", "round": round_no, "winner": winner, "draw": draw,
 				"name": "" if draw else seats[winner].name, "points": _points()}
+			if win_team >= 0:      # TEAMS: the banner says the team's name
+				msg["name"] = P.team_name(win_team, sim.season)
+				msg["team"] = win_team
+				msg["members"] = _team_seats(win_team)
 			_out(0, JSON.stringify(msg))
 			if draw:
 				_say("🏰 [ROUND] %d end after %.1f s: a draw (%d alive)" % [round_no, _round_secs(), alive])
+			elif win_team >= 0:
+				_say("🏰 [ROUND] %d end after %.1f s: %s is the last team standing (%d of its fighters still up; the team: %s)" % [round_no, _round_secs(),
+					msg["name"], alive, _team_line(win_team)])
 			else:
 				_say("🏰 [ROUND] %d end after %.1f s: seat %d '%s' is the last one standing" % [round_no, _round_secs(), winner, seats[winner].name])
-			server_log.store_line(JSON.stringify({"kind": "round", "t": Time.get_unix_time_from_system(), "match": match_no,
+			var line := {"kind": "round", "t": Time.get_unix_time_from_system(), "match": match_no,
 				"round": round_no, "arena": sim.level.id, "secs": snappedf(_round_secs(), 0.01), "winner": winner, "draw": draw,
 				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths,
 				"names": _seat_names(), "arena_name": sim.level.name, "season": sim.season,   # p4.18: the arena by name (numbers move), the season
 				"bots": _bot_seats(),     # p4.19: the bots' seats (a bot is GRAVY now, not BOT 3)
-				"silly": P.silly_name(silly, sim.season)}))   # p4.20: "" for a plain round
+				"silly": P.silly_name(silly, sim.season),     # p4.20: "" for a plain round
+				"mode": _mode_word(match_teams)}     # TEAMS: the mode, on every round's line
+			if match_teams:        # and each seat's team (-1: no fighter), the team that won (-1: a draw), the two names
+				line["teams"] = _round_teams()
+				line["team_won"] = win_team
+				line["team_names"] = P.team_names(sim.season)
+			server_log.store_line(JSON.stringify(line))
 			server_log.flush()
-			if not draw:
-				_mcount(winner, "round_wins")   # p4.11
 			for s in seats:
-				if s.kind != 0 and (s.in_round or (not draw and s.i == winner)):
+				if _won(s.i):
+					_mcount(s.i, "round_wins")   # p4.11 (TEAMS: every seat of the winning team)
+				if s.kind != 0 and (s.in_round or _won(s.i)):
 					var r := _stat(s)
 					r["rounds"] += 1
-					if not draw and s.i == winner:
+					if _won(s.i):
 						r["round_wins"] += 1
 			_save_stats()
 	elif phase == P.PH_ROUND_END:
@@ -1015,34 +1070,54 @@ func _match_tick() -> void:
 			# (A person who sat down on a bot's seat during the round still gets the round that
 			# bot wins, banner and point, as before: the soak showed that taking only the
 			# point away leaves "C03 WINS THE ROUND" on the screen with no point for C03.)
-			if winner != P.NO_ONE and seats[winner].kind == 0:
+			if match_teams:
+				winner = _team_point()     # TEAMS: one point for the team; `winner` is now its best player's seat (or nobody)
+			elif winner != P.NO_ONE and seats[winner].kind == 0:
 				_say("🏰 [ROUND] %d: no point: the winner's seat %d is empty now" % [round_no, winner])
 				winner = P.NO_ONE
 			if winner != P.NO_ONE:
-				seats[winner].points += 1
+				if not match_teams:        # (TEAMS: _team_point gave it)
+					seats[winner].points += 1
 				_sync_points()
 			_free_expired()
+			if match_teams and winner != P.NO_ONE:
+				winner = _team_best(win_team)     # (its best player's held seat may have been freed just now: another one stands for the team)
+				if winner == P.NO_ONE:            # (every seat of the team was a held one, freed just now: nobody is left to have the point)
+					team_points[win_team] -= 1
+					_say("🏰 [ROUND] %d: no point: nobody of %s is left" % [round_no, P.team_name(win_team, sim.season)])
 			if winner != P.NO_ONE and seats[winner].kind != 0 and seats[winner].points >= goal:
-				seats[winner].crowns += 1
-				if seats[winner].kind != 0:
-					var rw := _stat(seats[winner])
-					rw["match_wins"] += 1
-					_save_stats()
+				# the match is won: a crown for the winner (TEAMS: for every seat of the winning team)
+				for wi in (_team_seats(win_team) if match_teams else [winner]):
+					seats[wi].crowns += 1
+					_stat(seats[wi])["match_wins"] += 1
+				_save_stats()
 				phase = P.PH_MATCH_END
 				var replay_s: float = P.replay_secs(int(mstats.get(winner, {}).get("kills", 0)))
 				phase_t = MATCH_END_TICKS + roundi(replay_s * 60.0)
 				last_awards = _awards()   # p4.11
-				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points(),
-					"awards": last_awards, "replay_s": snappedf(replay_s, 0.01), "screen_s": MATCH_END_TICKS / 60}))
+				var end_msg := {"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points(),
+					"awards": last_awards, "replay_s": snappedf(replay_s, 0.01), "screen_s": MATCH_END_TICKS / 60}
+				var who := "seat %d '%s'" % [winner, seats[winner].name]
+				if match_teams:    # TEAMS: the team's name; `winner` stays its best player (the hero, the replay)
+					end_msg["name"] = P.team_name(win_team, sim.season)
+					end_msg["team"] = win_team
+					end_msg["members"] = _team_seats(win_team)
+					end_msg["best"] = seats[winner].name
+					who = "%s (%s; the most knockouts: seat %d '%s')" % [end_msg["name"], _team_line(win_team), winner, seats[winner].name]
+				_out(0, JSON.stringify(end_msg))
 				for aw in last_awards:
 					_say("🏰 [AWARD] %s: %s (%s)" % [aw["name"], aw["title"], aw["why"]])
-				_say("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s; the replay %.1f s, then the winner's screen %d s" % [round_no, winner,
-					seats[winner].name, _score_line(), replay_s, MATCH_END_TICKS / 60])
-				server_log.store_line(JSON.stringify({"kind": "match", "t": Time.get_unix_time_from_system(), "match": match_no,
-					"rounds": round_no, "winner": winner, "people": _people(), "bot_level": sim.bot_level}))
+				_say("🏰 [MATCH] end after %d rounds: %s wins %s; the replay %.1f s, then the winner's screen %d s" % [round_no, who,
+					_score_line(), replay_s, MATCH_END_TICKS / 60])
+				var mline := {"kind": "match", "t": Time.get_unix_time_from_system(), "match": match_no,
+					"rounds": round_no, "winner": winner, "people": _people(), "bot_level": sim.bot_level, "mode": _mode_word(match_teams)}
+				if match_teams:
+					mline["team_won"] = win_team
+					mline["team_points"] = team_points.duplicate()
+				server_log.store_line(JSON.stringify(mline))
 				server_log.flush()
 				seats_dirty = true
-			elif _people() + _bots_now() < 2:
+			elif _people() + _bots_now() < 2 or (match_teams and not _teams_ok()):
 				_stop_match()
 			else:
 				round_no += 1
@@ -1064,9 +1139,13 @@ func _begin_match() -> void:
 	for s in seats:
 		s.points = 0
 	round_no = 1
+	match_teams = mode_teams     # the MODE is fixed for the whole match (a change in a match counts from the next one)
+	team_points = [0, 0]
+	win_team = -1
 	var n := _people() + _bots_now()
-	goal = goal_override if goal_override > 0 else _goal_for(n)
-	_say("🏰 [MATCH] start: %d people + %d bots (%s), first to %d points" % [_people(), _bots_now(), SimScript.BrainScript.NAMES[sim.bot_level], goal])
+	goal = goal_override if goal_override > 0 else _goal_for(2 if match_teams else n)   # (TEAMS: two sides share the points, as two players do)
+	_say("🏰 [MATCH] start: %d people + %d bots (%s), %s, first to %d points" % [_people(), _bots_now(), SimScript.BrainScript.NAMES[sim.bot_level],
+		P.MODE_LABEL[_mode_word(match_teams)], goal])
 	_start_round()
 
 # The arena of the next round: the pick, or MIX's next one (G5; p4.18: MIX's list follows the season).
@@ -1087,8 +1166,8 @@ func _season() -> String:
 
 # p4.19: the lobby's settings are kept over a restart (the October nights: the server came
 # up with 7 bots every time, and the family plays with 0 or 1). <out>/lobby_settings.json
-# holds the bots, their level, the arena, the power-ups and the season; an option on the
-# command line wins over it. A soak never reads or writes it.
+# holds the bots, their level, the arena, the power-ups, the season and the mode; an option
+# on the command line wins over it. A soak never reads or writes it.
 var lobby_path := ""
 
 func _load_lobby(root: String, o: Dictionary) -> void:
@@ -1115,8 +1194,11 @@ func _load_lobby(root: String, o: Dictionary) -> void:
 	if not o.has("season") and P.SEASON_PICKS.has(str(d.get("season", ""))):
 		season_pick = str(d["season"])
 		sim.season = _season()
-	_say("🏰 [LOBBY] the settings of last time: %d bots %s, arena %s, power-ups %s, season %s" % [bots_wanted,
-		SimScript.BrainScript.NAMES[sim.bot_level], _arena_label(arena_pick), "ON" if sim.powerups else "OFF", season_pick.to_upper()])
+	if not o.has("mode"):
+		mode_teams = str(d.get("mode", "ffa")) == "teams"
+	_say("🏰 [LOBBY] the settings of last time: %d bots %s, arena %s, power-ups %s, season %s, mode %s" % [bots_wanted,
+		SimScript.BrainScript.NAMES[sim.bot_level], _arena_label(arena_pick), "ON" if sim.powerups else "OFF", season_pick.to_upper(),
+		P.MODE_LABEL[_mode_word(mode_teams)]])
 
 func _save_lobby() -> void:
 	if lobby_path == "" or soak:
@@ -1124,7 +1206,7 @@ func _save_lobby() -> void:
 	var f := FileAccess.open(lobby_path, FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify({"bots": bots_wanted, "bot_level": sim.bot_level, "arena": arena_pick, "power": sim.powerups,
-			"season": season_pick}))
+			"season": season_pick, "mode": _mode_word(mode_teams)}))
 
 # p4.20 TONIGHT'S CHAMPIONS: the 8 names with the most matches won tonight (then rounds won,
 # then knockouts), each [name, matches won, rounds won, knockouts, a bot?]. Only who played a match.
@@ -1229,6 +1311,7 @@ func _start_round() -> void:
 		if f != null:
 			f.connected = not (s.kind == 1 and s.client_id == 0)
 			f.buttons = 0
+	_teams_round()         # TEAMS: the bots' teams, the team's points on every seat, the sim's teams (nothing in FREE FOR ALL)
 	_sync_points()
 	sim.catch_up()         # p4.18: a person 2 or more points behind starts with a SHIELD
 	sim.frozen = true
@@ -1243,8 +1326,10 @@ func _start_round() -> void:
 # nobody wins the match, everyone goes back to the lobby (backlog 35).
 func _stop_match() -> void:
 	var n := _people() + _bots_now()
-	_say("🏰 [MATCH] stopped after %d round%s: %d fighter%s left %s" % [round_no, "" if round_no == 1 else "s", n, "" if n == 1 else "s", _score_line()])
-	_out(0, JSON.stringify({"kind": "note", "text": "The match stopped: a match needs 2 fighters."}))
+	# (TEAMS: 2 or more can be left, all on one team)
+	_say("🏰 [MATCH] stopped after %d round%s: %d fighter%s left%s %s" % [round_no, "" if round_no == 1 else "s", n, "" if n == 1 else "s",
+		"" if n < 2 else " (a team has none)", _score_line()])
+	_out(0, JSON.stringify({"kind": "note", "text": "The match stopped: a match needs 2 fighters." if n < 2 else "The match stopped: a team has no fighter left."}))
 	_to_lobby()
 
 # p4.20: this round's surprise. Rounds 3, 6, 9... of a match, when power-ups are on; one the
@@ -1277,6 +1362,10 @@ func _to_lobby() -> void:
 	phase_t = 0
 	round_no = 0
 	winner = P.NO_ONE
+	match_teams = false       # TEAMS: the match is over: no teams in the sim, no team points
+	team_points = [0, 0]
+	win_team = -1
+	sim.teams = {}
 	sim.set_arena(_next_arena())
 	_say("🏰 [LOBBY] back in the lobby: %d people seated" % _people())
 	seats_dirty = true
@@ -1340,10 +1429,14 @@ func _log_deaths(evs: Array) -> void:
 # The seat list, to one client (id) or to all (0).
 func _send_seats(target: int) -> void:
 	var list: Array = []
+	var in_lobby := phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN
+	var teams_now: bool = mode_teams if in_lobby else match_teams     # TEAMS: is it what the page should show now?
+	var plan: Array = _team_plan() if teams_now and in_lobby else []  # in the lobby: the bots' teams as the first round will have them
 	for s in seats:
 		list.append({"i": s.i, "name": s.name, "kind": s.kind, "on": s.kind == 2 or s.client_id != 0,
-			"points": s.points, "crowns": s.crowns, "in": s.in_round})
-	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
+			"points": s.points, "crowns": s.crowns, "in": s.in_round,
+			"team": -1 if not teams_now else (int(plan[s.i]) if not plan.is_empty() else (s.team if s.kind != 0 else -1))})
+	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else _goal_next(),
 		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.powerups else 0,
 		"awards": last_awards,
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
@@ -1351,10 +1444,163 @@ func _send_seats(target: int) -> void:
 		"silly": silly if phase >= P.PH_ROUND_START else 0,     # p4.20: this round's surprise (the ROUND banner says it)
 		"champs": _champs(),      # p4.20 TONIGHT'S CHAMPIONS (client/lobby_champs.gd)
 		"names": _names_list(),
+		"mode": _mode_word(teams_now), "mode_pick": _mode_word(mode_teams), "team_names": P.team_names(_season()),
+		"team_points": team_points, "teams_ok": not mode_teams or _teams_ok(),
 		"seats": list}
 	_out(target, JSON.stringify(msg))
 	if target == 0:
 		seats_dirty = false
+
+# ------------------------------------------------------------------ TEAMS
+# The lobby's MODE is FREE FOR ALL or TEAMS (mode_teams; kept in lobby_settings.json).
+# In TEAMS every seat has a team, 0 or 1 (Seat.team):
+#   - a new person goes to the team with fewer people (_smaller_team);
+#   - a person changes sides with a tap on their own card ("team"), only in the lobby;
+#   - the bots are spread at each round's start so the teams are as even as they can
+#     be (_team_plan, _teams_round);
+#   - a match starts only when both teams have a fighter (_teams_ok, TEAMS_NEED).
+# A match keeps the mode it began with (match_teams). The sim knows the round's teams
+# (sim.teams): a teammate cannot hurt you, and a round ends when one team is left
+# (sim.gd). The winning team gets ONE point (team_points), shown on every one of its
+# seats, so the snapshot, the HUD, the catch-up SHIELD and the BIG power-ups all work
+# from a seat's points as they do in FREE FOR ALL.
+const TEAMS_NEED := "TEAMS needs a fighter on each team: tap your card to change sides, or add a bot."
+
+static func _mode_word(teams: bool) -> String:
+	return "teams" if teams else "ffa"
+
+# The lobby's MODE changes (a player in the lobby, or the host at any time: then it
+# counts from the next match).
+func _set_mode(teams: bool, by: String) -> void:
+	mode_teams = teams
+	_save_lobby()
+	_say("🏰 [LOBBY] mode %s, picked by %s" % [P.MODE_LABEL[_mode_word(teams)], by])
+	seats_dirty = true
+
+# The team with fewer people (a tie: the first team). skip: a seat that does not count
+# (the one being seated right now).
+func _smaller_team(skip: int = -1) -> int:
+	var n := [0, 0]
+	for s in seats:
+		if s.kind == 1 and s.i != skip:
+			n[s.team] += 1
+	return 1 if n[1] < n[0] else 0
+
+# Each seat's team as the next round will have it: a person's own team; then the bots
+# (they take the lowest seats no person sits on, as _start_round places them), one by
+# one, each to the team with fewer fighters so far. A tie: the team with fewer people
+# (the spare bot helps the side with fewer people), then the first team. -1: nobody
+# will sit there.
+func _team_plan() -> Array:
+	var plan: Array = []
+	var n := [0, 0]
+	var people := [0, 0]
+	for s in seats:
+		plan.append(s.team if s.kind == 1 else -1)
+		if s.kind == 1:
+			n[s.team] += 1
+			people[s.team] += 1
+	var bots := _bots_now()
+	for s in seats:
+		if bots > 0 and s.kind != 1:
+			var t := 0
+			if n[1] != n[0]:
+				t = 1 if n[1] < n[0] else 0
+			elif people[1] != people[0]:
+				t = 1 if people[1] < people[0] else 0
+			plan[s.i] = t
+			n[t] += 1
+			bots -= 1
+	return plan
+
+# Will both teams have a fighter (people and bots) in the next round?
+func _teams_ok() -> bool:
+	var plan := _team_plan()
+	return plan.has(0) and plan.has(1)
+
+# A round starts (_start_round calls it once the bots sit and the fighters stand): the
+# bots get their teams, every seat shows its team's points, and the sim learns who is
+# with whom. In FREE FOR ALL: the sim has no teams, and nothing else happens.
+func _teams_round() -> void:
+	sim.teams = {}
+	win_team = -1
+	if not match_teams:
+		return
+	var plan := _team_plan()
+	for s in seats:
+		if s.kind == 0:
+			continue
+		if s.kind == 2 and int(plan[s.i]) >= 0:
+			s.team = int(plan[s.i])
+		s.points = team_points[s.team]
+		if s.in_round:
+			sim.teams[s.i] = s.team
+
+# The seats on a team now (people and bots).
+func _team_seats(team: int) -> Array:
+	var out: Array = []
+	for s in seats:
+		if s.kind != 0 and s.team == team:
+			out.append(s.i)
+	return out
+
+# A team's members by name, for a log line.
+func _team_line(team: int) -> String:
+	var names: Array = []
+	for i in _team_seats(team):
+		names.append(seats[i].name)
+	return ", ".join(names)
+
+# The round's teams by seat for the round's log line: -1 for a seat with no fighter.
+func _round_teams() -> Array:
+	var out: Array = []
+	for s in seats:
+		out.append(int(sim.teams.get(s.i, -1)))
+	return out
+
+# Did seat i win the round that was just called? FREE FOR ALL: the winner's seat.
+# TEAMS: every seat that fought for the winning team (alive at the end or not).
+func _won(i: int) -> bool:
+	if winner == P.NO_ONE:
+		return false
+	return i == winner if win_team < 0 else int(sim.teams.get(i, -1)) == win_team
+
+# TEAMS, 1.5 s after a round is called: the winning team's point. One point for the
+# team, shown on every seat of it. Returns the seat that stands for the team from here
+# on (the match's end shows that player's hero and replays their knockouts): the one
+# with the most knockouts in the match, a person before a bot, then the lowest seat.
+# Nobody (P.NO_ONE) after a draw, or when nobody of the team is left on a seat (they
+# all left in these 1.5 s: no point, as for an empty seat in FREE FOR ALL).
+func _team_point() -> int:
+	if win_team < 0:
+		return P.NO_ONE
+	var members := _team_seats(win_team)
+	if members.is_empty():
+		_say("🏰 [ROUND] %d: no point: nobody of %s is left" % [round_no, P.team_name(win_team, sim.season)])
+		return P.NO_ONE
+	team_points[win_team] += 1
+	for i in members:
+		seats[i].points = team_points[win_team]
+	return _team_best(win_team)
+
+# A team's best player: the seat with the most knockouts in this match, a person before
+# a bot, then the lowest seat. P.NO_ONE when the team has no seat.
+func _team_best(team: int) -> int:
+	var best: int = P.NO_ONE
+	for i in _team_seats(team):
+		if best == P.NO_ONE:
+			best = i
+			continue
+		var k := int(mstats.get(i, {}).get("kills", 0))
+		var bk := int(mstats.get(best, {}).get("kills", 0))
+		if k > bk or (k == bk and seats[i].kind == 1 and seats[best].kind != 1):
+			best = i
+	return best
+
+# The points a match would be played to if it started now (the lobby shows it).
+# TowerFall's rule by the number of sides: in TEAMS there are two.
+func _goal_next() -> int:
+	return goal_override if goal_override > 0 else _goal_for(2 if mode_teams else _people() + _bots_now())
 
 # ------------------------------------------------------------------ network
 func _out(target: int, data) -> void:
@@ -2130,11 +2376,20 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			_save_lobby()
 			_say("🏰 [HOST] power-ups %s" % ("ON" if sim.powerups else "OFF"))
 			return [true, "Power-ups %s, from now." % ("ON" if sim.powerups else "OFF")]
+		"mode":
+			var pick := str(d.get("pick", ""))
+			if not P.MODES.has(pick):
+				return [false, "A mode is one of: %s." % ", ".join(P.MODES)]
+			var next := " from the next match" if in_match else ""
+			_set_mode(pick == "teams", "the host" + next)
+			return [true, "Mode %s%s." % [P.MODE_LABEL[pick], next]]
 		"start":
 			if phase != P.PH_LOBBY:
 				return [false, "A match is already on."]
 			if _people() + _bots_now() < 2:
 				return [false, "A match needs 2 fighters: add a bot."]
+			if mode_teams and not _teams_ok():
+				return [false, TEAMS_NEED]
 			phase = P.PH_COUNTDOWN
 			phase_t = COUNTDOWN_TICKS
 			seats_dirty = true
@@ -2181,6 +2436,7 @@ func _lan_ips() -> Array:
 	return out
 
 func _host_state() -> Dictionary:
+	var in_match_now := phase != P.PH_LOBBY and phase != P.PH_COUNTDOWN
 	var pings := {}
 	var per: Array
 	if net_thread_on:
@@ -2197,7 +2453,7 @@ func _host_state() -> Dictionary:
 		var held: bool = s.kind == 1 and s.client_id == 0
 		seat_list.append({"i": s.i, "name": s.name, "kind": s.kind, "who": ["empty", "person", "bot"][s.kind],
 			"online": s.kind == 2 or s.client_id != 0, "held_s": ceili(s.hold_t / 60.0) if held else 0,
-			"points": s.points, "crowns": s.crowns, "in_round": s.in_round,
+			"points": s.points, "crowns": s.crowns, "in_round": s.in_round, "team": s.team if s.kind != 0 else -1,
 			"ip": c.ip if c != null else "", "ping_ms": pings.get(s.client_id, -1), "client": s.client_id, "phone": _phone(c)})
 	var watching: Array = []
 	for id in conns:
@@ -2229,7 +2485,7 @@ func _host_state() -> Dictionary:
 	return {"ok": true, "version": P.VERSION, "t": Time.get_unix_time_from_system(),
 		"up_s": (Time.get_ticks_msec() - started_ms) / 1000.0,
 		"phase": phase, "phase_name": PHASE_NAMES[phase], "round": round_no,
-		"goal": goal if goal > 0 else (goal_override if goal_override > 0 else _goal_for(_people() + _bots_now())),
+		"goal": goal if goal > 0 else _goal_next(),
 		"match": match_no, "arena_pick": arena_pick, "arena_pick_name": _arena_label(arena_pick),
 		"arena_now": sim.level.id, "arena_now_name": sim.level.name, "arenas": arenas,
 		"bots_wanted": bots_wanted, "bots_now": _bots_now(), "max_bots": MAX_BOTS,
@@ -2237,6 +2493,8 @@ func _host_state() -> Dictionary:
 		"power_arrows": sim.powerups, "powerups": sim.powerups,   # p4.9: the host page's switch is the power-ups
 		"people": _people(), "watchers": watching.size(), "lan": _lan_ips(), "page_port": 8443, "game_port": port,
 		"season": _season(), "season_pick": season_pick, "seasons": P.SEASON_PICKS,
+		"mode": _mode_word(mode_teams), "mode_now": _mode_word(match_teams if in_match_now else mode_teams), "modes": P.MODES,
+		"team_names": P.team_names(_season()), "team_points": team_points, "teams_ok": not mode_teams or _teams_ok(),
 		"seats": seat_list, "watching": watching,
 		"tick": {"mean_ms": last_rec.get("tick_mean_ms", 0.0), "max_ms": last_rec.get("tick_max_ms", 0.0),
 			"cpu_pct": last_rec.get("cpu_pct", 0.0), "rss_mb": last_rec.get("rss_mb", 0.0)},
