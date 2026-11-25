@@ -250,6 +250,30 @@ const TRICK_NAMES := ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"]
 const HARVEST_TRICKS := ["TREAT", "TURKEY TIME", "TOO MUCH PIE", "PEA-SIZED", "THE BIG TURKEY"]
 const TRICK_TIPS := ["", "no shooting", "left is right!", "so small", ""]
 
+# p4.19 the bots' names, by the season (the user: "a fun, balanced, silly game"): seat i's
+# bot is BOT_NAMES[season][i], so a banner says GRAVY WINS THE ROUND, not BOT 3. The lobby's
+# cards and the HUD still mark them as bots.
+const BOT_NAMES := {
+	"harvest": ["GRAVY", "STUFFING", "YAMS", "BISCUIT", "DRUMSTICK", "CRANBERRY", "CORNBREAD", "WISHBONE"],
+	"halloween": ["BOO", "FANG", "CREEPY", "GOOP", "BONES", "SPOOKS", "WEBBY", "CACKLE"],
+	"": ["BOLT", "RUSTY", "CLANK", "BEEP", "GIZMO", "SPROCKET", "WIDGET", "ZAP"],
+}
+
+static func bot_name(seat: int, season: String) -> String:
+	var list: Array = BOT_NAMES.get(season, BOT_NAMES[""])
+	return str(list[posmod(seat, list.size())])
+
+# Is this one of the bots' names, in any season? (A person may not take one: the logs and
+# the night's numbers tell people from bots by the seat's kind, and a name must not blur it.)
+static func is_bot_name(name: String) -> bool:
+	var n := name.strip_edges().to_upper()
+	if n.begins_with("BOT "):
+		return true
+	for k in BOT_NAMES:
+		if n in BOT_NAMES[k]:
+			return true
+	return false
+
 # The season on a day: Halloween 1 October to 2 November, the Harvest 3 to 30 November.
 static func season_for(month: int, day: int) -> String:
 	if month == 10 or (month == 11 and day <= 2):

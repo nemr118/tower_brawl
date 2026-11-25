@@ -15,6 +15,7 @@ const AwardArt = preload("res://client/award_art.gd")   # p4.17: the award's pic
 const Polish = preload("res://client/polish.gd")
 const World = preload("res://client/world.gd")
 const P = preload("res://sim/proto.gd")
+const Season = preload("res://client/season.gd")   # p4.19: the bots' names follow the season
 const HALO := preload("res://assets/fx_halo.png")
 const N := 8
 const TOP := 240.0               # the cards' top in the 1920 x 1080 frame
@@ -107,7 +108,7 @@ func set_seats(list: Array, me: int, ph: int, bots: int, awards: Array) -> void:
 		for aw in awards:
 			# a person's award shows while they sit there; a bot's on the seat a bot fills again
 			var an := str(aw.get("name", ""))
-			if int(aw.get("seat", -1)) == i and ((kind != 0 and an == nm) or (fill and an.begins_with("BOT"))):
+			if int(aw.get("seat", -1)) == i and ((kind != 0 and an == nm) or (fill and (bool(aw.get("bot", false)) or P.is_bot_name(an)))):
 				mine.append([str(aw.get("title", "")), str(aw.get("why", ""))])
 		c["awards"] = mine
 
@@ -297,7 +298,7 @@ func _view(i: int) -> Dictionary:
 	var nm: String = c["name"]
 	var name_col: Color = pal["text"]
 	if kind == 0:
-		nm = "BOT" if c["fill"] else ("OPEN" if seated or not connected else "JOIN!")
+		nm = P.bot_name(i, Season.now) if c["fill"] else ("OPEN" if seated or not connected else "JOIN!")   # p4.19: the bot that will sit here
 		name_col = Color(pal["dim"]) if c["fill"] else Color(pal["faint"])
 	elif c["me"]:
 		name_col = Color(1.0, 0.97, 0.82)

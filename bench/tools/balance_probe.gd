@@ -14,7 +14,7 @@ const SimScript = preload("res://sim/sim.gd")
 const LevelScript = preload("res://sim/level.gd")
 const P = preload("res://sim/proto.gd")
 const CAUSES := {1: "an arrow", 2: "a blast", 3: "a stomp", 4: "fire", 5: "poison", 6: "the walls", 7: "lightning", 8: "a ghost cat",
-	9: "spikes", 10: "a swarm", 11: "a knife or peck", 12: "a furnace", 13: "steam"}
+	9: "spikes", 10: "the boiler's fire or steam", 11: "a knife or peck", 12: "left the game"}
 
 var rounds := 300
 var season := "harvest"
