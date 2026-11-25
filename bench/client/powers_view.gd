@@ -62,6 +62,9 @@ var confetti: Array = []           # [pos, vel, colour, secs left, spin]: a cand
 var pied := {}                     # p4.18 PIE: seat -> when (t) it was covered in cream
 var phews: Array = []              # p4.19 PHEW: {at, seat, t0, what, dir}: the round's winner was hit after the call, and is safe
 const PHEW_S := 1.7
+var taunts := {}                   # p4.19 the GOBBLE button: seat -> when (t) it last taunted
+const TAUNT_S := 1.3
+const TAUNT_WORDS := {"harvest": ["GOBBLE!", "GOBBLE GOBBLE!", "YUM!"], "halloween": ["BOO!", "MUAHAHA!", "EEK!"], "": ["HA HA!", "NYAH NYAH!", "TOO SLOW!"]}
 var test_phew := false             # a test knob (the page's ?phew): a PHEW on your own fighter every 3 s (pictures)
 var _phew_next := 2.0
 var test_cream := false            # a test knob (the page's ?cream): the cream on your own screen, again and again (pictures)
@@ -304,6 +307,8 @@ func on_event(e: Array) -> void:
 			var ang := TAU * i / 14.0 + randf() * 0.4
 			confetti.append([pos, Vector2.from_angle(ang) * randf_range(160.0, 420.0) + Vector2(0, -160.0), CANDY_COLS[i % CANDY_COLS.size()],
 				randf_range(0.7, 1.2), randf() * TAU])
+	elif type == P.E_TAUNT:      # p4.19: a taunt: a speech bubble over the fighter (the words by the season)
+		taunts[int(e[3])] = t
 	elif type == P.E_CATCH_UP:   # far behind: a SHIELD from the start
 		rings.append([pos + Vector2(0, 30), 80.0, COLORS[P.PU_SHIELD], 0.5, 0.5])
 		_pop(pos + Vector2(0, -36), "HEAD START", COLORS[P.PU_SHIELD], 1.6, false, P.PU_SHIELD)
@@ -414,6 +419,14 @@ func _draw() -> void:
 			_text_c(at, p[1], 22 if p[5] else 18, Color(col, a))
 	for ph in phews:
 		_draw_phew(ph)
+	for seat in taunts:
+		var tage: float = t - float(taunts[seat])
+		var tf: Dictionary = fighters.get(seat, {})
+		if tage < TAUNT_S and not tf.is_empty() and tf["state"] != P.F_DEAD:
+			var words: Array = TAUNT_WORDS.get(Season.now, TAUNT_WORDS[""])
+			var tcol: Color = team[seat % team.size()] if team.size() > 0 else Color.WHITE
+			_bubble(Vector2(float(tf["x"]) + 18.0, float(tf["y"]) - 6.0), str(words[(seat + int(float(taunts[seat]) * 3.0)) % words.size()]), tage,
+				clampf((1.0 - tage / TAUNT_S) * 4.0, 0.0, 1.0), tcol.lerp(Color.WHITE, 0.82))
 	var cream_k := clampf(1.0 - (t - float(pied.get(me, -99.0))) / PIED_S, 0.0, 1.0)
 	if test_cream:
 		_draw_cream_screen(1.0 - fposmod(t, PIED_S) / PIED_S)
@@ -1104,18 +1117,7 @@ func _draw_phew(ph: Dictionary) -> void:
 	if f.is_empty():
 		return
 	var head := Vector2(float(f["x"]) + 18.0, float(f["y"]) - 6.0)
-	var pop := 1.0 + 0.4 * clampf(1.0 - age / 0.18, 0.0, 1.0)
-	var word := "PHEW!"
-	var fs := 30
-	var w := LobbyArt.DISPLAY.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 30.0
-	var bc := Vector2(clampf(head.x, w * 0.5 + 10.0, 1910.0 - w * 0.5), maxf(60.0, head.y - 62.0))
-	draw_set_transform(bc, -0.06, Vector2.ONE * pop)
-	var a8 := roundf(fade * 8.0) / 8.0
-	draw_colored_polygon(PackedVector2Array([Vector2(-10, 20), Vector2(10, 20), Vector2(0, 40)]), Color(0.06, 0.04, 0.1, a8))
-	draw_style_box(LobbyArt.box(Color(1, 1, 1, a8), Color(0.06, 0.04, 0.1, a8), 14, 4), Rect2(-w * 0.5, -24, w, 48))
-	draw_colored_polygon(PackedVector2Array([Vector2(-6, 20), Vector2(6, 20), Vector2(0, 33)]), Color(1, 1, 1, a8))
-	draw_string(LobbyArt.DISPLAY, Vector2(-w * 0.5 + 15.0, 11.0), word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.08, 0.05, 0.12, a8))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_bubble(head, "PHEW!", age, fade, Color.WHITE)
 	for i in 3:
 		var dk := clampf(age / 0.7, 0.0, 1.0)
 		var dv := Vector2((i - 1) * 46.0 - dir * 16.0, -30.0 - i % 2 * 14.0) * dk + Vector2(0, 60.0 * dk * dk)
@@ -1123,3 +1125,18 @@ func _draw_phew(ph: Dictionary) -> void:
 		var da := (1.0 - dk) * fade
 		draw_circle(dp, 5.0, Color(0.55, 0.85, 1.0, da))
 		draw_colored_polygon(PackedVector2Array([dp + Vector2(-4, -2), dp + Vector2(0, -12), dp + Vector2(4, -2)]), Color(0.55, 0.85, 1.0, da))
+
+# A speech bubble over a head (PHEW!, a taunt): it pops in, leans a little, and fades in steps
+# (lobby_art.gd keeps every box it makes).
+func _bubble(head: Vector2, word: String, age: float, fade: float, paper: Color) -> void:
+	var pop := 1.0 + 0.4 * clampf(1.0 - age / 0.18, 0.0, 1.0)
+	var fs := 30
+	var w := LobbyArt.DISPLAY.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 30.0
+	var bc := Vector2(clampf(head.x, w * 0.5 + 10.0, 1910.0 - w * 0.5), maxf(60.0, head.y - 62.0))
+	draw_set_transform(bc, -0.06, Vector2.ONE * pop)
+	var a8 := roundf(fade * 8.0) / 8.0
+	draw_colored_polygon(PackedVector2Array([Vector2(-10, 20), Vector2(10, 20), Vector2(0, 40)]), Color(0.06, 0.04, 0.1, a8))
+	draw_style_box(LobbyArt.box(Color(paper, a8), Color(0.06, 0.04, 0.1, a8), 14, 4), Rect2(-w * 0.5, -24, w, 48))
+	draw_colored_polygon(PackedVector2Array([Vector2(-6, 20), Vector2(6, 20), Vector2(0, 33)]), Color(paper, a8))
+	draw_string(LobbyArt.DISPLAY, Vector2(-w * 0.5 + 15.0, 11.0), word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.08, 0.05, 0.12, a8))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

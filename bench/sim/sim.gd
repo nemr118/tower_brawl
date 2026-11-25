@@ -251,7 +251,7 @@ const TURKEY_FALL := 9.0
 # every living fighter within PIE_R is covered in cream PIED_TICKS (it sees nobody: in_smoke).
 const PIE_W := 13
 const PIE_FX := 0.6
-const PIE_R := 230.0
+const PIE_R := 300.0             # the cream reaches this far (p4.19: 230 creamed someone only once in 40 rounds of 8 bots; the shooter is not creamed any more)
 const PIED_TICKS := 180
 # p4.18 catch-up help that cannot miss (TowerFall's autobalance; the October logs: 60% of the
 # BIG orbs were never taken): a person CATCH_UP_BEHIND or more points behind the leader
@@ -428,6 +428,15 @@ var candy_trick := -1           # 2026-10-26 a test knob (the server's --candy-t
                                 # 0 a treat, 1 PUMPKIN HEAD, 2 BACKWARDS, 3 TINY, 4 GHOSTFACE (-1: chance, as always)
 var bot_level := 2              # the level of the bot fighters a round makes (sim/brain.gd: NORMAL; the
                                 # lobby's BOTS level; the benchmark's own 8 bots stay OLD)
+# p4.19 the balance pass (tools/balance_probe.gd, and October's logs). Each is one switch, so
+# the old rule is one word away.
+# Your own blast throws you, it does not knock you out, and your own pie does not cream you:
+# on 24 and 25 October 40 of the 60 times a person died in a blast, it was their own bomb.
+var self_harm := false
+# With 2 to 4 fighters they start far apart (TowerFall: opposite). They were shuffled over all
+# the spots: two could start side by side, and a 2-fighter round lasted 4.4 s (bots).
+var far_starts := true
+var knife_lunge := KNIFE_LUNGE  # the costume's lunge, px a tick (the probe tries others)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
@@ -523,6 +532,8 @@ func start_round(seat_list: Array) -> void:
 		var tmp = starts[i]
 		starts[i] = starts[j]
 		starts[j] = tmp
+	if far_starts and seat_list.size() >= 2 and seat_list.size() <= 4:
+		starts = _spread(starts, seat_list.size())
 	if not fixed_spots.is_empty():
 		starts.clear()
 		for k in fixed_spots:
@@ -536,6 +547,28 @@ func start_round(seat_list: Array) -> void:
 		_place(f, starts[i % starts.size()])
 		f.wait_t = rng.randi_range(BOT_WAIT_MIN, BOT_WAIT_MAX)   # only the brain reads it; it counts from FIGHT
 		_give_kept(f)
+
+# p4.19: n start spots far from each other, out of spots (already shuffled): the first as it
+# comes, then each time the spot whose nearest picked one is furthest away (the arena wraps:
+# the way round the edge counts). The rest follow in their order.
+func _spread(spots: Array, n: int) -> Array:
+	var out: Array = [spots[0]]
+	var rest: Array = spots.slice(1)
+	while out.size() < n and not rest.is_empty():
+		var best := 0
+		var best_d := -1.0
+		for i in rest.size():
+			var near := INF
+			for o in out:
+				var dx := wrap_d(float(o.x), float(rest[i].x), W)
+				var dy := wrap_d(float(o.y), float(rest[i].y), H)
+				near = minf(near, dx * dx + dy * dy)
+			if near > best_d:
+				best_d = near
+				best = i
+		out.append(rest[best])
+		rest.remove_at(best)
+	return out + rest
 
 func clear() -> void:
 	fighters.clear()
@@ -1566,7 +1599,9 @@ func _explode(x: float, y: float, owner: int, k: float = 1.0, flags: int = -1) -
 		var dy := wrap_d(y, f.y + MID_Y, H)
 		var fd2 := dx * dx + dy * dy
 		var fd := maxf(1.0, sqrt(fd2))
-		if fd2 <= r2:
+		if fd2 <= r2 and f.id == owner and not self_harm:
+			_hurt(f, dx / fd * 19.0, -14.0)      # p4.19: your own blast throws you far; it does not knock you out
+		elif fd2 <= r2:
 			_kill(f, owner, 2)
 			f.vx = dx / fd * 16.0
 			f.vy = -12.0
@@ -1591,7 +1626,7 @@ func _pie(a: Arrow) -> void:
 	_event(P.E_PIE, int(a.x), int(a.y), a.owner, 1 if a.big else 0)
 	var r2 := PIE_R * PIE_R * k * k
 	for f in fighters:
-		if f.state == P.F_DEAD:
+		if f.state == P.F_DEAD or (f.id == a.owner and not self_harm):   # p4.19: your own pie does not cream you
 			continue
 		var dx := wrap_d(a.x, f.x + HALF_W, W)
 		var dy := wrap_d(a.y, f.y + MID_Y, H)
@@ -1903,8 +1938,8 @@ func _knife(f: Fighter, ang: float, faced: bool) -> void:
 	f.knife_t = KNIFE_TICKS
 	f.knife_cd = KNIFE_CD
 	f.knife_hit = false
-	if absf(f.vx) < KNIFE_LUNGE:     # p4.18: a short lunge the way it faces
-		f.vx = f.facing * KNIFE_LUNGE
+	if absf(f.vx) < knife_lunge:     # p4.18: a short lunge the way it faces
+		f.vx = f.facing * knife_lunge
 	_event(P.E_KNIFE, f.x + HALF_W, f.y + MID_Y, f.id, 1 if f.facing > 0 else 0)
 
 func _knife_tick(f: Fighter) -> void:
@@ -2021,8 +2056,11 @@ func _update_turkey() -> void:
 		pet["vy"] = minf(pet["vy"] + TURKEY_G, TURKEY_FALL)
 		var nx := px + dir * sp * 0.8
 		var ny: float = py + pet["vy"]
-		if level.cell_at(fposmod(nx + dir * 14.0, W), ny - 14.0) == 1:
-			nx = px                # a wall in the way: straight up or down
+		# a wall in the way, at its chest or at its feet: straight up or down (p4.19: only the chest
+		# was looked at, and flapping up beside a wall its feet slid into the block for a few ticks)
+		var ahead := fposmod(nx + dir * 14.0, W)
+		if level.cell_at(ahead, ny - 14.0) == 1 or level.cell_at(ahead, ny - 2.0) == 1 or level.cell_at(ahead, py - 2.0) == 1:
+			nx = px
 		if pet["vy"] < 0.0 and level.cell_at(fposmod(nx, W), ny - 30.0) == 1:
 			pet["vy"] = 0.0        # its head meets a block
 			ny = py

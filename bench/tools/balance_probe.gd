@@ -7,7 +7,7 @@
 #     (the catch-up help): their share of wins next to a fair share
 #   - how the knockouts happen, how long a round lasts, how many end in a draw.
 # Bots are not people: read the numbers as "is anything far off", not to the percent.
-#   godot --headless --path bench --script res://tools/balance_probe.gd -- --rounds=300 [--season=harvest] [--sizes=8,4,2] [--arenas=1,2,5,6] [--level=2]
+#   godot --headless --path bench --script res://tools/balance_probe.gd -- --rounds=300 [--season=harvest] [--sizes=8,4,2] [--arenas=1,2,5,6] [--level=2] [--lunge=7] [--old]
 extends SceneTree
 
 const SimScript = preload("res://sim/sim.gd")
@@ -21,6 +21,9 @@ var season := "harvest"
 var sizes: Array = [8, 4, 2]
 var arenas: Array = []
 var level := 2
+var lunge := -1.0        # --lunge=N: the costume's lunge (sim.gd knife_lunge)
+var all_spots := false   # --spots: every start spot's share of wins, not just the best and the worst
+var old_rules := false   # --old: your own blast knocks you out, the starts are shuffled over every spot (before p4.19)
 var total := {}          # the sum over every arena, by size
 
 func _say(s: String) -> void:
@@ -38,9 +41,16 @@ func _init() -> void:
 			arenas = Array(a.substr(9).split(",")).map(func(v): return int(v))
 		elif a.begins_with("--level="):
 			level = int(a.substr(8))
+		elif a.begins_with("--lunge="):
+			lunge = float(a.substr(8))
+		elif a == "--old":
+			old_rules = true
+		elif a == "--spots":
+			all_spots = true
 	if arenas.is_empty():
 		arenas = LevelScript.PLAY.duplicate()
-	_say("%d rounds a line, the season '%s', bots at level %d" % [rounds, season, level])
+	_say("%d rounds a line, the season '%s', bots at level %d%s%s" % [rounds, season, level, ", the old rules" if old_rules else "",
+		", a lunge of %.1f" % lunge if lunge >= 0.0 else ""])
 	for n in sizes:
 		total[n] = _blank()
 		for arena in arenas:
@@ -77,9 +87,15 @@ func _run(arena: int, n: int, shield: int) -> Dictionary:
 	s.season = season
 	s.bot_level = level
 	s.walls_start = 25 * 60       # the purple walls, as the server sets them
+	if lunge >= 0.0:
+		s.knife_lunge = lunge
+	if old_rules:
+		s.self_harm = true
+		s.far_starts = false
 	s.set_arena(arena)
 	var out := _blank()
 	out["name"] = s.level.name
+	out["spots"] = s.level.spawns
 	for r in rounds:
 		var list := []
 		for i in n:
@@ -165,6 +181,12 @@ func _line(r: Dictionary, n: int) -> void:
 	_say("%-18s %d fighters: a round %.1f s (9 in 10 under %.1f s), draws %.0f%%; a fair share %.1f%%; the best spot %d wins %.1f%% (%.1f errors over), the worst spot %d %.1f%%" % [
 		r["name"], n, secs[secs.size() / 2], secs[int(secs.size() * 0.9)], 100.0 * r["draws"] / maxf(1.0, r["rounds"]), fair,
 		top[1], top[0], (top[0] - fair) / maxf(0.01, se), low[1], low[0]])
+	if all_spots:
+		rates.sort_custom(func(a, b): return a[1] < b[1])
+		var parts: Array = []
+		for q in rates:
+			parts.append("spot %d at %s: %.1f%% of %d" % [q[1], str(r["spots"][q[1]]), q[0], q[2]])
+		_say("    " + "; ".join(parts))
 
 # Every arena together: each power-up's taker (the first one a fighter takes in a round), the
 # costume, the turkey's catcher; and how the knockouts happened.
