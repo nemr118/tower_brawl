@@ -15,8 +15,8 @@ signal sound_picked(on: bool)
 signal season_picked(pick: String)
 
 const Art = preload("res://client/lobby_art.gd")
-const CARD := Rect2(330, 120, 1260, 850)
-const ROW_H := 124.0
+const CARD := Rect2(330, 70, 1260, 940)    # tall enough for four rows and DONE (a phone has CONTROLS too)
+const ROW_H := 116.0
 const SEG_X := 760.0              # where a row's choices start
 const SEG_W := 780.0
 
@@ -69,7 +69,7 @@ func _row_of(key: String) -> Dictionary:
 
 # The rows that show, top to bottom, and each one's buttons in their places and colours.
 func _layout() -> void:
-	var y := CARD.position.y + 214.0
+	var y := CARD.position.y + 196.0
 	for r in rows:
 		var btns: Array = r["btns"]
 		var live: Array = []
@@ -81,7 +81,7 @@ func _layout() -> void:
 		if not r["shown"]:
 			continue
 		if r["key"] == "season":
-			y += 62.0             # room for the EVERYONE heading
+			y += 58.0             # room for the EVERYONE heading
 		r["y"] = y
 		var n := live.size()
 		var w := (SEG_W - (n - 1) * 12.0) / n
@@ -99,7 +99,7 @@ func _layout() -> void:
 		y += ROW_H
 	done.setup(pal["accent"], Color(0.13, 0.05, 0.0), 52)
 	done.say("", "DONE")
-	done.position = Vector2(760, CARD.end.y - 128.0)
+	done.position = Vector2(760, CARD.end.y - 124.0)
 	done.size = Vector2(400, 100)
 	queue_redraw()
 
@@ -162,12 +162,12 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.01, 0.04, 0.86 * a))
 	var accent: Color = pal["accent"]
 	Art.panel(self, CARD, Color(pal["panel"], 0.985), accent, 30, Color(accent.r, accent.g, accent.b, 0.3), 28)
-	Art.text(self, Art.DISPLAY, Vector2(CARD.position.x, CARD.position.y + 96.0), "SETTINGS", 72, pal["accent_hi"], 8, Color(0.03, 0.01, 0.05),
+	Art.text(self, Art.DISPLAY, Vector2(CARD.position.x, CARD.position.y + 90.0), "SETTINGS", 72, pal["accent_hi"], 8, Color(0.03, 0.01, 0.05),
 		HORIZONTAL_ALIGNMENT_CENTER, CARD.size.x)
 	var dim: Color = pal["dim"]
 	var txt: Color = pal["text"]
 	var x := CARD.position.x + 60.0
-	_heading(x, CARD.position.y + 172.0, "THIS DEVICE")
+	_heading(x, CARD.position.y + 158.0, "THIS DEVICE")
 	for r in rows:
 		if not r["shown"]:
 			continue
