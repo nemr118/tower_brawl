@@ -349,17 +349,27 @@ func _init(layout: int = BENCH) -> void:
 static func count() -> int:
 	return LAYOUTS.size()
 
-# p4.18 MIX in a season (proto.gd's seasons): the Harvest season takes the castle arenas and
-# its own two (themes "barn" and "table") and leaves the spooky ones out; any other time MIX
-# is the castle arenas and the spooky ones. Every arena of PLAY can still be picked by hand.
+# p4.18 MIX in a season (proto.gd's seasons): a season takes the castle arenas and its own
+# (the Harvest: themes "barn" and "table"; p4.22 Christmas: "rooftops" and "workshop") and
+# leaves the rest out; any other time MIX is the castle arenas and the spooky ones. Every
+# arena of PLAY can still be picked by hand.
+const SEASON_THEMES := {"harvest": ["barn", "table"], "christmas": ["rooftops", "workshop"]}
+
 static func mix_for(season: String) -> Array:
 	var out: Array = []
+	var own: Array = SEASON_THEMES.get(season, [])
 	for n in PLAY:
 		var th := str(LAYOUTS[n].get("theme", ""))
-		var harvest_arena := th == "barn" or th == "table"
 		var spooky := th == "halloween" or th == "nightmare"
-		if (season == "harvest" and not spooky) or (season != "harvest" and not harvest_arena):
-			out.append(n)
+		var seasonal := false          # some season's own arena
+		for k in SEASON_THEMES:
+			if th in SEASON_THEMES[k]:
+				seasonal = true
+		if own.is_empty():
+			if not seasonal:
+				out.append(n)          # no season (or Halloween): the castle and the spooky ones
+		elif th in own or (not spooky and not seasonal):
+			out.append(n)              # a season: its own and the castle
 	return out
 
 static func name_of(layout: int) -> String:

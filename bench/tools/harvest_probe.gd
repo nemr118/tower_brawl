@@ -89,7 +89,8 @@ func _init() -> void:
 func _seasons() -> void:
 	_check(P.season_for(10, 1) == "halloween" and P.season_for(11, 2) == "halloween", "Halloween runs 1 October to 2 November")
 	_check(P.season_for(11, 3) == "harvest" and P.season_for(11, 30) == "harvest", "the Harvest runs 3 to 30 November")
-	_check(P.season_for(12, 1) == "" and P.season_for(9, 30) == "" and P.season_for(7, 4) == "", "no season the rest of the year")
+	_check(P.season_for(12, 1) == "christmas" and P.season_for(12, 31) == "christmas", "Christmas runs all of December")
+	_check(P.season_for(1, 1) == "" and P.season_for(9, 30) == "" and P.season_for(7, 4) == "", "no season the rest of the year")
 	_check(P.pu_name(P.PU_PUMPKIN, "harvest") == "POPCORN ARROWS" and P.pu_name(P.PU_PUMPKIN, "") == "PUMPKIN BOMBS", "PUMPKIN BOMBS are POPCORN ARROWS in the Harvest")
 	_check(P.pu_name(P.PU_MASK, "harvest") == "THE BIG TURKEY" and P.pu_name(P.PU_MASK, "halloween") == "GHOSTFACE", "the costume's name follows the season")
 	_check(P.pu_name(P.PU_FIRE, "harvest") == "FIRE ARROWS" and P.pu_short(P.PU_PIE, "harvest") == "PIE", "the other names stay")

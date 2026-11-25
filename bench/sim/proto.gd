@@ -242,8 +242,8 @@ const WALLS_DEADLY_BIT := 0x8000
 # every phone matches. A season gives the candies, their tricks, the costume, the pet and
 # some power-ups new names and pictures; the rules under them stay the same. "" is no season:
 # the lobby wears the castle, and the candies stay Halloween's (as before p4.18).
-const SEASON_PICKS := ["auto", "off", "halloween", "harvest"]   # the SEASON button's choices
-const SEASON_LABEL := {"": "NONE", "halloween": "HALLOWEEN", "harvest": "HARVEST"}
+const SEASON_PICKS := ["auto", "off", "halloween", "harvest", "christmas"]   # the SEASON button's choices
+const SEASON_LABEL := {"": "NONE", "halloween": "HALLOWEEN", "harvest": "HARVEST", "christmas": "CHRISTMAS"}
 const HARVEST_NAMES := {15: "WHAT'S FOR DINNER?", 16: "POPCORN ARROWS", 17: "CROWS", 18: "THE BIG TURKEY"}
 const HARVEST_SHORT := {15: "DISH?", 16: "POPCORN", 17: "CROWS", 18: "BIG TURKEY"}
 const HARVEST_HELP := {16: "every arrow is a corn cob: it bursts into popcorn that pops, all match",
@@ -325,12 +325,15 @@ static func is_bot_name(name: String) -> bool:
 			return true
 	return false
 
-# The season on a day: Halloween 1 October to 2 November, the Harvest 3 to 30 November.
+# The season on a day: Halloween 1 October to 2 November, the Harvest 3 to 30 November,
+# Christmas all of December (p4.22).
 static func season_for(month: int, day: int) -> String:
 	if month == 10 or (month == 11 and day <= 2):
 		return "halloween"
 	if month == 11:
 		return "harvest"
+	if month == 12:
+		return "christmas"
 	return ""
 
 # A power-up's name, short name, help line and tip in a season.
