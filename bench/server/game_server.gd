@@ -82,6 +82,7 @@ extends Node
 
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
+const Routes = preload("res://sim/routes.gd")
 
 const SEATS := 8
 const MAX_BOTS := 7
@@ -220,6 +221,7 @@ class Conn:                     # what this thread knows about a socket
 	var name: String = ""
 	var token: String = ""
 	var last_tick: int = 0      # the newest client input tick applied
+	var wait_seat: int = -1     # the bot's seat it sits down on when this round is over (_wait_for_seat); its seat is -1 till then
 	var report := {}            # p4.7: the phone's last report (cleaned), for the host page
 	var report_ms: int = 0
 	var fps_seen := -1.0        # its frame rate from the last report that had match frames (-1: none yet)
@@ -231,6 +233,7 @@ class Seat:
 	var client_id: int = 0      # 0: no socket (a held seat, or a bot)
 	var token: String = ""
 	var hold_t: int = 0
+	var guest: int = 0          # a bot's seat: the client that sits down here when this round is over (0: nobody waits)
 	var points: int = 0
 	var crowns: int = 0
 	var buttons: int = 0        # the last buttons applied (held while no input comes)
@@ -375,6 +378,10 @@ func _ready() -> void:
 	mode_teams = str(o.get("mode", "ffa")).to_lower() == "teams"
 	_load_lobby(str(o.get("out", root_dir.path_join("bench_results"))), o)   # p4.19: what the lobby picked last time
 	sim.set_arena(_next_arena())   # the lobby shows the arena that comes next
+	# The bots' route maps for every arena, now, while nobody is here yet (about 50 ms).
+	# Before, each was built about 1 s after FIGHT in the first round on its arena:
+	# one tick of 14 to 33 ms where a tick has 16.7 (sim/routes.gd build_all).
+	var routes_us := Routes.build_all()
 	for i in SEATS:
 		var s := Seat.new()
 		s.i = i
@@ -415,6 +422,7 @@ func _ready() -> void:
 		P.VERSION, "wss" if tls_opts != null else "ws", port, bots_wanted, SimScript.BrainScript.NAMES[sim.bot_level], "on" if sim.powerups else "off",
 		("the walls at %d s" % (sim.walls_start / 60)) if sim.walls_start > 0 else "no walls", _arena_label(arena_pick), P.MODE_LABEL[_mode_word(mode_teams)],
 		info["cpu"], info["cores"], log_path])
+	print("🏰 [NET] the bots' route maps for all %d arenas were built in %.0f ms, before the first match" % [SimScript.LevelScript.count(), routes_us / 1000.0])
 	if net_thread_on:
 		net_thread = Thread.new()
 		net_thread.start(_net_loop)
@@ -554,7 +562,7 @@ func _on_text(c: Conn, txt: String) -> void:
 			var mine := _seat_of(c.token)
 			if mine != null and mine.client_id == 0:
 				_take_seat(mine, c)
-		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
+		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat if c.seat >= 0 else c.wait_seat, "version": P.VERSION, "name": c.name, "phase": phase}))
 		_send_seats(c.id)
 		return
 	if not c.ok:
@@ -570,12 +578,12 @@ func _on_text(c: Conn, txt: String) -> void:
 			sim.taunt(c.seat)
 		return
 	if kind == "skip":
-		if c.seat >= 0 and phase == P.PH_MATCH_END:
-			_say("🏰 [MATCH] seat %d '%s' skipped the montage: back to the lobby" % [c.seat, seats[c.seat].name])
+		if (c.seat >= 0 or c.wait_seat >= 0) and phase == P.PH_MATCH_END:
+			_say("🏰 [MATCH] seat %d '%s' skipped the montage: back to the lobby" % [maxi(c.seat, c.wait_seat), c.name])
 			_to_lobby()
 		return
 	if kind == "join":
-		if c.seat >= 0:
+		if c.seat >= 0 or c.wait_seat >= 0:
 			return
 		var mine := _seat_of(c.token)
 		if mine != null:    # bug 5: this token has a seat already (on a socket that hangs, or in another tab): that one, never a second seat
@@ -584,10 +592,22 @@ func _on_text(c: Conn, txt: String) -> void:
 			return
 		if d.has("name"):
 			c.name = _clean_name(str(d.get("name", "")), -1)
+		# this token waits for a bot's seat already, on a socket that hangs or in another
+		# tab: this socket waits there in its place, never for a second seat (as bug 5)
+		for ws in seats:
+			var g: Conn = conns.get(ws.guest) if ws.guest != 0 else null
+			if g != null and g.token == c.token and c.token != "":
+				g.wait_seat = -1
+				_out(g.id, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": g.name, "phase": phase}))
+				_wait_for_seat(ws, c)
+				return
 		var s := _free_seat(_int(d.get("seat"), -1))
 		if s == null:
 			_out(c.id, JSON.stringify({"kind": "full"}))
 			_say("🏰 [JOIN] rejected %s from %s: all %d seats are taken" % [c.name, c.ip, SEATS])
+			return
+		if s.kind == 2 and s.in_round and (phase == P.PH_ROUND_START or phase == P.PH_PLAY or phase == P.PH_ROUND_END):
+			_wait_for_seat(s, c)     # a bot's seat, and its fighter is in a round: the bot plays that round out first
 			return
 		_seat_person(s, c, false)
 		_know(c.name)       # p4.18: the join screen offers this name next time (WHO ARE YOU?)
@@ -598,6 +618,11 @@ func _on_text(c: Conn, txt: String) -> void:
 			_say("🏰 [LEAVE] seat %d '%s' left on purpose" % [s.i, s.name])
 			_free_seat_now(s)
 			c.seat = -1
+			_out(c.id, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": c.name, "phase": phase}))
+		elif c.wait_seat >= 0:
+			_say("🏰 [LEAVE] '%s' waited for seat %d and left on purpose: the bot keeps it" % [c.name, c.wait_seat])
+			seats[c.wait_seat].guest = 0
+			c.wait_seat = -1
 			_out(c.id, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": c.name, "phase": phase}))
 	elif kind == "start":
 		if c.seat < 0:
@@ -709,14 +734,90 @@ func _phone(c: Conn):
 		"slow_pct": r["slow_pct"], "ping_ms": r["ping_ms"], "reconnects": r["reconnects"], "step_downs": r["step_downs"],
 		"errors": r["errors_total"], "age_s": snappedf((Time.get_ticks_msec() - c.report_ms) / 1000.0, 0.1)}
 
-func _clean_name(raw: String, seat: int) -> String:
+# A name as every screen and every log line shows it: NAME_MAX (12) characters at most.
+# What stays: letters of any language, digits, single spaces, and the marks - _ . ' ! ?
+# What goes, and why:
+#  - the direction characters (U+202E and its family). A name with one made the rest
+#    of its line read from right to left, on every screen and in the logs;
+#  - every other character that draws nothing, so no name looks empty and no two names
+#    look the same while they differ;
+#  - < > [ ] & { } / \ : % and the like: a page that shows the name (the host page, a
+#    report) could read them as markup. "<b>Bob</b>" comes out as "bBobb";
+#  - accents past NAME_STACK (3) on one letter: stacked by the dozen they grow over
+#    the lines above and below;
+#  - everything before the first letter or digit: no name starts with a mark.
+# It was: anything from code 32 up except 127 stayed.
+const NAME_MARKS := "-_.'!?"
+const NAME_SCAN := 64            # only the first 64 characters are read: a page sends 12, a junk packet 5 000
+const NAME_STACK := 3            # Thai, Hebrew and Hindi put up to 3 marks on one letter
+# Characters Unicode counts as letters or accents that draw nothing: a joiner, Korean's
+# fillers, Khmer's two silent vowels, the two zero-width joiners. (The variation
+# selectors, FE00 to FE0F and the like, go by their ranges in _name_kind.)
+const NAME_BLANK := [0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x200C, 0x200D, 0x3164, 0xFFA0]
+# Other scripts' digits 0 to 9: ten in a row from each of these (Arabic, Persian,
+# Hindi, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Thai,
+# Lao, Tibetan, Burmese, Khmer, full-width). A rarer script's digits count as accents.
+const NAME_DIGITS := [0x0660, 0x06F0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66,
+	0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x17E0, 0xFF10]
+
+# What one character is in a name: 0 it goes, 1 a letter or a digit, 2 an accent (it
+# sits on the letter before it), 3 one of NAME_MARKS, 4 a space of any kind.
+static func _name_kind(ch: String) -> int:
+	var code := ch.unicode_at(0)
+	if code == 32 or (code >= 9 and code <= 13) or code == 0x85 or code == 0xA0 or code == 0x1680 \
+			or (code >= 0x2000 and code <= 0x200A) or code == 0x2028 or code == 0x2029 or code == 0x202F \
+			or code == 0x205F or code == 0x3000:
+		return 4
+	if code < 128:
+		if (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122):
+			return 1
+		return 3 if NAME_MARKS.contains(ch) else 0
+	if NAME_BLANK.has(code) or (code >= 0xFE00 and code <= 0xFE0F) or (code >= 0x180B and code <= 0x180F) \
+			or (code >= 0xE0100 and code <= 0xE01EF):
+		return 0
+	# Godot knows Unicode's two lists for names in code: what may start a word (the
+	# letters), and what may follow a letter (the letters, the digits, the accents).
+	if ch.is_valid_unicode_identifier():
+		return 1
+	if ("a" + ch).is_valid_unicode_identifier():
+		for d in NAME_DIGITS:
+			if code >= d and code < d + 10:
+				return 1
+		return 2
+	return 0
+
+# The clean name, or "" when nothing of it may stay.
+static func clean_name(raw: String) -> String:
 	var n := ""
-	for ch in raw.strip_edges():
-		var code := ch.unicode_at(0)
-		if code >= 32 and code != 127:
-			n += ch
-		if n.length() >= NAME_MAX:
+	var gap := false         # a space waits: it goes in before the next character that stays
+	var on_letter := false   # the last character kept was a letter, a digit or an accent
+	var stack := 0           # accents on that letter so far
+	for c0 in raw.substr(0, NAME_SCAN):
+		var ch: String = c0
+		if ch == "\u2019" or ch == "\u2018":
+			ch = "'"         # a phone's keyboard types a curly apostrophe (O'Neil)
+		var kind := _name_kind(ch)
+		if kind == 0:
+			continue
+		if kind == 4:
+			gap = n != ""
+			continue
+		if n == "" and kind != 1:
+			continue         # a name starts with a letter or a digit
+		if kind == 2 and (gap or not on_letter or stack >= NAME_STACK):
+			continue         # an accent with no letter under it, or one too many
+		if n.length() + (2 if gap else 1) > NAME_MAX:
 			break
+		if gap:
+			n += " "
+			gap = false
+		n += ch
+		stack = stack + 1 if kind == 2 else 0
+		on_letter = kind != 3
+	return n
+
+func _clean_name(raw: String, seat: int) -> String:
+	var n := clean_name(raw)
 	if n == "":
 		n = "Player %d" % (seat + 1) if seat >= 0 else "Player"
 	return n
@@ -733,18 +834,19 @@ func _bots_now() -> int:
 	return mini(bots_wanted, SEATS - _people())
 
 # The lowest empty seat; in a match a bot's seat will do (the person takes over
-# at the next round). want: the seat a page had before its socket went (bug 1): it
-# gets that one again when nobody else sits there, so it keeps its colour.
+# at the next round), unless someone waits for that one already (Seat.guest). want:
+# the seat a page had before its socket went (bug 1): it gets that one again when
+# nobody else sits there, so it keeps its colour.
 func _free_seat(want: int = -1) -> Seat:
 	var in_match := phase != P.PH_LOBBY and phase != P.PH_COUNTDOWN
-	if want >= 0 and want < SEATS and (seats[want].kind == 0 or (in_match and seats[want].kind == 2)):
+	if want >= 0 and want < SEATS and (seats[want].kind == 0 or (in_match and seats[want].kind == 2 and seats[want].guest == 0)):
 		return seats[want]
 	for s in seats:
 		if s.kind == 0:
 			return s
 	if in_match:
 		for s in seats:
-			if s.kind == 2:
+			if s.kind == 2 and s.guest == 0:
 				return s
 	return null
 
@@ -808,6 +910,7 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		s.name = c.name if c.name != "Player" else "Player %d" % (s.i + 1)
 		s.token = c.token
 		sim.keep.erase(s.i)   # p4.9: a new person: none of the seat's kept power-ups
+		mstats.erase(s.i)     # nor the match's numbers of a bot that sat here (they made the person's award)
 		s.points = 0
 		s.team = _smaller_team(s.i)      # TEAMS: a new person goes to the smaller team
 		if match_teams:
@@ -831,6 +934,58 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		_say("🏰 [JOIN] seat %d '%s' from %s (client %d)%s" % [s.i, s.name, c.ip, c.id,
 			" takes a bot's seat, plays from the next round" if was_bot else (" plays from the next round" if phase > P.PH_COUNTDOWN else "")])
 	seats_dirty = true
+
+# A person sits down on a bot's seat in the middle of a round (all 8 seats are taken).
+# The rule: the bot plays that round out under its own name and keeps what it wins,
+# and the person gets the seat when the round is over (_seat_guests), with no points.
+# Before, the seat changed hands at once while the bot's fighter played on: when it
+# won, the banner said "AVA WINS THE ROUND" and Ava got a point for a round she never
+# played; the bot's kills and deaths went into her numbers and her award as well.
+# The page is told the seat number now (welcome), so it shows the match and waits; for
+# the server that socket has no seat yet (Conn.seat stays -1: its buttons, its taunt
+# and a new name are not used; Conn.wait_seat and Seat.guest remember who waits where).
+func _wait_for_seat(s: Seat, c: Conn) -> void:
+	s.guest = c.id
+	c.wait_seat = s.i
+	_know(c.name)
+	_say("🏰 [JOIN] '%s' from %s (client %d) gets seat %d when this round is over: the bot '%s' plays it out" % [c.name, c.ip, c.id, s.i, s.name])
+	_out(c.id, JSON.stringify({"kind": "welcome", "seat": s.i, "version": P.VERSION, "name": c.name, "phase": phase}))
+	_out(c.id, JSON.stringify({"kind": "note", "text": "%s plays this round out. You are in from the next round." % s.name}))
+
+# The round is over (or the match was stopped): the people who wait for a bot's seat
+# sit down, and those bots go. A socket that went away while it waited gets nothing:
+# the bot stays.
+func _seat_guests() -> void:
+	for s in seats:
+		if s.guest == 0:
+			continue
+		var c: Conn = conns.get(s.guest)
+		s.guest = 0
+		if c == null or c.wait_seat != s.i:
+			continue
+		c.wait_seat = -1
+		if c.seat < 0 and s.kind != 1:
+			_seat_person(s, c, false)
+		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
+
+# A bot keeps its seat for the whole match, and with the seat its name and its points.
+# Before, every round took all the bots off their seats and put them back on the lowest
+# empty ones. When a person left a low seat, the bots moved down, and the points stayed
+# behind on the seats: a bot could lose its points, or get another bot's.
+# Now a round only sets the count right. Too many bots (the host asked for fewer): the
+# highest seats go. Too few: it gives back how many NEW bots the round still needs, and
+# _start_round puts them on the lowest empty seats with no points.
+func _keep_bots() -> int:
+	var want := _bots_now()
+	var have := 0
+	for s in seats:
+		if s.kind == 2:
+			have += 1
+	for i in range(SEATS - 1, -1, -1):
+		if have > want and seats[i].kind == 2:
+			seats[i].kind = 0      # (_start_round's next loop takes its name and its points away)
+			have -= 1
+	return want - have
 
 # The seat is empty from now. Its fighter, if it is still in a round, goes out with a
 # normal death (sim.leave): before, it played on as a bot, could win the round, and the
@@ -873,6 +1028,8 @@ func _on_close(c: Conn, code: int = 0) -> void:
 			seats_dirty = true
 	elif c.ok:
 		_say("🏰 [LEAVE] watcher '%s' (client %d, %s) left" % [c.name, c.id, c.ip])
+	if c.wait_seat >= 0 and seats[c.wait_seat].guest == c.id:
+		seats[c.wait_seat].guest = 0      # it waited for a bot's seat: the bot keeps it
 	conns.erase(c.id)
 
 # Held seats count down; at 0 the seat is free again. A seat whose time runs out while
@@ -1067,9 +1224,8 @@ func _match_tick() -> void:
 		phase_t -= 1
 		if phase_t <= 0:
 			# The point never goes to an empty seat (the winner left in these 1.5 s: bug 3).
-			# (A person who sat down on a bot's seat during the round still gets the round that
-			# bot wins, banner and point, as before: the soak showed that taking only the
-			# point away leaves "C03 WINS THE ROUND" on the screen with no point for C03.)
+			# (A person who sits down on a bot's seat during a round waits for the round's end:
+			# the bot wins under its own name and the point is the bot's, _wait_for_seat.)
 			if match_teams:
 				winner = _team_point()     # TEAMS: one point for the team; `winner` is now its best player's seat (or nobody)
 			elif winner != P.NO_ONE and seats[winner].kind == 0:
@@ -1260,18 +1416,17 @@ static func _goal_for(n: int) -> int:
 		return 4
 	return 3
 
-# Bots take the lowest empty seats, as many as wanted and fit; then every seated
-# person and bot gets a fighter.
+# The people who waited for a bot's seat sit down (_seat_guests). The bots stay where
+# they are (_keep_bots); new ones take the lowest empty seats, as many as wanted and
+# fit. Then every seated person and bot gets a fighter.
 func _start_round() -> void:
-	for s in seats:
-		if s.kind == 2:
-			s.kind = 0
-	var to_place := _bots_now()
+	_seat_guests()
+	var to_place := _keep_bots()
 	for s in seats:
 		if to_place > 0 and s.kind == 0:
 			s.kind = 2
 			s.name = P.bot_name(s.i, sim.season)     # p4.19: GRAVY, STUFFING... by the season (proto.gd BOT_NAMES)
-			s.points = s.points if round_no > 1 else 0
+			s.points = 0                             # a new bot starts with nothing
 			to_place -= 1
 	for s in seats:
 		# A seat a bot sat on last round and nobody sits on now (fewer bots this round): its
@@ -1366,6 +1521,7 @@ func _to_lobby() -> void:
 	team_points = [0, 0]
 	win_team = -1
 	sim.teams = {}
+	_seat_guests()         # the bots are gone: who waited for a bot's seat sits down now
 	sim.set_arena(_next_arena())
 	_say("🏰 [LOBBY] back in the lobby: %d people seated" % _people())
 	seats_dirty = true
@@ -2181,7 +2337,9 @@ func _load_names(root: String) -> void:
 		var d = JSON.parse_string(FileAccess.get_file_as_string(names_path))
 		if typeof(d) == TYPE_DICTIONARY:
 			for k in d:
-				known_names[str(k)] = int(d[k])
+				var kn := clean_name(str(k))    # (a name kept under the old rule may hold what clean_name drops now)
+				if kn != "":
+					known_names[kn] = int(known_names.get(kn, 0)) + _int(d[k], 0)
 		return
 	var dir := DirAccess.open(root)
 	if dir == null:
@@ -2199,6 +2357,7 @@ func _load_names(root: String) -> void:
 	_save_names()
 
 func _know(name: String, n: int = 1, save: bool = true) -> void:
+	name = clean_name(name)     # (the old nights' v2_stats.json files hold names from before the cleaning)
 	if name == "" or name.begins_with("Player") or name.begins_with("BOT "):
 		return
 	var key := name
@@ -2459,7 +2618,8 @@ func _host_state() -> Dictionary:
 	for id in conns:
 		var c: Conn = conns[id]
 		if c.ok and c.seat < 0:
-			watching.append({"client": c.id, "name": c.name, "ip": c.ip, "ping_ms": pings.get(c.id, -1), "phone": _phone(c)})
+			watching.append({"client": c.id, "name": c.name, "ip": c.ip, "ping_ms": pings.get(c.id, -1), "phone": _phone(c),
+				"waits_for": c.wait_seat})   # the bot's seat this one gets when the round is over (-1: it only watches)
 	var arenas: Array = [{"n": P.ARENA_MIX, "name": "MIX"}]
 	for n in SimScript.LevelScript.PLAY:
 		arenas.append({"n": n, "name": SimScript.LevelScript.name_of(n)})

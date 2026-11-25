@@ -359,6 +359,19 @@ static func map_for(lv) -> RouteMap:
 	_maps[lv.id] = rm
 	return rm
 
+# Every arena's route map, built now. The server calls this once, at its start.
+# Why: a map was built the first time a bot asked for it. That is about 1 s after
+# FIGHT, in the first round on each arena, in the middle of a tick. It took 4 to 12 ms
+# of that tick's 16.7 ms: surfaces() 2 ms, the edges 1 ms, and the fastest ways over
+# all the surfaces 1 to 8 ms (THE HARVEST BARN has 37 surfaces: 37 x 37 x 37 steps).
+# On a busy server that one tick came to 14 to 33 ms. All 7 arenas take about 50 ms
+# together, once, before anyone has joined. It gives back the microseconds it took.
+static func build_all() -> int:
+	var t0 := Time.get_ticks_usec()
+	for n in LevelScript.count():
+		map_for(LevelScript.new(n))
+	return Time.get_ticks_usec() - t0
+
 static func _build(lv, flat: Array) -> RouteMap:
 	var rm := RouteMap.new()
 	rm.id = lv.id

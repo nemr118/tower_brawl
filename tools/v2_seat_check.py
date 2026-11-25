@@ -4,11 +4,14 @@
 # with a fixed script on a test server of its own. Fake players (tools/v2_chaos.py's
 # Client) do the exact thing that went wrong on the October nights, and the check says
 # PASS or FAIL with the numbers. Bugs 1, 2 (the server's half), 3, 5, 9 and 12.
+# And three from p4.19's "found, not fixed" list: S11 a person sits down on a bot's seat
+# in the middle of a round (the bot plays it out under its own name), S12 a bot keeps its
+# seat, its name and its points for the whole match, S13 nasty names come out clean.
 #
 #   ./venv/bin/python tools/v2_seat_check.py [--only S1,S4] [--port 8111] [--admin-port 8121] [--out DIR]
 #   --bench DIR: run the server from another copy of bench/ (an older commit, to see
 #   the bug: a check that fails there and passes here is a proof).
-#   S5 waits for the 60 s hold to run out: about 80 s. The whole run: about 4 minutes.
+#   S5 waits for the 60 s hold to run out: about 80 s. The whole run: about 7 minutes.
 # Exit 1 on any FAIL.
 # ==============================================================================
 import argparse, os, sys, time, socket
@@ -405,6 +408,271 @@ def s10():
         r.done()
 
 
+# ---------------------------------------------------------------- p4.19's list: a bot's seat in the middle of a round
+def bots_of(st):
+    """The bots on the seats now: {seat: (name, points)}."""
+    return {x["i"]: (x["name"], x["points"]) for x in st["seats"] if x["kind"] == 2}
+
+
+def s11():
+    """A person sits down on a bot's seat in the middle of a round, and the bot wins that
+    round. Before: the banner said the PERSON won, and the person got the point. Now: the
+    bot plays the round out under its own name, and the person sits down when it is over.
+    (An idle person and one HARD bot side by side on the test arena: the bot wins.)"""
+    for attempt in range(3):
+        r = Run("S11", ["--bots", "1", "--arena", "bench", "--spots", "2,3", "--bot-level", "hard", "--goal", "40"])
+        try:
+            a = r.player(0, name="Ava")
+            sa = r.seat(a)
+            r.start(a)
+            st = r.host.state()
+            bot_seat = next(i for i in bots_of(st))
+            bot_name = bots_of(st)[bot_seat][0]
+            b = r.player(1, name="Bea")
+            assert b.connect(), b.err
+            assert wait(lambda: len(b.welcomes) >= 1, 5), "no welcome"
+            b.send({"kind": "join", "name": b.name, "seat": bot_seat})      # (as a page asks for the seat it had before)
+            told = wait(lambda: len(b.welcomes) >= 2, 3)
+            time.sleep(0.3)
+            mid = r.host.state()
+            waits = [w for w in mid["watching"] if w["name"] == "Bea"]
+            names_a = [x["name"] for x in a.seats_msg["seats"]] if a.seats_msg else []
+            got = wait(lambda: [m for m in a.msgs if m["kind"] == "round_end"], 62)
+            m = got[0] if got else {}
+            if not got or m.get("draw") or m.get("winner") != bot_seat:
+                print(f"     (S11 try {attempt + 1}: the bot did not win this round: {m.get('winner')}, draw {m.get('draw')}; once more)", flush=True)
+                continue
+            check(bool(told) and b.welcomes[-1] == bot_seat and mid["seats"][bot_seat]["kind"] == 2 and mid["seats"][bot_seat]["name"] == bot_name
+                  and len(waits) == 1 and waits[0].get("waits_for") == bot_seat and names_a[bot_seat] == bot_name,
+                  f"S11 a person asks for a bot's seat in the middle of a round: the page is told seat {b.welcomes[-1] if told else None}, and for the rest of "
+                  f"that round the seat is still the bot's on every screen: kind {mid['seats'][bot_seat]['kind']} (2: a bot), name '{mid['seats'][bot_seat]['name']}' "
+                  f"(the seats message: '{names_a[bot_seat] if names_a else '?'}'); the host page lists Bea as waiting for seat {waits[0].get('waits_for') if waits else None}")
+            got_b = [x for x in b.msgs if x["kind"] == "round_end"]
+            check(m.get("name") == bot_name and bool(got_b) and got_b[0].get("name") == bot_name,
+                  f"S11 the bot wins that round: the banner's name is the bot's: round_end winner seat {m.get('winner')} '{m.get('name')}' "
+                  f"(the bot is '{bot_name}'; before the fix it said 'Bea')")
+            # the next round: Bea sits there with no points and plays
+            seated = wait(lambda: r.host.state()["seats"][bot_seat]["name"] == "Bea", 6, 0.05)
+            mine = wait(lambda: b.own and (b.own["flags"] & OWN_FIGHTER) and not (b.own["flags"] & OWN_BRAIN), 8, 0.05)
+            st2 = r.host.state()
+            x = st2["seats"][bot_seat]
+            rows = {(row["name"], row["bot"]): row for row in st2["stats"]}
+            bea = rows.get(("Bea", False), {})
+            bot = rows.get((bot_name, True), {})
+            check(bool(seated) and x["kind"] == 1 and x["points"] == 0 and x["in_round"] and bool(mine) and st2["round"] == 2,
+                  f"S11 when the round is over the person sits down with no point and plays the next round: seat {bot_seat} is '{x['name']}' "
+                  f"(kind {x['kind']}), points {x['points']} (before the fix: 1), in round {st2['round']}, its own fighter: {bool(mine)}")
+            check(bea.get("round_wins", 0) == 0 and bea.get("kills", 0) == 0 and bot.get("round_wins", 0) == 1,
+                  f"S11 tonight's numbers: Bea has {bea.get('round_wins', 0)} round wins and {bea.get('kills', 0)} knockouts "
+                  f"from that round (0 wanted: she did not play it); the bot '{bot_name}' has {bot.get('round_wins', 0)} round win (1 wanted)")
+            return
+        finally:
+            r.done()
+    check(False, "S11 (setup) in 3 tries the bot never won the round: nothing was checked")
+
+
+def round_step(r, c, action):
+    """In the middle of a round: note the bots, do `action`, wait for this round's end
+    and the next round's start. Gives (the bots before, the round's winner seat or -1,
+    the host page's state after). c: a fake player that stays (it hears round_end)."""
+    while True:
+        c.take_msgs("round_end")
+        st = r.host.state()
+        if st["phase"] == PH_PLAY:
+            break
+        time.sleep(0.05)
+    before = bots_of(st)
+    action()
+    got = wait(lambda: [m for m in c.msgs if m["kind"] == "round_end"], 62)
+    won = got[0].get("winner", -1) if got and not got[0].get("draw") else -1
+    wait(lambda: r.host.state()["round"] == st["round"] + 1, 6, 0.02)
+    time.sleep(0.15)
+    return before, won, r.host.state()
+
+
+def rows(d):
+    return [(i, n, p) for i, (n, p) in sorted(d.items())]
+
+
+def s12():
+    """Two people (seats 0 and 1) and 3 bots (seats 2, 3, 4) with points. The person on
+    seat 0 leaves. Before: every round put the bots back on the lowest empty seats, so
+    they moved to 0, 2, 3: the bot on seat 4 was gone with its points and a new one sat
+    on seat 0. Now: a bot keeps its seat, its name and its points for the whole match.
+    Then the other ways the seats change: a person joins, the host asks for fewer bots,
+    for more, and a person joins when all 8 seats are taken."""
+    r = Run("S12", ["--bots", "3", "--arena", "keep", "--bot-level", "hard", "--goal", "40", "--walls-s", "6"])
+    try:
+        a, b = r.player(0, name="Ava"), r.player(1, name="Bea")
+        sa, sb = r.seat(a), r.seat(b)
+        r.start(b)
+
+        def top_has_a_point():
+            bots = bots_of(r.host.state())
+            return len(bots) == 3 and bots[max(bots)][1] >= 1 and sum(p for _, p in bots.values()) >= 2
+        ok = wait(top_has_a_point, 400, 0.2)
+        # 1. Ava leaves seat 0 in the middle of a round
+        before, won, st = round_step(r, b, lambda: a.send({"kind": "leave"}))
+        after = bots_of(st)
+        want = {i: (n, p + (i == won)) for i, (n, p) in before.items()}
+        check(bool(ok) and after == want and st["seats"][sa]["kind"] == 0,
+              f"S12 a person leaves seat {sa}, a seat under the bots: the 3 bots keep seat, name and points: before {rows(before)}, the round went to seat {won}, "
+              f"after {rows(after)} (wanted {rows(want)}); seat {sa} is empty (kind {st['seats'][sa]['kind']}; before the fix a bot moved down to it)")
+        # 2. a new person joins in the middle of a round: the lowest empty seat, the bots stay
+        c = r.player(2, name="Cy")
+        assert c.connect(), c.err
+        assert wait(lambda: len(c.welcomes) >= 1, 5), "no welcome"
+        before, won, st = round_step(r, b, lambda: c.send({"kind": "join", "name": "Cy"}))
+        after = bots_of(st)
+        want = {i: (n, p + (i == won)) for i, (n, p) in before.items()}
+        check(after == want and st["seats"][sa]["name"] == "Cy" and st["seats"][sa]["kind"] == 1 and st["seats"][sa]["in_round"],
+              f"S12 a person joins in a round and takes the empty seat {sa}: the 3 bots keep seat, name and points: {rows(after)} (wanted {rows(want)}); "
+              f"Cy plays this round: {st['seats'][sa]['in_round']}")
+        # 3. the host asks for 1 bot: the highest seats go, the lowest bot keeps what it has
+        before, won, st = round_step(r, b, lambda: r.host.cmd("bots", n=1))
+        after = bots_of(st)
+        low = min(before)
+        want = {low: (before[low][0], before[low][1] + (low == won))}
+        left = [x["i"] for x in st["seats"] if x["kind"] == 0 and (x["name"] != "" or x["points"] != 0)]
+        check(after == want and not left,
+              f"S12 the host asks for 1 bot: the bot on the lowest seat stays with its name and points: {rows(after)} (wanted {rows(want)}); "
+              f"empty seats with a name or points left on them: {left}")
+        # 4. the host asks for 7: two people sit, so 6 bots: the old one as it was, 5 new ones with no points
+        before, won, st = round_step(r, b, lambda: r.host.cmd("bots", n=7))
+        after = bots_of(st)
+        old_bot = {i: v for i, v in after.items() if i in before}
+        new_bots = {i: v for i, v in after.items() if i not in before}
+        want = {i: (n, p + (i == won)) for i, (n, p) in before.items()}
+        check(old_bot == want and len(new_bots) == 5 and all(p == 0 for _, p in new_bots.values()) and len({n for n, _ in after.values()}) == 6,
+              f"S12 the host asks for 7 bots (6 fit): the old bot is as it was {rows(old_bot)} (wanted {rows(want)}); 5 new bots with no points and a name each: {rows(new_bots)}")
+        # 5. all 8 seats are taken: a person joins in a round, waits for the lowest bot's seat, and the other 5 bots stay
+        d = r.player(3, name="Dee")
+        assert d.connect(), d.err
+        assert wait(lambda: len(d.welcomes) >= 1, 5), "no welcome"
+        before, won, st = round_step(r, b, lambda: d.send({"kind": "join", "name": "Dee"}))
+        after = bots_of(st)
+        sd = d.welcomes[-1] if d.welcomes else -1
+        want = {i: (n, p + (i == won)) for i, (n, p) in before.items() if i != sd}
+        check(sd == min(before) and after == want and st["seats"][sd]["name"] == "Dee" and st["seats"][sd]["points"] == 0 and st["seats"][sd]["in_round"],
+              f"S12 all 8 seats taken, a person joins in a round: told seat {sd} (the lowest bot's: {min(before)}); at the next round Dee sits there with "
+              f"{st['seats'][sd]['points']} points and plays ({st['seats'][sd]['in_round']}); the other 5 bots keep seat, name and points: {rows(after)} (wanted {rows(want)})")
+    finally:
+        r.done()
+
+
+NASTY = [
+    "‮evA", "A‭v‬a", "⁦A⁧v⁨a⁩", "A‎v‏a؜", "‮‮‫",
+    "<b>Bob</b>", "<script>alert(1)</script>", "<img src=x onerror=1>", "&lt;Bob&gt;", "&#x202e;Bob", "[b]Bob[/b]", "[color=red]X",
+    "{{7*7}}", "%s%d%n", "**Bob** `x`", "http://x.io", "=1+1", "--help", "-rf / ; ls", "'; DROP TABLE", "A'B\"C`D", "a\\nb\\t",
+    "Bob\nEve", "Bob\tEve", "Bob\x07\x1b\x7fEve", "Bob\x00Eve", "A​‌‍﻿⁠B", "A­B", "ㅤㅤᅟﾠ",
+    "AㅤB", "a️︎b", "A\U000e0065\U000e0076\U000e0069\U000e006c", "́́a", "Z" + "".join(chr(0x300 + i) for i in range(10)) + "a",
+    "กิ" + "้" * 8, "﷽Bob", "\U0001f983Tom\U0001f983", "Tom❤️", "!!!", "      ", "", "A     B", "A 　B",
+    "ABCDEFGHIJKLMNOP", "ABCDEFGHIJK LM", "A" * 5000, "José", "Zoë Müller", "Ελένη", "Иван", "李小龙", "さくら", "한글", "محمد", "דוד",
+    "हिन्दी", "١٢٣٤٥", "O’Neil", "Mary-Jane", "Mr. T!", "who?", "xX_Ava_Xx", "007 Bond",
+]
+# the names of NASTY that are fine as they are: they must come back unchanged
+FINE = {"José", "Zoë Müller", "Ελένη", "Иван", "李小龙", "さくら", "한글", "محمد", "דוד", "हिन्दी", "١٢٣٤٥", "Mary-Jane", "Mr. T!", "who?", "xX_Ava_Xx", "007 Bond"}
+
+
+def name_wrong(n):
+    """What is wrong with a name the server kept, by Python's own Unicode tables ('' = fine):
+    only letters (L), marks on letters (M), digits (Nd), a plain space and - _ . ' ! ?"""
+    import unicodedata
+    if len(n) > 12:
+        return f"{len(n)} characters"
+    if n != n.strip() or "  " in n:
+        return "a space at an end, or two in a row"
+    if n and not (unicodedata.category(n[0])[0] == "L" or unicodedata.category(n[0]) == "Nd"):
+        return f"it starts with U+{ord(n[0]):04X} ({unicodedata.category(n[0])})"
+    run = 0
+    for ch in n:
+        cat = unicodedata.category(ch)
+        if not (cat[0] in "LM" or cat == "Nd" or ch in " -_.'!?"):
+            return f"U+{ord(ch):04X} ({cat})"
+        if ch in "͏ᅟᅠ឴឵‌‍ㅤﾠ" or 0xFE00 <= ord(ch) <= 0xFE0F:
+            return f"U+{ord(ch):04X} draws nothing"
+        run = run + 1 if cat[0] == "M" else 0
+        if run > 3:
+            return "more than 3 marks on one letter"
+    return ""
+
+
+def s13():
+    """Nasty names (direction characters, markup, empty letters, piles of accents) from a
+    real socket: in hello, in join, and as a new name. What the server keeps is judged by
+    Python's Unicode tables, on the host page's state, in the seats message, and in the
+    server's own output and files."""
+    import json, unicodedata
+    r = Run("S13", ["--bots", "0", "--arena", "keep"])
+    try:
+        b = r.player(1, name="Watcher")
+        r.seat(b)
+        bad, changed, shown = [], [], []
+        a = r.player(0, name=NASTY[0])
+        assert a.connect(), a.err
+        assert wait(lambda: len(a.welcomes) >= 1, 5), "no welcome"
+        a.send({"kind": "join", "name": NASTY[0]})
+        assert wait(lambda: a.seat >= 0, 5), "no seat"
+        for raw in NASTY:
+            a.send({"kind": "name", "name": raw})
+            time.sleep(0.12)
+            kept = r.host.state()["seats"][a.seat]["name"]
+            seen = b.seats_msg["seats"][a.seat]["name"] if b.seats_msg else None
+            why = name_wrong(kept) or ("the seats message says something else: %r" % seen if seen != kept else "")
+            if why:
+                bad.append(f"{raw[:20]!a} -> {kept!a}: {why}")
+            if raw in FINE and kept != raw:
+                changed.append(f"{raw!a} -> {kept!a}")
+            shown.append((raw, kept))
+        check(not bad, f"S13 {len(NASTY)} nasty names as a seated player's new name: each kept name holds only letters, digits, single spaces and - _ . ' ! ?, "
+              f"12 characters at most, on the host page and in the seats message" + ("" if not bad else f": {len(bad)} wrong, the first: {bad[0]}"))
+        check(not changed, f"S13 the {len(FINE)} ordinary names of the list (José, 李小龙, محمد, Mr. T!...) are kept as typed" + ("" if not changed else f": changed: {changed[0]}"))
+        # the same names in hello and in join, each on a socket of its own (a new person)
+        bad2 = []
+        for k, raw in enumerate(NASTY[:24]):
+            c = r.player(2 + k, name=raw, token=f"nasty{k}")
+            if not c.connect():
+                continue
+            wait(lambda: len(c.welcomes) >= 1, 3)
+            c.send({"kind": "join", "name": raw})
+            wait(lambda: c.seat >= 0, 3)
+            if c.seat >= 0:
+                kept = r.host.state()["seats"][c.seat]["name"]
+                if name_wrong(kept) or kept == "":
+                    bad2.append(f"{raw[:20]!a} -> {kept!a}: {name_wrong(kept) or 'no name'}")
+                c.send({"kind": "leave"})
+                wait(lambda: c.seat < 0, 2)
+            c.close()
+        check(not bad2, "S13 the first 24 of them as a new person's name (hello and join): each seat's name is clean, and a name with nothing left is 'Player N'"
+              + ("" if not bad2 else f": {len(bad2)} wrong, the first: {bad2[0]}"))
+        time.sleep(0.3)
+        # the server's own output and its files: no direction character, nothing invisible, no control character
+        texts = {"the server's output": r.log()}
+        res = os.path.join(A.out, "S13", "results")
+        for root, _, files in os.walk(res):
+            for fn in files:
+                with open(os.path.join(root, fn), errors="replace") as f:
+                    texts[fn] = f.read()
+        dirty = []
+        for what, text in texts.items():
+            if what.endswith(".json") or what.endswith(".jsonl"):
+                try:                      # (a JSON file writes U+202E as ‮: read what it means)
+                    text = "".join(json.dumps(json.loads(line), ensure_ascii=False) for line in text.splitlines() if line.strip())
+                except ValueError:
+                    pass
+            for ch in set(text):
+                if unicodedata.category(ch) in ("Cf", "Zl", "Zp", "Co") or (unicodedata.category(ch) == "Cc" and ch not in "\n\r\t"):
+                    dirty.append(f"{what}: U+{ord(ch):04X}")
+        marks = [w for w, t in texts.items() if "<b>" in t or "<script" in t or "[b]" in t or "&lt;" in t or "{{" in t]
+        files = ", ".join(sorted(k for k in texts if not k.startswith("the server")))
+        check(not dirty and not marks, f"S13 the server's output and its {len(texts) - 1} files ({files}): "
+              f"no direction, invisible or control character ({len(dirty)}: {dirty[:3]}), no markup from a name ({marks})")
+        for raw, kept in shown[:12]:
+            print(f"     {raw[:24]!a:<44} -> {kept!a}", flush=True)
+    finally:
+        r.done()
+
+
 def main():
     global A
     ap = argparse.ArgumentParser()
@@ -414,7 +682,8 @@ def main():
     ap.add_argument("--bench", default="", help="another copy of bench/ to run the server from (an older commit)")
     ap.add_argument("--out", default=os.path.join(ROOT, "bench_results", "seat_check"))
     A = ap.parse_args()
-    todo = [("S1", s1), ("S2", s2), ("S3", s3), ("S4", s4), ("S5", s5), ("S6", s6), ("S7", s7), ("S8", s8), ("S9", s9), ("S10", s10)]
+    todo = [("S1", s1), ("S2", s2), ("S3", s3), ("S4", s4), ("S5", s5), ("S6", s6), ("S7", s7), ("S8", s8), ("S9", s9), ("S10", s10),
+            ("S11", s11), ("S12", s12), ("S13", s13)]
     only = [x.strip().upper() for x in A.only.split(",") if x.strip()]
     for name, fn in todo:
         if only and name not in only:
