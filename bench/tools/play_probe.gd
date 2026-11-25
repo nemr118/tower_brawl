@@ -36,6 +36,14 @@
 #   (the arrows at the draw clock, you from the newest snapshot).
 #   When the shooter's quiver is empty, the catcher shoots back to end the round.
 #   At the end: how many arrows reached it, caught or killed it.
+# --freeze=MS [--freeze-at=S] (the November review's bug 2): S seconds in (5), in a
+#   round, this whole probe stops for MS ms, as a phone's page does when it freezes
+#   (keep MS under the server's 3 s: longer, and the server drops the socket). It
+#   stops on a frame that has just sent a ping: that ping's answer is read after the
+#   freeze and looks MS long, which is what threw the clock (about 1 freeze in 30
+#   falls so on a page at 60 frames a second). The line at the end says how many ticks the probe's clock runs ahead of the server
+#   before the freeze, 1 s after it and 6 s after it, and FAILs when it is still more
+#   than 8 ticks further ahead 6 s after.
 # Exit 0 when every expected thing happened, 1 otherwise. Lines start with 🧪.
 extends SceneTree
 
@@ -112,6 +120,7 @@ func _process(_delta: float) -> bool:
 		_catch_events()
 	if mode_warps and phase == P.PH_PLAY:
 		_watch_warps()
+	_freeze_step()
 	var s: Dictionary = net.newest()
 	if not s.is_empty():
 		if s["phase"] != phase:
@@ -355,6 +364,8 @@ func _finish(timed_out: bool) -> void:
 		_predict_line()
 	if mode_warps:
 		_warps_line()
+	if freeze_ms > 0:
+		_freeze_line()
 	if mode_catcher != "":
 		_catch_line()
 	if watch_s > 0.0 and not mode_idle and not mode_predict and not mode_shooter and mode_catcher == "":
@@ -372,6 +383,63 @@ func _finish(timed_out: bool) -> void:
 	print("🧪 [PlayProbe] %s (%d fail)" % ["PASS" if fails == 0 else "FAIL", fails])
 	net.ws.close()
 	quit(0 if fails == 0 else 1)
+
+# Bug 2: the frozen page. How far the clock runs ahead of the server: the tick of the
+# newest input, less the server's tick now (the newest snapshot's, plus the time since).
+var freeze_ms := 0
+var freeze_done_ms := 0          # when the freeze ended (0: not yet)
+var ahead_before: Array = []
+var ahead_1s := -999.0
+var ahead_6s := -999.0
+var ahead_max := -999.0
+var freeze_errs_from := 0
+var freeze_ping_ms := 0.0        # net's next ping time, as last seen (it moves on the frame a ping goes out)
+
+func _ahead() -> float:
+	var s: Dictionary = net.newest()
+	if s.is_empty() or not net.synced:
+		return -999.0
+	return float(net.pred_tick) - (float(s["tick"]) + (net.now_ms() - net.last_snap_ms) * 0.06)
+
+func _freeze_step() -> void:
+	freeze_ms = int(opts.get("freeze", 0))
+	if freeze_ms <= 0:
+		return
+	var up := (Time.get_ticks_msec() - started_ms) / 1000.0
+	var a := _ahead()
+	if freeze_done_ms == 0:
+		if a > -900.0 and phase == P.PH_PLAY:
+			ahead_before.append(a)
+		var pinged: bool = net.next_ping_ms != freeze_ping_ms
+		freeze_ping_ms = net.next_ping_ms
+		if up >= float(opts.get("freeze-at", 5)) and phase == P.PH_PLAY and ahead_before.size() >= 30 and pinged:
+			print("🧪 [PlayProbe] the page freezes for %d ms now (a ping has just gone out)" % freeze_ms)
+			freeze_errs_from = pred.errors.size()
+			OS.delay_msec(freeze_ms)
+			freeze_done_ms = Time.get_ticks_msec()
+		return
+	var since := (Time.get_ticks_msec() - freeze_done_ms) / 1000.0
+	if a < -900.0:
+		return
+	if since >= 0.3:
+		ahead_max = maxf(ahead_max, a)
+	if since >= 1.0 and ahead_1s < -900.0:
+		ahead_1s = a
+	if since >= 6.0 and ahead_6s < -900.0:
+		ahead_6s = a
+
+func _freeze_line() -> void:
+	ahead_before.sort()
+	var before: float = ahead_before[ahead_before.size() / 2] if ahead_before.size() > 0 else -999.0
+	var worst := 0.0
+	for i in range(freeze_errs_from, pred.errors.size()):
+		worst = maxf(worst, pred.errors[i])
+	var ok: bool = freeze_done_ms > 0 and ahead_6s > -900.0 and ahead_6s <= before + 8.0 and net.state == WebSocketPeer.STATE_OPEN
+	if not ok:
+		fails += 1
+	print("🧪 [PlayProbe] %s freeze %d ms: the clock ran %.1f ticks ahead of the server before it, %.1f ticks 1 s after it, %.1f ticks 6 s after it (the most, from 0.3 s after: %.1f); the socket is %s; my fighter was corrected by %.0f px at most after it; rtt now %d ms, %d clock changes, %d jumps" % [
+		"PASS" if ok else "FAIL", freeze_ms, before, ahead_1s, ahead_6s, ahead_max, "open" if net.state == WebSocketPeer.STATE_OPEN else "CLOSED",
+		worst, net.last_rtt, net.clock_changes, net.clock_jumps])
 
 # P2: the inputs since 1 s after the first sync: how many came late (T_OWN says),
 # and how early they came (the smallest margin in each T_OWN window, in ticks).

@@ -48,7 +48,7 @@
 # the simulation. They trade messages under net_mutex: net_in (open, text, input,
 # close) comes up, net_out (a snapshot for all, a JSON text for one) goes down.
 # The JSON (text frames). From a client: hello {name, version, token},
-# join {name}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
+# join {name, seat (the seat it had before its socket went: it gets that one again when it is free)}, leave, start, bots {n}, arena {n} (P.ARENA_MIX or a layout),
 # bot_level {n} (1 EASY, 2 NORMAL, 3 HARD), power {n} (p4.9: 1 the power-up orbs on, 0 off), name {name},
 # skip (p4.8: a seated player ends the match's end, the deathcam's montage, for everyone: the lobby),
 # report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
@@ -59,7 +59,8 @@
 # bots, bots_wanted, bot_level, power, people, arena (the pick), arena_now (the round's,
 # or the next one's in the lobby), seats: [{i, name, kind, on, points, crowns, in}]},
 # round_end {round, winner, name,
-# draw, points}, match_end {winner, name, points}.
+# draw, points}, match_end {winner, name, points, awards, replay_s (how long the replay of the winner's kills
+# plays), screen_s (the winner's screen after it)}.
 # Output: <out>/<date>/v2_server.jsonl (a report line every REPORT_S s; G6: a
 # round line at each round's end with every death, its cause and spot, and a
 # match line at each match's end), <out>/<date>/v2_stats.json (the players'
@@ -74,17 +75,50 @@ const SimScript = preload("res://sim/sim.gd")
 
 const SEATS := 8
 const MAX_BOTS := 7
-const HOLD_TICKS := 480          # a dropped person's seat is held 8 s
+# A dropped person's seat is held for them: the brain plays their fighter, and the same
+# token gets the seat, the colour and the points back (hello). In a match: 60 s. It was
+# 8 s: on 25 October 33 phones dropped, 17 came back within 8 s and 16 lost their seat
+# and points (the review's bug 1). In the lobby: 20 s (nobody is in a fight; it was 8 s,
+# but a sleeping phone is now dropped after SILENT_MS, so a short nap must fit).
+const HOLD_TICKS := 3600
+const HOLD_LOBBY_TICKS := 1200
 const COUNTDOWN_TICKS := 180     # START to the first round: 3 s
 const ROUND_START_TICKS := 90    # the ROUND N banner, nobody moves: 1.5 s
 const ROUND_MAX_TICKS := 3600    # a round with no end is a draw at 60 s (a backstop: the purple walls kill everyone left by 48 s)
 const WALLS_S := 25              # the purple walls (TowerFall's miasma) come 25 s after FIGHT
 const ROUND_END_TICKS := 90      # one fighter left: TowerFall waits 1.5 s before the point
 const DRAW_TICKS := 60           # nobody left: a shorter DRAW banner
-const MATCH_END_TICKS := 720     # the winner's screen: 12 s (p4.8: the deathcam's montage plays first; it was 7 s), then the lobby
+# The match's end: the replay of the winner's kills plays first on every page, then the
+# winner's screen with the awards, then the lobby. The winner's screen gets 8 s, always:
+# the server adds the replay's length (P.replay_secs, from the winner's kills). Before
+# (the review's bug 9) both shared 12 s: 6.2 s of winner's screen after a 1-kill replay,
+# 3.6 s after 3 kills, 0.8 s after 6.
+const MATCH_END_TICKS := 480
 const REPORT_S := 5
+# A socket that sends nothing for 3 s is a drop (the review's bug 5). A page sends a
+# ping every 0.5 s and 60 inputs a second, so 3 s of nothing is a frozen page or a dead
+# link. Before, the server never noticed: the fighter ran on with its last buttons held
+# down, round after round. Now the socket is closed, the brain plays, the seat is held
+# (HOLD_TICKS), and the page gets its seat back when it opens a new socket.
+const SILENT_MS := 3000
+const CLOSE_SILENT := 4001       # the close code the server gives a silent socket
+# Bug 12 (the review): a socket whose reading side is stuck. The server's packets pile
+# up, and when that socket says goodbye, the server's own goodbye cannot leave: the
+# socket hangs half closed. It was then dropped as one that "never finished the
+# handshake", with no word to the seats: its seat stayed "on" for ever (only a host
+# kick cleared it). Now: half closed for CLOSING_MS is a drop the seats hear about, and
+# so are SEND_FAIL_MAX packets in a row that could not be queued (1 MB waiting).
+const CLOSING_MS := 1000
+const SEND_FAIL_MAX := 120
+const CLOSE_STUCK := 4002        # the inbox code for a socket that hung half closed
+const CLOSE_BLOCKED := 4003      # and for one that could not be sent to
 const NAME_MAX := 12
 const MAX_EARLY := 60            # an input more than 1 s early is applied at once (the client's clock is off)
+# T_OWN tells a page how early its inputs came, in one signed byte, and 127 (P.NO_MARGIN)
+# means "no input came". An input 200 ticks early was cut to 127, so a page whose clock
+# ran far ahead was told "nothing came" and never slowed down (the review's bug 2). Now
+# the most the byte says is 126, and "none" has a number of its own in here.
+const MARGIN_NONE := 1 << 30
 const EVENTS_MAX := 80           # the host page's recent events
 const HOST_MAX := 16384          # the largest request the host port reads
 const PHASE_NAMES := ["LOBBY", "COUNTDOWN", "ROUND START", "PLAYING", "ROUND END", "MATCH END"]
@@ -163,6 +197,9 @@ class Client:
 	var rtt: int = -1
 	var gap: int = -1
 	var send_fail: int = 0
+	var fail_run: int = 0       # packets in a row that could not be queued for it (SEND_FAIL_MAX)
+	var closing_ms: int = 0     # when it was first seen half closed (CLOSING_MS)
+	var last_in_ms: int = 0     # when its last packet came (SILENT_MS)
 
 class Conn:                     # what this thread knows about a socket
 	var id: int = 0
@@ -191,7 +228,7 @@ class Seat:
 	var input_tick: int = -1    # the sim tick a late input was applied on
 	var queue := {}             # input tick -> [buttons, aim]: applied just before that tick
 	var used: int = 0           # the newest input tick applied
-	var margin_min: int = P.NO_MARGIN   # the smallest margin (ticks early) since the last T_OWN
+	var margin_min: int = MARGIN_NONE   # the smallest margin (ticks early) since the last T_OWN (MARGIN_NONE: no input came)
 	var late_n: int = 0         # inputs that came after their tick, since the last T_OWN
 	var late_all: int = 0       # and in all, with the inputs counted, for the report
 	var inputs_all: int = 0
@@ -457,7 +494,7 @@ func _drain_inbox() -> void:
 		elif kind == "input":
 			_on_input(conns[id], m[2])
 		elif kind == "close":
-			_on_close(conns[id])
+			_on_close(conns[id], int(m[2]))
 
 func _on_text(c: Conn, txt: String) -> void:
 	var d = JSON.parse_string(txt)
@@ -472,13 +509,13 @@ func _on_text(c: Conn, txt: String) -> void:
 			return
 		c.ok = true
 		c.name = _clean_name(str(d.get("name", "")), -1)
-		c.token = str(d.get("token", "")).substr(0, 32)
-		# a held seat with this token: the same person is back
-		if c.token != "":
-			for s in seats:
-				if s.kind == 1 and s.client_id == 0 and s.token == c.token:
-					_seat_person(s, c, true)
-					break
+		if c.seat < 0:      # (a second hello from a seated socket changes nothing about its seat)
+			c.token = str(d.get("token", "")).substr(0, 32)
+			# this token's seat: the same person is back (a held seat), or is here on a new
+			# socket while the old one still has the seat (bug 5: it takes the seat over)
+			var mine := _seat_of(c.token)
+			if mine != null:
+				_take_seat(mine, c)
 		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
 		_send_seats(c.id)
 		return
@@ -498,9 +535,14 @@ func _on_text(c: Conn, txt: String) -> void:
 	if kind == "join":
 		if c.seat >= 0:
 			return
+		var mine := _seat_of(c.token)
+		if mine != null:    # bug 5: this token has a seat (on another socket): that one, never a second seat
+			_take_seat(mine, c)
+			_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
+			return
 		if d.has("name"):
 			c.name = _clean_name(str(d.get("name", "")), -1)
-		var s := _free_seat()
+		var s := _free_seat(_int(d.get("seat"), -1))
 		if s == null:
 			_out(c.id, JSON.stringify({"kind": "full"}))
 			_say("🏰 [JOIN] rejected %s from %s: all %d seats are taken" % [c.name, c.ip, SEATS])
@@ -633,16 +675,54 @@ func _bots_now() -> int:
 	return mini(bots_wanted, SEATS - _people())
 
 # The lowest empty seat; in a match a bot's seat will do (the person takes over
-# at the next round).
-func _free_seat() -> Seat:
+# at the next round). want: the seat a page had before its socket went (bug 1): it
+# gets that one again when nobody else sits there, so it keeps its colour.
+func _free_seat(want: int = -1) -> Seat:
+	var in_match := phase != P.PH_LOBBY and phase != P.PH_COUNTDOWN
+	if want >= 0 and want < SEATS and (seats[want].kind == 0 or (in_match and seats[want].kind == 2)):
+		return seats[want]
 	for s in seats:
 		if s.kind == 0:
 			return s
-	if phase != P.PH_LOBBY and phase != P.PH_COUNTDOWN:
+	if in_match:
 		for s in seats:
 			if s.kind == 2:
 				return s
 	return null
+
+# A number from a client's JSON, or the fallback when it is no number (a list, a
+# word, nothing): int() of a list is a script error, and a client can send anything.
+static func _int(v, fallback: int) -> int:
+	if typeof(v) == TYPE_INT or typeof(v) == TYPE_FLOAT:
+		return int(clampf(float(v), -2147483648.0, 2147483647.0)) if not is_nan(float(v)) else fallback
+	return fallback
+
+# The seat this token sits on (held, or on another socket), or null.
+func _seat_of(token: String) -> Seat:
+	if token == "":
+		return null
+	for s in seats:
+		if s.kind == 1 and s.token == token:
+			return s
+	return null
+
+# c gets the seat its token already has. A held seat: the person is back. A seat still
+# on another socket (bug 5: a phone that came back on a new socket while the old one
+# hung, or a second tab): the old socket is told it has no seat, and this one plays.
+# Before, the new socket got a second seat and the old seat stayed "on" with its last
+# buttons held.
+func _take_seat(s: Seat, c: Conn) -> void:
+	if s.client_id == c.id:
+		return
+	if s.client_id != 0:
+		var old: Conn = conns.get(s.client_id)
+		if old != null:
+			old.seat = -1
+			_out(old.id, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": old.name, "phase": phase}))
+			_out(old.id, JSON.stringify({"kind": "note", "text": "You joined again from another tab or phone: that one plays now."}))
+		_say("🏰 [JOIN] seat %d '%s': the same token on a new socket (client %d took over from client %d)" % [s.i, s.name, c.id, s.client_id])
+		s.buttons = 0
+	_seat_person(s, c, true)
 
 func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 	var was_bot := s.kind == 2
@@ -659,7 +739,7 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		s.buttons = 0
 		s.aim = 0
 	s.queue.clear()
-	s.margin_min = P.NO_MARGIN
+	s.margin_min = MARGIN_NONE
 	s.late_n = 0
 	c.seat = s.i
 	c.name = s.name
@@ -674,12 +754,13 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 			" takes a bot's seat, plays from the next round" if was_bot else (" plays from the next round" if phase > P.PH_COUNTDOWN else "")])
 	seats_dirty = true
 
+# The seat is empty from now. Its fighter, if it is still in a round, goes out with a
+# normal death (sim.leave): before, it played on as a bot, could win the round, and the
+# point went to an empty seat with no name (the review's bug 3: 6 times in two nights).
 func _free_seat_now(s: Seat) -> void:
 	sim.keep.erase(s.i)     # p4.9: the seat's kept power-ups go with its person
-	var f = sim.fighter(s.i)
-	if f != null:
-		f.bot = true
-		f.connected = true
+	sim.leave(s.i)
+	mstats.erase(s.i)       # the match's numbers (the awards) were that person's: the next one on this seat starts fresh
 	s.kind = 0
 	s.name = ""
 	s.client_id = 0
@@ -691,31 +772,52 @@ func _free_seat_now(s: Seat) -> void:
 	s.queue.clear()
 	seats_dirty = true
 
-func _on_close(c: Conn) -> void:
+func _on_close(c: Conn, code: int = 0) -> void:
 	if c.seat >= 0:
 		var s: Seat = seats[c.seat]
 		if s.client_id == c.id:
 			s.client_id = 0
-			s.hold_t = HOLD_TICKS
+			s.hold_t = HOLD_LOBBY_TICKS if phase == P.PH_LOBBY else HOLD_TICKS
 			s.queue.clear()
+			s.buttons = 0       # (the last buttons are not held on for the person's return)
 			var f = sim.fighter(s.i)
 			if f != null and s.in_round:
 				f.bot = true
 				f.connected = false
-			_say("🏰 [LEAVE] seat %d '%s' (client %d, %s) dropped: held %d s" % [s.i, s.name, c.id, c.ip, HOLD_TICKS / 60])
+			var how := "dropped"
+			if code == CLOSE_SILENT:
+				how = "went silent for %d s" % (SILENT_MS / 1000)
+			elif code == CLOSE_STUCK:
+				how = "hung half closed"
+			elif code == CLOSE_BLOCKED:
+				how = "could not be sent to"
+			_say("🏰 [LEAVE] seat %d '%s' (client %d, %s) %s: held %d s" % [s.i, s.name, c.id, c.ip, how, s.hold_t / 60])
 			seats_dirty = true
 	elif c.ok:
 		_say("🏰 [LEAVE] watcher '%s' (client %d, %s) left" % [c.name, c.id, c.ip])
 	conns.erase(c.id)
 
-# Held seats count down; at 0 the seat is free again.
+# Held seats count down; at 0 the seat is free again. A seat whose time runs out while
+# its fighter is in a round waits for that round to end (_free_expired): the brain
+# plays the round out under the seat's name, so nobody sees a fighter drop dead for no
+# reason, and a point it wins still has a name.
 func _hold_seats() -> void:
+	var live := phase == P.PH_ROUND_START or phase == P.PH_PLAY or phase == P.PH_ROUND_END
 	for s in seats:
 		if s.kind == 1 and s.client_id == 0 and s.hold_t > 0:
+			if s.hold_t == 1 and live and s.in_round:
+				continue
 			s.hold_t -= 1
 			if s.hold_t == 0:
 				_say("🏰 [LEAVE] seat %d '%s' is free again (nobody came back)" % [s.i, s.name])
 				_free_seat_now(s)
+
+# Between two rounds: the held seats whose time ran out during the round (_hold_seats).
+func _free_expired() -> void:
+	for s in seats:
+		if s.kind == 1 and s.client_id == 0 and s.hold_t <= 1:
+			_say("🏰 [LEAVE] seat %d '%s' is free again (nobody came back; its fighter played the round out)" % [s.i, s.name])
+			_free_seat_now(s)
 
 # An input packet: up to 4 ticks of buttons (proto), each for the server tick it
 # carries. A new one goes in the seat's queue for its tick. One whose tick is gone
@@ -789,14 +891,15 @@ func _send_own() -> void:
 		own_buf.put_u8(P.T_OWN)
 		own_buf.put_u32(sim.tick)
 		own_buf.put_u32(s.used)
-		own_buf.put_8(clampi(s.margin_min, -128, 127))
+		own_buf.put_8(P.NO_MARGIN if s.margin_min >= MARGIN_NONE else clampi(s.margin_min, -128, 126))
 		own_buf.put_u8(mini(s.late_n, 255))
-		own_buf.put_u8((P.OWN_FIGHTER if f != null else 0) | (P.OWN_BRAIN if f != null and f.bot else 0))
+		own_buf.put_u8((P.OWN_FIGHTER if f != null else 0) | (P.OWN_BRAIN if f != null and f.bot else 0)
+			| (P.OWN_SAFE if f != null and s.i == sim.safe else 0))
 		own_buf.put_u32(sim.tick + phase_t if phase == P.PH_ROUND_START else 0)
 		if f != null:
 			sim.write_fighter_state(own_buf, f)
 		_out(s.client_id, own_buf.data_array)
-		s.margin_min = P.NO_MARGIN
+		s.margin_min = MARGIN_NONE
 		s.late_n = 0
 
 # ------------------------------------------------------------------ the match
@@ -831,6 +934,9 @@ func _match_tick() -> void:
 		if alive <= 1 or phase_t >= ROUND_MAX_TICKS:
 			var draw := alive != 1
 			winner = P.NO_ONE if draw else sim.last_alive().id
+			# The winner is safe from this tick on (the review's bug 4: on 25 October the winner
+			# died in the 1.5 s before the point in 10 of 248 rounds, once on a match point).
+			sim.safe = -1 if draw else winner
 			phase = P.PH_ROUND_END
 			phase_t = DRAW_TICKS if draw else ROUND_END_TICKS
 			var msg := {"kind": "round_end", "round": round_no, "winner": winner, "draw": draw,
@@ -857,23 +963,33 @@ func _match_tick() -> void:
 	elif phase == P.PH_ROUND_END:
 		phase_t -= 1
 		if phase_t <= 0:
+			# The point goes to a seat that had its own fighter in this round. Not to an empty
+			# seat (the winner left in these 1.5 s), and not to a person who sat down on a
+			# bot's seat during the round (the bot won it, they play from the next one).
+			if winner != P.NO_ONE and not (seats[winner].kind != 0 and seats[winner].in_round):
+				_say("🏰 [ROUND] %d: no point: the winner's seat %d %s" % [round_no, winner,
+					"is empty now" if seats[winner].kind == 0 else "has a new person, who did not play this round"])
+				winner = P.NO_ONE
 			if winner != P.NO_ONE:
 				seats[winner].points += 1
 				_sync_points()
-			if winner != P.NO_ONE and seats[winner].points >= goal:
+			_free_expired()
+			if winner != P.NO_ONE and seats[winner].kind != 0 and seats[winner].points >= goal:
 				seats[winner].crowns += 1
 				if seats[winner].kind != 0:
 					var rw := _stat(seats[winner])
 					rw["match_wins"] += 1
 					_save_stats()
 				phase = P.PH_MATCH_END
-				phase_t = MATCH_END_TICKS
+				var replay_s: float = P.replay_secs(int(mstats.get(winner, {}).get("kills", 0)))
+				phase_t = MATCH_END_TICKS + roundi(replay_s * 60.0)
 				last_awards = _awards()   # p4.11
 				_out(0, JSON.stringify({"kind": "match_end", "winner": winner, "name": seats[winner].name, "points": _points(),
-					"awards": last_awards}))
+					"awards": last_awards, "replay_s": snappedf(replay_s, 0.01), "screen_s": MATCH_END_TICKS / 60}))
 				for aw in last_awards:
 					_say("🏰 [AWARD] %s: %s (%s)" % [aw["name"], aw["title"], aw["why"]])
-				_say("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s" % [round_no, winner, seats[winner].name, _score_line()])
+				_say("🏰 [MATCH] end after %d rounds: seat %d '%s' wins %s; the replay %.1f s, then the winner's screen %d s" % [round_no, winner,
+					seats[winner].name, _score_line(), replay_s, MATCH_END_TICKS / 60])
 				server_log.store_line(JSON.stringify({"kind": "match", "t": Time.get_unix_time_from_system(), "match": match_no,
 					"rounds": round_no, "winner": winner, "people": _people(), "bot_level": sim.bot_level}))
 				server_log.flush()
@@ -1068,7 +1184,9 @@ func _log_deaths(evs: Array) -> void:
 				rk["stomp_kills"] += 1
 			else:
 				rk["other_kills"] += 1
-		if killer == victim:
+		if e[4] == P.C_LEFT:
+			_say("🏰 [KILL] seat %d's fighter left the round (its seat was given up) %.2f s after FIGHT, %d left" % [victim, when, sim.alive_count()])
+		elif killer == victim:
 			_say("🏰 [KILL] seat %d '%s' killed themselves (%s) %.2f s after FIGHT, %d left" % [victim, vn, cause, when, sim.alive_count()])
 		elif killer < SEATS:
 			_say("🏰 [KILL] seat %d '%s' killed seat %d '%s' (%s) %.2f s after FIGHT, %d left" % [killer, seats[killer].name, victim, vn, cause, when, sim.alive_count()])
@@ -1117,8 +1235,10 @@ func _deliver(target: int, data) -> void:
 			var n: int = data.length() if data is String else data.size()
 			c.bytes_out += n
 			bytes_out_sec += n
+			c.fail_run = 0
 		else:
 			c.send_fail += 1
+			c.fail_run += 1
 		if target != 0:
 			return
 
@@ -1179,21 +1299,44 @@ func _poll_clients() -> void:
 			clients.remove_at(i)
 			continue
 		if rs != WebSocketPeer.STATE_OPEN:
-			if now - c.since_ms > 8000:
+			if c.opened:
+				# bug 12: it was open and is half closed now. A goodbye takes a moment; one that
+				# hangs (the server cannot send to it) is a drop, and the seats must hear of it.
+				if c.closing_ms == 0:
+					c.closing_ms = now
+				elif now - c.closing_ms > CLOSING_MS:
+					_inbox("close", c.id, CLOSE_STUCK)
+					clients.remove_at(i)
+			elif now - c.since_ms > 8000:
 				print("🏰 [NET] client %d (%s) never finished the websocket handshake" % [c.id, c.ip])
 				clients.remove_at(i)
 			continue
 		if not c.opened:
 			c.opened = true
+			c.last_in_ms = now
 			_inbox("open", c.id, c.ip)
+		var got := false
 		while c.ws.get_available_packet_count() > 0:
 			var pkt := c.ws.get_packet()
+			got = true
 			c.bytes_in += pkt.size()
 			bytes_in_sec += pkt.size()
 			if c.ws.was_string_packet():
 				_inbox("text", c.id, pkt.get_string_from_utf8())
 			elif pkt.size() > 0:
 				_on_binary(c, pkt)
+		if got:
+			c.last_in_ms = now
+		elif now - c.last_in_ms > SILENT_MS:
+			# bug 5: nothing for 3 s: a frozen page or a dead link. Close it and tell the seats.
+			c.ws.close(CLOSE_SILENT, "silent")
+			c.ws.poll()
+			_inbox("close", c.id, CLOSE_SILENT)
+			clients.remove_at(i)
+		elif c.fail_run >= SEND_FAIL_MAX:
+			# bug 12: it talks but does not read: 1 MB waits for it. A drop too.
+			_inbox("close", c.id, CLOSE_BLOCKED)
+			clients.remove_at(i)
 
 func _on_binary(c: Client, pkt: PackedByteArray) -> void:
 	if pkt[0] == P.T_INPUT:
@@ -1434,6 +1577,13 @@ func _log_powers(evs: Array) -> void:
 		elif k == P.E_CATCH_UP:
 			var ui: int = e[3]
 			_say("🏰 [POWER] seat %d '%s' starts with a SHIELD (behind the leader)" % [ui, seats[ui].name if ui < SEATS else "?"])
+		elif k == P.E_PHEW:
+			# the winner is safe: a hit after the round was called did not kill it (a line for the night's report)
+			var wi: int = e[3]
+			var what: String = ["an arrow", "a blast", "something else"][clampi(e[4], 0, 2)]
+			_say("🏰 [ROUND] %d PHEW: %s could not kill the winner, seat %d '%s' (the round was called)" % [round_no, what, wi, seats[wi].name if wi < SEATS else "?"])
+			server_log.store_line(JSON.stringify({"kind": "phew", "t": Time.get_unix_time_from_system(), "match": match_no,
+				"round": round_no, "seat": wi, "name": seats[wi].name if wi < SEATS else "?", "what": e[4]}))
 
 # p4.11: this match's numbers by seat (the awards), from the events.
 func _mcount(seat: int, key: String, n: int = 1) -> void:
@@ -1467,7 +1617,7 @@ func _match_events(evs: Array) -> void:
 				_mcount(e[3], "bigs")
 			if e[4] == P.PU_MASK:
 				_mcount(e[3], "big_turkeys" if hv else "masks")
-		elif k == P.E_DEATH:
+		elif k == P.E_DEATH and e[4] != P.C_LEFT:   # (a fighter whose seat was given up is no death for the awards)
 			_mcount(e[3], "deaths")
 			_mcount(e[3], CAUSE_KEY.get(e[4], ""))
 			last_cause[e[3]] = e[4]

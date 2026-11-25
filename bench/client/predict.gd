@@ -74,6 +74,9 @@ func reconcile(o: Dictionary) -> void:
 	sim.set_arena(int(o.get("arena", sim.level.id)))   # G5: the copy runs on the round's arena
 	moves_from = int(o["moves_from"])
 	var flags: int = o["flags"]
+	# The winner is safe (sim.gd `safe`): the server says when that is you, so the copy
+	# follows the same rule (your own bomb at your feet no longer throws you).
+	sim.safe = seat if (flags & P.OWN_SAFE) != 0 else -1
 	if (flags & P.OWN_FIGHTER) == 0 or (flags & P.OWN_BRAIN) != 0:
 		me = null
 		sim.fighters.clear()

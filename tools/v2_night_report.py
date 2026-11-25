@@ -18,7 +18,8 @@ import time
 from collections import Counter, defaultdict
 
 CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "poison", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes",
-          10: "a furnace", 11: "the costume's knife or peck"}   # p4.18: THE BIG TURKEY pecks
+          10: "a furnace", 11: "the costume's knife or peck",   # p4.18: THE BIG TURKEY pecks
+          12: "left the game"}   # the seat was given up in the round (the review's bug 3): no real death
 BIG = {"GHOST CATS", "RAIN", "INVISIBLE", "FREEZE", "SPIKED SHIELD", "SUPER SPEED", "BAT SWARM", "CROWS"}   # the BIG power-ups (p4.18: CROWS is BAT SWARM's Harvest name)
 ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE", 4: "THE BOILER ROOM", 5: "THE HARVEST BARN",
           6: "THE BIG TABLE"}   # p4.18: a round line carries its arena's name too (arena_name): that one wins

@@ -21,6 +21,13 @@ const MARGIN_HI := 3
 const MARGIN_AIM := 2          # a change aims here
 const ADJUST_EVERY := 4        # a slow change adds or skips one tick every 4 (0.75x to 1.25x speed)
 const JUMP_TICKS := 20         # the clock is further off than this: jump (the first sync, a stall)
+# The clock never takes a ping for longer than this (the November review's bug 2). A
+# page that freezes with a ping on its way reads the answer when it wakes: a 3 s freeze
+# reads as a 3000 ms ping. The clock added 0.06 ticks per ms of it, jumped 177 ticks
+# ahead of the server, and never came back (it only jumps forward): the page drew its
+# own fighter 3 s in the future until a reload. At 300 ms the most a false ping adds is
+# 18 ticks, under JUMP_TICKS, and the margins bring that back in about 3 s.
+const RTT_CLOCK_MAX := 300.0
 const W := 1920.0
 const H := 1080.0
 const GLIDE_MAX := 6.0         # p4.16 (the warping): no newer snapshot: the others go on at their last speed this many ticks at most
@@ -29,7 +36,7 @@ const EASE_MAX := 220.0        # a bigger jump is a real one (a bed, a locker): 
 const STEP_MAX := 26.0         # the fastest a fighter moves in a tick (the big jump off a wall in a dodge: 24.75 px)
 # the events whose a is a fighter (proto.gd); E_EXPLODE's a is the shooter, not the one hurt
 const FIGHTER_EVENTS := [P.E_JUMP, P.E_LAND, P.E_DODGE, P.E_SHOOT, P.E_DEATH, P.E_CATCH, P.E_PICKUP,
-	P.E_SPAWN, P.E_WALLJUMP, P.E_HURT, P.E_LEDGE, P.E_DRYFIRE]
+	P.E_SPAWN, P.E_WALLJUMP, P.E_HURT, P.E_LEDGE, P.E_DRYFIRE, P.E_PHEW]
 const ARROW_EVENTS := [P.E_STICK, P.E_TINK]
 
 var ws := WebSocketPeer.new()
@@ -59,6 +66,7 @@ var last_poll_ms := 0.0
 var pred_tick := 0             # the newest tick run: the tick of the newest input sent
 var synced := false
 var jumped := false            # the clock jumped (the caller's prediction starts over); the caller clears it
+var fresh := false             # the socket has just opened (the first time, or again after a drop); the caller clears it
 var margins: Array = []        # [ms, margin] from T_OWN, the last 3 s
 var change_wait_ms := 0.0      # no new change before this, and only margins from then on count:
                                # the last change must show in the margins first
@@ -119,6 +127,7 @@ func poll() -> void:
 		have_clock = false
 		synced = false
 		pred_tick = 0          # a new connection: the server takes any tick again
+		fresh = true
 		margins.clear()
 		clock_debt = 0
 		pay_now = false
@@ -240,7 +249,11 @@ func send_card(d: Dictionary) -> bool:
 # The server's tick now, as well as this client can tell: the snapshots' clock
 # (tick_offset follows when they arrive) plus half the round trip.
 func server_now() -> float:
-	return now_ms() / 1000.0 * 60.0 + tick_offset + last_rtt * 0.03
+	return now_ms() / 1000.0 * 60.0 + tick_offset + _rtt_clock() * 0.03
+
+# The ping as the clock counts it: never more than RTT_CLOCK_MAX.
+func _rtt_clock() -> float:
+	return minf(float(last_rtt), RTT_CLOCK_MAX)
 
 # The ticks to run on this physics tick, each with the buttons of now (60 times a
 # second from _physics_process). One normally; while the clock pays a debt (the
@@ -252,7 +265,7 @@ func ticks_now() -> Array:
 	if not have_clock or state != WebSocketPeer.STATE_OPEN:
 		return []
 	var now := now_ms()
-	var want := int(server_now() + last_rtt * 0.03) + MARGIN_AIM
+	var want := int(server_now() + _rtt_clock() * 0.03) + MARGIN_AIM
 	if not synced or pred_tick < want - JUMP_TICKS:
 		pred_tick = want
 		synced = true
@@ -260,7 +273,7 @@ func ticks_now() -> Array:
 		clock_jumps += 1
 		clock_debt = 0
 		pay_now = false
-		change_wait_ms = now + last_rtt + 150.0
+		change_wait_ms = now + _rtt_clock() + 150.0
 		return [pred_tick]
 	if clock_debt == 0 and now >= change_wait_ms:
 		_judge_margins(now)
@@ -306,7 +319,7 @@ func _judge_margins(now: float) -> void:
 	else:
 		return
 	clock_changes += 1
-	change_wait_ms = now + (0.0 if pay_now else absi(clock_debt) * ADJUST_EVERY * 16.7) + last_rtt + 150.0
+	change_wait_ms = now + (0.0 if pay_now else absi(clock_debt) * ADJUST_EVERY * 16.7) + _rtt_clock() + 150.0
 
 func _on_own(pkt: PackedByteArray) -> void:
 	var o := {"tick": pkt.decode_u32(1), "used": pkt.decode_u32(5), "margin": pkt.decode_s8(9),

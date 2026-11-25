@@ -78,6 +78,14 @@ var retry_t := 0.0
 var stuck_t := 0.0
 var direct_url := ""     # p4.13: the game server's own address (wss://host:8091), the second try
 var ever_open := false   # the socket has opened at least once on server_url
+# Bug 1 (the November review): a phone whose socket dropped came back to the lobby and
+# had to tap JOIN. The server gives a held seat back by itself (the token in hello).
+# When the seat is gone all the same (away longer than the hold), the page asks for a
+# seat by itself, and for the one it had (the same colour) if nobody took it.
+var had_seat := false        # this page had a seat when its socket went
+var last_seat := -1          # that seat
+var first_welcome := false   # the next welcome is the first on a new socket
+var sock_open := false       # the socket was open on the last frame it was open or closed
 var version_bad := false
 var auto_join := false
 var tv := false                   # p4.18 ?tv: THE BIG SCREEN (a TV: the match full screen, a QR code to join in the lobby)
@@ -265,6 +273,9 @@ func _process(delta: float) -> void:
 	if net == null:
 		return
 	net.poll()
+	if net.fresh:                # the socket opened (the first time, or again after a drop)
+		net.fresh = false
+		first_welcome = true
 	for m in net.take_messages():
 		_on_message(m)
 	for o in net.take_owns():
@@ -554,12 +565,17 @@ func _keep_connected(delta: float) -> void:
 	if version_bad:
 		return
 	if net.state == WebSocketPeer.STATE_CLOSED:
+		if sock_open:
+			sock_open = false
+			retry_t = 1.7        # an open socket just closed: the first new try comes 0.3 s later (then every 2 s)
 		retry_t += delta
 		if retry_t >= 2.0:
 			retry_t = 0.0
 			net.open(server_url, my_name, token)
 	else:
 		retry_t = 0.0
+		if net.state == WebSocketPeer.STATE_OPEN:
+			sock_open = true
 
 func _physics_process(_dt: float) -> void:
 	if net == null or my_seat < 0 or net.state != WebSocketPeer.STATE_OPEN:
@@ -641,13 +657,24 @@ func _on_message(m: Dictionary) -> void:
 		if tv and not tv_asked:
 			tv_asked = true
 			net.send({"kind": "tv"})
+		var first := first_welcome
+		first_welcome = false
 		my_seat = int(m.get("seat", -1))
 		if pred.seat != my_seat:
 			pred.seat = my_seat
 			pred.me = null
+		if my_seat >= 0:
+			had_seat = true
+			last_seat = my_seat
+		elif not first:
+			had_seat = false     # no seat on a socket that had one: I left, or the host took it. No asking again.
 		if my_seat < 0 and auto_join:
 			auto_join = false
 			_on_join(my_name)
+		elif my_seat < 0 and first and had_seat and not tv:
+			# bug 1: back after a drop and the seat is gone: ask for one, no tap on JOIN
+			print("🎮 [Client] back after a drop, the seat was given away: asking for seat %d again" % last_seat)
+			net.send({"kind": "join", "name": my_name, "seat": last_seat})
 		elif my_seat >= 0:
 			# p4.18: this device's first seat ever: HOW TO PLAY opens by itself (not for the tests' pages: ?join, ?nohowto)
 			if _storage_get(HOWTO_KEY) != "1" and not opts.has("join") and not opts.has("nohowto") and phase <= P.PH_COUNTDOWN:
@@ -714,6 +741,7 @@ func _on_join(name: String) -> void:
 	net.send({"kind": "join", "name": my_name})
 
 func _on_leave() -> void:
+	had_seat = false             # left on purpose: a later drop does not bring the seat back
 	net.send({"kind": "leave"})
 
 func _on_start() -> void:

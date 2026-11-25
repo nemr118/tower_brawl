@@ -53,6 +53,7 @@ const T_OWN := 5
 const NO_MARGIN := 127
 const OWN_FIGHTER := 1    # T_OWN flags: you have a fighter this round (its state follows)
 const OWN_BRAIN := 2      # the brain plays it (your socket was gone)
+const OWN_SAFE := 4       # you won the round and it is called: nothing kills you now (sim.gd safe)
 
 # input buttons (one byte)
 const B_LEFT := 1
@@ -70,7 +71,7 @@ const PH_COUNTDOWN := 1   # START was pressed: 3 s
 const PH_ROUND_START := 2 # the fighters stand on their spots, nobody moves: 1.5 s
 const PH_PLAY := 3
 const PH_ROUND_END := 4   # one fighter left (1.5 s), or none (a draw)
-const PH_MATCH_END := 5   # the winner, 7 s, then the lobby
+const PH_MATCH_END := 5   # the replay of the winner's kills (replay_secs), then the winner's screen 8 s, then the lobby
 const NO_ONE := 255
 const ARENA_MIX := -1     # the lobby's ARENA (G5): MIX, the arenas take turns each round; else one layout
 
@@ -176,7 +177,7 @@ const E_STICK := 5       # a = kind, b = 1 floor / 0 wall
 const E_EXPLODE := 6     # a = owner
 const E_IGNITE := 7      # a = 1 floor / 0 wall
 const E_MIASMA := 8
-const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls, 7 lightning, 8 a ghost cat, 9 spikes)
+const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls, 7 lightning, 8 a ghost cat, 9 spikes, 10 a furnace, 11 a knife, 12 its seat was given up: CAUSES)
 const E_CATCH := 10      # a = fighter, b = kind
 const E_PICKUP := 11     # a = fighter, b = kind
 const E_SPAWN := 12      # a = fighter
@@ -229,7 +230,8 @@ const F2_AWAY := 4
 
 # the death causes, for the log lines
 const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
-	8: "a ghost cat", 9: "spikes", 10: "a furnace", 11: "a knife"}
+	8: "a ghost cat", 9: "spikes", 10: "a furnace", 11: "a knife", 12: "left the game"}
+const C_LEFT := 12        # the cause when a fighter's seat is given up in the round (sim.gd leave): the person left, or the host took the seat
 const WALLS_DEADLY_BIT := 0x8000
 
 # p4.18 the seasons (docs/reference/game-review-2026-11.md). The server is in one season: by
@@ -299,6 +301,23 @@ static func pu_tip(kind: int, season: String) -> String:
 static func trick_name(n: int, season: String) -> String:
 	var list: Array = HARVEST_TRICKS if season == "harvest" else TRICK_NAMES
 	return str(list[clampi(n, 0, list.size() - 1)])
+
+# How long the match's end replay plays (client/deathcam.gd) for a winner with `kills`
+# kills in the match, in seconds. The server adds it to the winner's screen's 8 s (the
+# review's bug 9: the screen got what the replay left of 12 s: 6.2 s after 1 kill, 0.8 s
+# after 6). The numbers are deathcam.gd's own (EARLY 5 earlier kills at most, each
+# EARLY_BEFORE + EARLY_AFTER long, played from SPEED_FIRST to SPEED_LAST, one alone at
+# SPEED_ONE; then the last kill: 1.6 s in time, 0.9 s at 0.3, 0.5 s at 0.6; FADE_S).
+# tools/review_probe.gd fails if the two files ever disagree.
+static func replay_secs(kills: int) -> float:
+	if kills <= 0:
+		return 0.0        # no kill, no replay: the winner's screen comes at once
+	var early := mini(kills, 6) - 1
+	var t := 0.0
+	for k in early:
+		var speed := 1.6 if early == 1 else lerpf(1.0, 3.4, float(k) / float(early - 1))
+		t += (1.6 + 0.35) / speed
+	return t + (2.2 - 0.6) / 1.0 + (0.6 + 0.3) / 0.3 + (0.8 - 0.3) / 0.6 + 0.4
 
 # p4.12: a BIG power-up (the numbers after SUPER SPEED are regular ones again, but BAT SWARM).
 static func is_big(k: int) -> bool:

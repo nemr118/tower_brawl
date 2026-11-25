@@ -315,8 +315,9 @@ func _burn(sim, i: int, t: int) -> void:
 		var body := Rect2(f.x + BURN_MARGIN, f.y + BURN_MARGIN, 36 - BURN_MARGIN * 2, 63 - BURN_MARGIN * 2)
 		if _hits(r, body):
 			sim._kill(f, 255, 10)
-			f.vx = dir.x * 7.0
-			f.vy = -6.0 + dir.y * 5.0
+			if f.id != sim.safe:  # (the round's winner is safe: the fire does not throw it)
+				f.vx = dir.x * 7.0
+				f.vy = -6.0 + dir.y * 5.0
 	for a in sim.arrows:
 		if not a.dead and a.state == P.S_FLY and a.kind == P.A_NORMAL and _point_in(r, a.x, a.y):
 			a.kind = P.A_FIRE

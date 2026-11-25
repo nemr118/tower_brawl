@@ -18,7 +18,8 @@ from collections import Counter, defaultdict
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 ARENAS = {0: "THE BENCH", 1: "THE KEEP", 2: "THE BRIDGES", 3: "THE HAUNTED HOUSE"}
-CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes"}
+CAUSES = {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning", 8: "a ghost cat", 9: "spikes",
+          10: "a furnace", 11: "a knife", 12: "left the game"}
 LEVELS = ["OLD", "EASY", "NORMAL", "HARD"]
 SQ, COLS, ROWS = 120, 16, 9
 

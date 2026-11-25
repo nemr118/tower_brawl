@@ -21,7 +21,7 @@ const AwardArt = preload("res://client/award_art.gd")   # p4.13 polish "award_ar
 const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
 const FIGHTER := 3.0              # the fighter: 3 x its 128 px frame
-const END_S := 12.0               # the match's end (game_server.gd MATCH_END_TICKS / 60): the bar's full length
+const END_S := 8.0                # the winner's screen (game_server.gd MATCH_END_TICKS / 60, 8 s since the replay has its own time): the bar's full length
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17: cell 5 the crown (tools/comfy/make_assets.py ICONS)
 const HERO := Vector2(540, 720)   # p4.17: the hero's picture (assets/heroes/hero_<seat>.png), its bottom at the podium's
 

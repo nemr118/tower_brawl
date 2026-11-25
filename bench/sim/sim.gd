@@ -26,6 +26,11 @@
 # this round: GHOST CATS, RAIN, INVISIBLE, FREEZE, SPIKED SHIELD, SUPER SPEED. Every
 # power-up that moves or arms a fighter lives in its Fighter (write_fighter_state),
 # so the client's copy predicts it.
+# The winner is safe (2026-11-24, the review's bug 4: the winner died after the round
+# was called in 10 of 248 rounds on 25 October, once on a match point). The server
+# calls a round when one fighter is left, and gives the point 1.5 s later. In that
+# time nothing kills the winner any more: the server sets `safe` to its seat, and
+# _kill, the one place every death goes through, lets it live and says E_PHEW.
 # ==============================================================================
 extends RefCounted
 
@@ -259,6 +264,9 @@ const PIED_TICKS := 180
 const CATCH_UP_BEHIND := 2
 # p4.18 a costume's swing comes with a short lunge (GHOSTFACE's knife got 4 kills in 18 turns)
 const KNIFE_LUNGE := 9.5
+# The winner is safe: a hit that would have killed it says E_PHEW, at most once in this
+# many ticks for a fighter (poison and fire try again every tick: no spam).
+const PHEW_EVERY := 30
 
 class Fighter:
 	var id: int = 0             # the seat, 0..7
@@ -346,6 +354,7 @@ class Fighter:
 	var knife_cd: int = 0       # ticks until it can slash again
 	var knife_hit: bool = false # this slash landed already
 	var carry_t: int = 0        # p4.10: dead, still carried by the arrow that killed it
+	var phew_at: int = -1000    # the tick of its last E_PHEW (the winner is safe: PHEW_EVERY)
 
 class Arrow:
 	var id: int = 0
@@ -412,6 +421,8 @@ var walls_share := WALLS_GONE   # how far each wall reaches, a share of half the
 var walls_melt_t := -1          # ticks into the melt once the round is decided (-1: not melting)
 var walls_melt_from := WALLS_GONE
 var predicting := false         # the client's copy (P2): no deaths, no pickups, an arrow stops at a fighter
+var safe := -1                  # the seat nothing can kill: the round's winner, from the tick the server calls the round
+                                # to the next round's start (-1: nobody; start_round and clear set it back)
 var ghosts := true              # p4.11: a person's ghost rises after its death (the game; the benchmark has no people)
 var hazards = null              # THE BOILER ROOM's moving parts (sim/boiler.gd) on an arena whose theme is "nightmare"
 var pet := {}                   # p4.12 the black cat: {x, y (its feet), dir, t, gone (ticks running off)}
@@ -520,6 +531,7 @@ func _event(type: int, x: int, y: int, a: int, b: int) -> void:
 # each on its own spawn spot, with a full quiver. Arrows and zones go; the tick
 # keeps counting (the clients' clock follows it).
 func start_round(seat_list: Array) -> void:
+	safe = -1                # a new round: nobody has won it yet
 	fighters.clear()
 	arrows.clear()
 	zones.clear()
@@ -571,6 +583,7 @@ func _spread(spots: Array, n: int) -> Array:
 	return out + rest
 
 func clear() -> void:
+	safe = -1
 	fighters.clear()
 	arrows.clear()
 	zones.clear()
@@ -865,10 +878,21 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 			a.pins = -1
 	_event(P.E_SPAWN, spot.x, spot.y, f.id, 0)
 
-func _kill(f: Fighter, killer: int, cause: int) -> void:
+# Every death goes through here. (hx, hy): where the hit landed, when the caller
+# knows it better than "the fighter's middle" (an arrow).
+func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1.0) -> void:
 	if f.state == P.F_DEAD or predicting:
 		return
-	if f.mask and cause != 6:   # GHOSTFACE: a hit knocks it down; a hit while it is down is the end
+	if f.id == safe:
+		# The round is called and this is its winner: it lives. Nothing about the fighter
+		# changes here (no knock, no fall), so the page's own copy of it (predict.gd), which
+		# never kills anyway, stays in step. E_PHEW tells the page to draw something silly.
+		if tick - f.phew_at >= PHEW_EVERY:
+			f.phew_at = tick
+			_event(P.E_PHEW, int(hx) if hx >= 0.0 else f.x + HALF_W, int(hy) if hy >= 0.0 else f.y + MID_Y, f.id,
+				0 if cause == 1 else (1 if cause == 2 else 2))
+		return
+	if f.mask and cause != 6 and cause != P.C_LEFT:   # GHOSTFACE: a hit knocks it down; a hit while it is down is the end
 		if f.down_t <= 0:
 			_collapse(f)
 			return
@@ -889,6 +913,20 @@ func _kill(f: Fighter, killer: int, cause: int) -> void:
 		_spawn_candy(f.x + HALF_W, f.y + MID_Y, rng.randf_range(-3.0, 3.0), -7.5, false)   # p4.13: a candy out of the body
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
 	_event(P.E_KILL, f.x + HALF_W, f.y + MID_Y, killer if killer >= 0 and killer < 255 else 255, f.id)   # p4.8: who did it
+
+# The seat was given up in the round (the person left on purpose, or the host took the
+# seat): its fighter goes out now, with a normal death (cause C_LEFT, no killer). Why
+# (the review's bug 3): the fighter of a freed seat played on as a bot and could win
+# the round: the banner then said " WINS THE ROUND" with no name, and the point went
+# to an empty seat (6 times in the two October nights).
+func leave(id: int) -> void:
+	var f := fighter(id)
+	if f == null or f.state == P.F_DEAD:
+		return
+	if safe == id:
+		safe = -1           # it had won the round and left before the point: nobody is left to keep safe
+	f.bot = true            # nobody is there to fly a ghost
+	_kill(f, 255, P.C_LEFT)
 
 func _update_fighter(f: Fighter) -> void:
 	if f.shot_wait and f.state == P.F_NORMAL:   # p4.4: let go in a dodge, a ledge hang or a knock: it fires now
@@ -1381,8 +1419,9 @@ func _stomp(top: Fighter, under: Fighter) -> void:
 		_event(P.E_JUMP, top.x + HALF_W, top.y + BODY_H, top.id, 1)
 		return
 	_kill(under, top.id, 3)
-	under.vy = 4.0
-	under.vx = 0.0
+	if under.id != safe:      # (the round's winner is not squashed: it stands as it stood)
+		under.vy = 4.0
+		under.vx = 0.0
 	top.vy = -JUMP
 	_event(P.E_JUMP, top.x + HALF_W, top.y + BODY_H, top.id, 1)
 
@@ -1499,8 +1538,8 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 			_block(f, a)
 			return true
 		var k := BIG_FX if a.big else 1.0
-		_kill(f, a.owner, 1)
-		if f.state != P.F_DEAD:   # GHOSTFACE knocked down, not out: the arrow drops off
+		_kill(f, a.owner, 1, a.x, a.y)
+		if f.state != P.F_DEAD:   # GHOSTFACE knocked down, not out, or the round's winner (safe): the arrow drops off
 			a.state = P.S_FALL
 			a.vx *= -0.2
 			a.vy = -6.0
@@ -1599,12 +1638,14 @@ func _explode(x: float, y: float, owner: int, k: float = 1.0, flags: int = -1) -
 		var dy := wrap_d(y, f.y + MID_Y, H)
 		var fd2 := dx * dx + dy * dy
 		var fd := maxf(1.0, sqrt(fd2))
-		if fd2 <= r2 and f.id == owner and not self_harm:
+		if fd2 <= r2 and f.id == owner and not self_harm and f.id != safe:
 			_hurt(f, dx / fd * 19.0, -14.0)      # p4.19: your own blast throws you far; it does not knock you out
+			# (the round's winner in its own blast goes on to _kill below: PHEW, and it is not thrown)
 		elif fd2 <= r2:
 			_kill(f, owner, 2)
-			f.vx = dx / fd * 16.0
-			f.vy = -12.0
+			if f.id != safe:      # (the round's winner is not thrown: the client's copy knows `safe` too, from T_OWN)
+				f.vx = dx / fd * 16.0
+				f.vy = -12.0
 		elif fd2 <= r2 * 3.2:
 			_hurt(f, dx / fd * 14.0, -9.0)
 	for a in arrows:
@@ -1755,8 +1796,9 @@ func _strike(o: Orb) -> void:
 		var dy := wrap_d(o.y, f.y + MID_Y, H)
 		if dx * dx + dy * dy <= STRIKE_R * STRIKE_R:
 			_kill(f, 255, 7)
-			f.vx = signf(dx) * 5.0
-			f.vy = -9.0
+			if f.id != safe:
+				f.vx = signf(dx) * 5.0
+				f.vy = -9.0
 
 # The first living fighter touching the orb that may take it, or null.
 func _orb_taker(o: Orb) -> Fighter:
@@ -2219,7 +2261,8 @@ func _update_cats() -> void:
 				_event(P.E_CAT_POOF, int(c.x), int(c.y), c.owner, 1)
 			else:
 				_kill(tgt, c.owner, 8)
-				tgt.vy = -6.0
+				if tgt.id != safe:
+					tgt.vy = -6.0
 			cats.remove_at(i)
 
 func _cat_target(c: Cat) -> Fighter:
