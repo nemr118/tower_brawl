@@ -24,6 +24,8 @@ const CARD_STEP := 228.0
 const CARD_X := 48.0
 const CARD_Y := 10.0
 const CARD_H := 78.0
+const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.19: the painted crown, cell 5 (lobby.gd IC_CROWN)
+const HEAD_SRC := Rect2(47, 27, 38, 38)   # p4.19: the hooded head in a fighter sheet's first frame (128 px cells)
 var CROWN := PackedVector2Array([Vector2(0, 16), Vector2(0, 3), Vector2(6, 9), Vector2(12, 0), Vector2(18, 9), Vector2(24, 3), Vector2(24, 16)])
 
 var seats: Array = []
@@ -189,7 +191,10 @@ func _paint(c: Control) -> void:
 	if show_info:
 		c.draw_string_outline(font, Vector2(16, 1066), info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, 4, Color.BLACK)
 		c.draw_string(font, Vector2(16, 1066), info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1, 1, 1, 0.8))
-	if note_t > 0.0:
+	var new_look := Polish.on("hud2")
+	if note_t > 0.0 and new_look:
+		_note_pill(c)
+	elif note_t > 0.0:
 		var a := minf(1.0, note_t * 2.0)
 		c.draw_string_outline(font, Vector2(0, 1030), note, HORIZONTAL_ALIGNMENT_CENTER, 1920, 30, 5, Color(0, 0, 0, a))
 		c.draw_string(font, Vector2(0, 1030), note, HORIZONTAL_ALIGNMENT_CENTER, 1920, 30, Color(1, 0.9, 0.6, a))
@@ -206,6 +211,9 @@ func _paint(c: Control) -> void:
 		var x := CARD_X + i * CARD_STEP
 		var col: Color = World.TEAM[i % 8]
 		var f: Dictionary = by_id.get(i, {})
+		if new_look:
+			_card2(c, st, f, x, i in leaders or (phase == P.PH_MATCH_END and i == winner))
+			continue
 		var dead: bool = not f.is_empty() and int(f["state"]) == P.F_DEAD
 		var waiting := f.is_empty()
 		var away: bool = not waiting and (int(f["flags2"]) & P.F2_AWAY) != 0
@@ -260,7 +268,10 @@ func _paint(c: Control) -> void:
 	elif phase == P.PH_MATCH_END and banner != "":
 		Winner.paint(c, end_t, winner_seat, winner_name, awards, left, view)   # client/winner_view.gd (2026-10-25)
 	if banner_t > 0.0 and banner_kind > 0:
-		_power_banner(c, font)
+		if new_look:
+			_power_card2(c)
+		else:
+			_power_banner(c, font)
 
 # The power-up chips under a seat's card: its arrow kind, SHIELD, INFINITE, FLY,
 # BIG, then a BIG power-up with its seconds left, and FROZEN or SLOW.
@@ -334,3 +345,161 @@ func _power_banner(c: Control, font: Font) -> void:
 func _banner(c: Control, font: Font, text: String, size: int, col: Color, y: float) -> void:
 	c.draw_string_outline(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, 1920, size, maxi(4, size / 10), Color.BLACK)
 	c.draw_string(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, 1920, size, col)
+
+# ---- p4.19 (polish "hud2"): the cards, the chips, the power-up card and the notes in the lobby's
+# style (the user: "It should look app store quality"). The old ones above stay behind the switch.
+
+# A fade that moves in 8 steps: lobby_art.gd keeps every box it makes, one per colour, so a
+# smooth fade would make hundreds of them.
+func _step_a(a: float) -> float:
+	return roundf(clampf(a, 0.0, 1.0) * 8.0) / 8.0
+
+# One seat's card: a rounded panel in the seat's colour, the fighter's head in a tile, the name
+# in the title's font, the arrows it holds, its points as gold pips, a painted crown on the leader.
+func _card2(c: Control, st: Dictionary, f: Dictionary, x: float, leader: bool) -> void:
+	var i := int(st["i"])
+	var col: Color = World.TEAM[i % 8]
+	var waiting := f.is_empty()
+	var dead: bool = not waiting and int(f["state"]) == P.F_DEAD
+	var away: bool = not waiting and (int(f["flags2"]) & P.F2_AWAY) != 0
+	var me := i == my_seat
+	var dim := dead or waiting
+	var r := Rect2(x, CARD_Y, CARD_W, CARD_H)
+	# the panel; yours has a white rim and glows in your colour
+	var fill := Color(col.darkened(0.84 if dim else 0.74), 0.92)
+	var edge := Color.WHITE if me else (col.darkened(0.55) if dim else col.darkened(0.08))
+	c.draw_style_box(Art.box(fill, edge, 14, 3, 6, Color(col, 0.6) if me else Color(0, 0, 0, 0.45), 12 if me else 6), r)
+	c.draw_rect(Rect2(x + 16, CARD_Y + 5, CARD_W - 32, 2), Color(1, 1, 1, 0.10))   # a light line along the top
+	# the head in its tile
+	var tile := Rect2(x + 9, CARD_Y + 8, 56, 56)
+	c.draw_style_box(Art.box(col.darkened(0.75 if dim else 0.5), col.darkened(0.5 if dim else 0.0), 10, 3), tile)
+	var g := 0.45 if dim else 1.0
+	c.draw_texture_rect_region(World.FIGHTER_TEX[i % 8], tile.grow(-4.0), HEAD_SRC, Color(g, g, g, 0.55 if waiting else 1.0))
+	if dead:     # knocked out: a small red cross on the tile's corner (a big one on 7 cards hid the names)
+		var tc := tile.end - Vector2(9, 9)
+		c.draw_circle(tc, 12.0, Color(0.05, 0.02, 0.03))
+		for d in [Vector2(1, 1), Vector2(1, -1)]:
+			c.draw_line(tc - d * 5.5, tc + d * 5.5, Color(1.0, 0.3, 0.25), 4.0, true)
+	# the name: one size of letters, squeezed to fit (a size of its own for every name would cost memory)
+	var nm := str(st.get("name", ""))
+	var room := CARD_W - 78.0
+	var w := Art.DISPLAY.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+	var k := minf(1.0, room / maxf(w, 1.0))
+	c.draw_set_transform(Vector2(x + 72, CARD_Y + 34), 0.0, Vector2(k, lerpf(k, 1.0, 0.5)))
+	Art.text(c, Art.DISPLAY, Vector2.ZERO, nm, 28, Color(0.6, 0.6, 0.66) if dim else Color.WHITE, 5, Color(0.03, 0.02, 0.05), HORIZONTAL_ALIGNMENT_LEFT, -1.0, false)
+	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var y2 := CARD_Y + 54.0
+	if waiting:
+		c.draw_string(Art.BODY, Vector2(x + 72, y2 + 6), "next round", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.75, 0.75, 0.82))
+	elif away:
+		c.draw_string(Art.BODY, Vector2(x + 72, y2 + 6), "away: a bot plays", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1.0, 0.78, 0.45))
+	else:
+		# the arrows in the quiver
+		var arrows := int(f["arrows"])
+		for n in 6:
+			var ax := x + 73 + n * 12.0
+			var a_col := Color(1.0, 0.95, 0.75, 0.5 if dead else 1.0) if n < arrows else Color(1, 1, 1, 0.13)
+			c.draw_rect(Rect2(ax, y2 - 1.5, 6, 3), a_col)
+			c.draw_colored_polygon(PackedVector2Array([Vector2(ax + 6, y2 - 5), Vector2(ax + 11, y2), Vector2(ax + 6, y2 + 5)]), a_col)
+	if not waiting:
+		# the points: gold pips up to a goal of 6, a number past that
+		var points := int(st.get("points", 0))
+		if goal <= 6:
+			for n in goal:
+				var pc := Vector2(x + CARD_W - 17 - n * 13.0, y2)
+				if goal - 1 - n < points:
+					c.draw_circle(pc, 5.5, Color(0.25, 0.14, 0.0))
+					c.draw_circle(pc, 4.4, Color(1.0, 0.82, 0.25, 0.55 if dead else 1.0))
+				else:
+					c.draw_circle(pc, 5.0, Color(0, 0, 0, 0.45))
+					c.draw_arc(pc, 4.4, 0.0, TAU, 16, Color(1, 1, 1, 0.3), 1.5, true)
+		else:
+			var txt := "%d / %d" % [points, goal]
+			c.draw_string(Art.BODY, Vector2(x + CARD_W - 86, y2 + 6), txt, HORIZONTAL_ALIGNMENT_RIGHT, 72, 18, Color(1.0, 0.85, 0.35))
+	if leader:   # the painted crown, tipped, on the head tile's corner
+		c.draw_set_transform(Vector2(x + 14, CARD_Y + 12), -0.42, Vector2.ONE)
+		c.draw_texture_rect_region(UI_ICONS, Rect2(-20, -22, 40, 40), Rect2(5 * 128, 0, 128, 128))
+		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var pw: Dictionary = snap.get("powers", {}).get(i, {})
+	if not pw.is_empty() and not waiting:
+		_chips2(c, x, pw, me)
+
+# The power-ups under a card. Yours: a pill with the picture and the word. The others': the
+# picture only (8 fighters with a word on everything hid the fight on a phone).
+func _chips2(c: Control, x: float, pw: Dictionary, me: bool) -> void:
+	var bits: int = pw["bits"]
+	var kind: int = pw["kind"]
+	var left := ceili(float(pw["left"]))
+	var sn: String = Season.now
+	var list: Array = []          # [the picture's kind, the word, the colour]
+	var pk := PV.arrow_power(kind)
+	if pk > 0:
+		list.append([pk, P.pu_short(pk, sn), PV.COLORS[pk]])
+	for pair in [[P.PW_SHIELD, P.PU_SHIELD], [P.PW_INF, P.PU_INF], [P.PW_FLY, P.PU_FLY], [P.PW_BIG, P.PU_BIG]]:
+		if bits & pair[0]:
+			list.append([pair[1], P.pu_short(pair[1], sn), PV.COLORS[pair[1]]])
+	for pair in [[P.PW_INVIS_ON, P.PU_INVIS], [P.PW_SPEED, P.PU_SPEED], [P.PW_UMBRELLA, P.PU_RAIN], [P.PW_SPIKES, P.PU_SPIKES]]:
+		if bits & pair[0]:
+			list.append([pair[1], "%s %d" % [P.pu_short(pair[1], sn), left], PV.COLORS[pair[1]]])
+	if pw.get("swarm", false):
+		list.append([P.PU_BATS, "%s %d" % [P.pu_short(P.PU_BATS, sn), left], PV.COLORS[P.PU_BATS]])
+	if (int(pw.get("mask", 0)) & 1) != 0:
+		list.append([P.PU_MASK, P.pu_short(P.PU_MASK, sn) if (int(pw["mask"]) & 2) == 0 else "DOWN!", PV.COLORS[P.PU_MASK]])
+	var tricks: Array = ["TURKEY!", "DIZZY", "PEA-SIZED"] if sn == "harvest" else ["PUMPKIN!", "BACKWARDS", "TINY"]
+	for n in 3:
+		if bits & [P.PW_PUMPKIN, P.PW_BACKWARDS, P.PW_TINY][n]:
+			list.append([PV.TRICK_ICON + n, tricks[n], PV.COLORS[P.PU_TRICK]])
+	if bits & P.PW_FROZEN:
+		list.append([P.PU_FREEZE, "FROZEN", PV.COLORS[P.PU_FREEZE]])
+	elif bits & P.PW_SLOW:
+		list.append([P.PU_RAIN, "SLOW", PV.COLORS[P.PU_RAIN]])
+	var cx := x + 2.0
+	var cy := CARD_Y + CARD_H + 6.0
+	var tt := Time.get_ticks_msec() / 1000.0
+	for item in list:
+		var col: Color = item[2]
+		var w := 30.0
+		if me:
+			w = 36.0 + Art.BODY.get_string_size(item[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 10.0
+		if cx + w > x + CARD_W + 4.0:
+			cx = x + 2.0
+			cy += 34.0
+		if me:
+			c.draw_style_box(Art.box(Color(col.darkened(0.7), 0.92), col, 15, 2), Rect2(cx, cy, w, 30))
+			c.draw_string(Art.BODY, Vector2(cx + 34, cy + 22), item[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, col.lerp(Color.WHITE, 0.6))
+		var ic := Vector2(cx + 15, cy + 15)
+		c.draw_circle(ic, 15.0, Color(0.03, 0.02, 0.05, 0.9))
+		c.draw_circle(ic, 13.0, PV.disc(col))
+		PV.draw_icon(c, ic, int(item[0]), 9.0, Color(0.08, 0.06, 0.12), tt)
+		cx += w + 5.0
+
+# The card for the power-up you took: its picture, its name, a tip. It pops in and fades.
+func _power_card2(c: Control) -> void:
+	var a := _step_a(banner_t / 0.4)
+	var k := banner_t / BANNER_S
+	var pop := 1.0 + 0.3 * clampf((k - 0.88) / 0.12, 0.0, 1.0)
+	var col: Color = PV.COLORS.get(banner_kind, Color.WHITE)
+	var rim: Color = PV.GOLD if P.is_big(banner_kind) else col
+	var name: String = banner_name if banner_name != "" else P.pu_short(banner_kind, Season.now)
+	var tip: String = banner_tip if banner_tip != "" else P.pu_tip(banner_kind, Season.now)
+	var nw := Art.DISPLAY.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 36).x
+	var tw := Art.BODY.get_string_size(tip, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x if tip != "" else 0.0
+	var w := 78.0 + nw + (18.0 + tw if tip != "" else 0.0) + 26.0
+	var r := Rect2(960.0 - w / 2.0, 132.0, w, 60.0)
+	c.draw_style_box(Art.box(Color(0.05, 0.04, 0.09, 0.9 * a), Color(rim, a), 30, 3, 5, Color(rim, 0.35 * a), 12), r)
+	var ic := Vector2(r.position.x + 34.0, r.position.y + 29.0)
+	c.draw_circle(ic, 24.0 * pop, Color(0.03, 0.02, 0.05, a))
+	c.draw_circle(ic, 22.0 * pop, Color(PV.disc(col), a))
+	PV.draw_icon(c, ic, banner_icon, 14.0 * pop, Color(0.08, 0.06, 0.12, a), BANNER_S - banner_t)
+	var x := r.position.x + 68.0
+	Art.text(c, Art.DISPLAY, Vector2(x, r.position.y + 42.0), name, 36, Color(col.lerp(Color.WHITE, 0.4), a), 5, Color(0.03, 0.02, 0.05), HORIZONTAL_ALIGNMENT_LEFT, -1.0, false)
+	if tip != "":
+		c.draw_string(Art.BODY, Vector2(x + nw + 18.0, r.position.y + 39.0), tip, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color(0.9, 0.92, 1.0, 0.95 * a))
+
+# A short line for you (the look stepped down, a ghost's tip): a pill at the bottom.
+func _note_pill(c: Control) -> void:
+	var a := _step_a(note_t * 2.0)
+	var w := minf(Art.BODY.get_string_size(note, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x + 64.0, 1800.0)
+	var r := Rect2(960.0 - w * 0.5, 992.0, w, 52.0)
+	c.draw_style_box(Art.box(Color(0.05, 0.04, 0.09, 0.88 * a), Color(1.0, 0.82, 0.3, 0.8 * a), 26, 2, 4, Color(0, 0, 0, 0.4 * a), 8), r)
+	c.draw_string(Art.BODY, Vector2(r.position.x + 32.0, r.position.y + 35.0), note, HORIZONTAL_ALIGNMENT_LEFT, w - 64.0, 28, Color(1.0, 0.95, 0.8, a))

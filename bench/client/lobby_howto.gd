@@ -8,6 +8,9 @@
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
+const World = preload("res://client/world.gd")     # p4.19: the real fighters (FIGHTER_TEX), not stand-ins
+const Polish = preload("res://client/polish.gd")
+const Season = preload("res://client/season.gd")
 const GOLD := Color(1.0, 0.82, 0.25)
 const INK := Color(0.96, 0.96, 1.0)
 const DIM := Color(0.75, 0.78, 0.9)
@@ -15,6 +18,7 @@ const TILE := Vector2(540, 560)
 
 var mode := "pc"                  # "pc", "classic" or "buttons"
 var t := 0.0
+var pal: Dictionary = Art.DRESSES["castle"]   # p4.19: the lobby's dress (lobby.gd sets it)
 
 func _init() -> void:
 	size = Vector2(1920, 1080)
@@ -75,6 +79,18 @@ func _key(c: Vector2, word: String, w: float = 86.0) -> void:
 	draw_style_box(Art.box(Color(0.9, 0.9, 0.96), Color(0.4, 0.4, 0.5), 14, 3, 9), r)
 	_text(c + Vector2(0, 12), word, 38 if word.length() <= 2 else 28, Color(0.1, 0.08, 0.14))
 
+# p4.19 (polish "howto2"): the real fighter from its sheet (128 px frames, 16 a row: 0 and 1
+# stand, 2 to 7 run, 8 jump, 9 fall, 10 aim, 13 dodge, 18 let go, 19 ready), with a shadow.
+func _fighter(feet: Vector2, seat: int, frame: int, flip: bool, s: float = 1.4) -> void:
+	draw_set_transform(feet + Vector2(0, 2), 0.0, Vector2(1.0, 0.28))
+	draw_circle(Vector2.ZERO, 44.0, Color(0, 0, 0, 0.45))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var src := Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128)
+	var dst := Rect2(feet.x - 64.0 * s, feet.y - 122.0 * s, 128.0 * s, 128.0 * s)
+	if flip:
+		dst.size.x = -dst.size.x      # a negative width draws it mirrored, in the same place
+	draw_texture_rect_region(World.FIGHTER_TEX[seat], dst, src)
+
 # A little archer: a hood, a body, in col (a stand-in for the fighter, drawn big).
 func _archer(feet: Vector2, col: Color, s: float = 1.0) -> void:
 	var body := PackedVector2Array([feet + Vector2(-22, 0) * s, feet + Vector2(-26, -64) * s, feet + Vector2(0, -92) * s,
@@ -94,17 +110,32 @@ func _draw() -> void:
 	var k := 0.5 + 0.5 * sin(t * 2.6)          # the pictures move: 0..1 and back
 	var pull := clampf(fmod(t, 2.4) / 1.4, 0.0, 1.0)   # the bow: a slow pull, then let go
 	var let_go := fmod(t, 2.4) > 1.4
+	var real := Polish.on("howto2")
+	var a8 := roundf(a * 8.0) / 8.0       # the fade in steps: lobby_art.gd keeps every box it makes
 	for i in 3:
 		var r := Rect2(Vector2(90.0 + i * (TILE.x + 60.0), 180.0), TILE)
-		draw_style_box(Art.box(Color(0.09, 0.06, 0.15, 0.96 * a), Color(GOLD, 0.7 * a), 22, 3, 6, Color(0, 0, 0, 0.5), 14), r)
+		if real:
+			draw_style_box(Art.box(Color(pal["panel"], 0.97 * a8), Color(pal["accent"], 0.9 * a8), 26, 3, 8, Color(0, 0, 0, 0.55 * a8), 18), r)
+			draw_style_box(Art.box(Color(pal["accent"], 0.16 * a8), Color(0, 0, 0, 0), 20, 0), Rect2(r.position + Vector2(8, 8), Vector2(r.size.x - 16, 96)))
+		else:
+			draw_style_box(Art.box(Color(0.09, 0.06, 0.15, 0.96 * a), Color(GOLD, 0.7 * a), 22, 3, 6, Color(0, 0, 0, 0.5), 14), r)
 		_text(Vector2(r.get_center().x, r.position.y + 74.0), titles[i], 54, Color(GOLD, a))
 		var c := r.get_center() + Vector2(0, 10)
 		var say := ""
 		var say2 := ""
 		if i == 0:
 			var hop := -70.0 * sin(k * PI) if mode != "pc" else -70.0 * sin(k * PI)
-			draw_line(c + Vector2(-190, 120), c + Vector2(190, 120), Color(1, 1, 1, 0.35), 6.0)   # a floor
-			_archer(c + Vector2(-90.0 + 180.0 * k, 120.0 + hop), Color(0.91, 0.25, 0.24))
+			if real:
+				# it runs right and left, and hops in the middle of each run
+				var right := cos(t * 2.6) > 0.0
+				var up := -48.0 * maxf(0.0, sin(k * PI) * 1.6 - 0.6)
+				var rising := (k < 0.5) == right
+				var fr := (8 if rising else 9) if up < -4.0 else 2 + int(t * 12.0) % 6
+				_floor(c + Vector2(0, 132), 400.0)
+				_fighter(c + Vector2(-110.0 + 220.0 * k, 130.0 + up), 0, fr, not right)
+			else:
+				draw_line(c + Vector2(-190, 120), c + Vector2(190, 120), Color(1, 1, 1, 0.35), 6.0)   # a floor
+				_archer(c + Vector2(-90.0 + 180.0 * k, 120.0 + hop), Color(0.91, 0.25, 0.24))
 			if mode == "pc":
 				_key(c + Vector2(-150, -120), "A")
 				_key(c + Vector2(-50, -120), "D")
@@ -122,7 +153,11 @@ func _draw() -> void:
 					say = "left thumb: slide to run"
 					say2 = "push it UP to jump"
 		elif i == 1:
-			_archer(c + Vector2(-150, 120), Color(0.24, 0.55, 0.91))
+			if real:
+				_floor(c + Vector2(0, 132), 400.0)
+				_fighter(c + Vector2(-150, 130), 1, (18 if fmod(t, 2.4) < 1.7 else 0) if let_go else 10, false)
+			else:
+				_archer(c + Vector2(-150, 120), Color(0.24, 0.55, 0.91))
 			var from := c + Vector2(-120, 60)
 			if let_go:
 				var fly := clampf((fmod(t, 2.4) - 1.4) / 0.6, 0.0, 1.0)
@@ -142,10 +177,23 @@ func _draw() -> void:
 				say2 = "past the ring, then let go"
 		else:
 			var dash := clampf(fmod(t, 2.0) / 0.5, 0.0, 1.0)
-			_archer(c + Vector2(-110.0 + 150.0 * dash, 120), Color(0.37, 0.83, 0.35))
+			if real:
+				# a dash into an arrow that flies at it; then the arrow is caught
+				_floor(c + Vector2(0, 132), 400.0)
+				_fighter(c + Vector2(-130.0 + 150.0 * dash, 130), 2, 13 if dash < 1.0 else 19, false)
+				if dash < 1.0:
+					var ax := lerpf(240.0, 110.0, dash)
+					_arrow(c + Vector2(ax + 90.0, 72), c + Vector2(ax, 72), Color(1, 1, 1, 0.95), 7.0)
+				elif fmod(t, 2.0) < 1.5:
+					var pop := 1.0 + 0.25 * maxf(0.0, 1.0 - (fmod(t, 2.0) - 0.5) / 0.2)
+					draw_set_transform(c + Vector2(130, 60), -0.08, Vector2.ONE * pop)
+					_text(Vector2(0, 0), "CAUGHT!", 44, Color(GOLD, a))
+					draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			else:
+				_archer(c + Vector2(-110.0 + 150.0 * dash, 120), Color(0.37, 0.83, 0.35))
+				_arrow(c + Vector2(210, 70), c + Vector2(110, 70), Color(1, 1, 1, 0.9), 7.0)     # an arrow coming at you
 			for j in 3:
-				draw_line(c + Vector2(-150.0 + 150.0 * dash - j * 26.0, 60.0 + j * 16.0), c + Vector2(-190.0 + 150.0 * dash - j * 26.0, 60.0 + j * 16.0), Color(1, 1, 1, 0.5 * dash), 5.0)
-			_arrow(c + Vector2(210, 70), c + Vector2(110, 70), Color(1, 1, 1, 0.9), 7.0)     # an arrow coming at you
+				draw_line(c + Vector2(-150.0 + 150.0 * dash - j * 26.0, 60.0 + j * 16.0), c + Vector2(-190.0 + 150.0 * dash - j * 26.0, 60.0 + j * 16.0), Color(1, 1, 1, 0.5 * dash * (1.0 - dash) * 4.0 if real else 0.5 * dash), 5.0)
 			if mode == "pc":
 				_key(c + Vector2(0, -120), "SHIFT", 170.0)
 			else:
@@ -155,7 +203,15 @@ func _draw() -> void:
 		_text(Vector2(r.get_center().x, r.end.y - 92.0), say, 34, Color(INK, a), Art.BODY)
 		_text(Vector2(r.get_center().x, r.end.y - 46.0), say2, 34, Color(INK, a), Art.BODY)
 	_text(Vector2(960, 838), "One life a round. The last one standing wins it.", 40, Color(INK, a), Art.BODY)
-	_text(Vector2(960, 892), "Pick your arrows up again. Grab the glowing orbs: they are power-ups.", 34, Color(DIM, a), Art.BODY)
+	var more := "Pick your arrows up again. Grab the glowing orbs: they are power-ups."
+	if real and Season.harvest():
+		more = "Pick your arrows up again. Grab the glowing orbs. Catch the turkey!"
+	_text(Vector2(960, 892), more, 34, Color(DIM, a), Art.BODY)
 	var br := Rect2(710, 930, 500, 96)
 	draw_style_box(Art.box(Color(1.0, 0.6, 0.12, a), Color(0.45, 0.2, 0.02, a), 20, 3, 9, Color(1.0, 0.7, 0.2, 0.35 * a), 16), br)
 	_text(Vector2(960, 996), "GOT IT", 56, Color(0.13, 0.05, 0.0, a))
+
+# p4.19: a plank to stand on: a wooden top with a dark lip, mid its centre, w wide.
+func _floor(mid: Vector2, w: float) -> void:
+	draw_style_box(Art.box(Color(0.42, 0.27, 0.15), Color(0.16, 0.09, 0.05), 6, 2, 6), Rect2(mid.x - w * 0.5, mid.y, w, 18))
+	draw_rect(Rect2(mid.x - w * 0.5 + 6, mid.y + 3, w - 12, 2), Color(1, 0.9, 0.7, 0.25))

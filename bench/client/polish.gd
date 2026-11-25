@@ -44,6 +44,9 @@ const SWITCHES := {
 	"winner_backdrop": true,   # the winner's screen: a painted castle terrace with fireworks (spooky in October) fills the window (client/winner_view.gd)
 	"winner_portrait": true,   # the winner's screen: their painted hooded archer, in their colour, rises behind the podium in place of the fighter
 	"ui_icons": true,          # pictures on the lobby's buttons (POWER-UPS, BOTS, BOT LEVEL, LEAVE, LOOK, CONTROLS) and a painted crown on the podium
+	# p4.19 (the user: "Make it as polished as possible. It should look app store quality")
+	"hud2": true,              # in a match: the seat cards with the fighter's head, the power-up pills, the power-up card, the notes, in the lobby's style (client/hud.gd)
+	"howto2": true,            # HOW TO PLAY: the real fighters run, shoot, dodge and catch on a plank; the cards in the lobby's dress (client/lobby_howto.gd)
 }
 
 static var _off := {}

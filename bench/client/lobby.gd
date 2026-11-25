@@ -224,6 +224,7 @@ func _init() -> void:
 		join_pressed.emit(n))
 	who.someone_new.connect(func(): name_edit.grab_focus())
 	root.add_child(howto)             # p4.18: over the arena picker too
+	howto.pal = pal
 	visibility_changed.connect(_on_visibility)
 
 # The ARENA button: the picker of painted cards (polish "arena_cards"), or the next arena as before.
@@ -360,6 +361,7 @@ func _apply_dress(d: String) -> void:
 	for b in [look_btn, controls_btn, season_btn, howto_btn]:
 		b.setup(face.darkened(0.2), ink, 30)
 	_name_style()
+	howto.pal = pal
 	notice_text.add_theme_color_override("font_color", pal["text"])
 	for c in [dock, notice, corner]:
 		c.queue_redraw()
