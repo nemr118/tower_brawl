@@ -33,6 +33,7 @@ signal sound_picked(on: bool)
 signal music_picked(on: bool)        # p4.20 SETTINGS' MUSIC row
 signal mode_picked(pick: String)     # TEAMS: SETTINGS' MODE row: "ffa" or "teams"
 signal team_pressed                  # TEAMS: a tap on your own card: change sides
+signal hat_picked(n: int)            # p4.22: the HAT button on your own card: the next winter hat
 
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
@@ -49,6 +50,7 @@ const Settings = preload("res://client/lobby_settings.gd")   # p4.19: one panel 
 const Polish = preload("res://client/polish.gd")
 const Teams = preload("res://client/teams_view.gd")          # TEAMS: the tap on your own card (the flags: lobby_cards.gd)
 const Motion = preload("res://client/motion.gd")             # p4.21: polish "motion"
+const Hats = preload("res://client/hats.gd")                 # p4.22: the HAT button (the hats on the cards: lobby_cards.gd)
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
 const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
 enum { IC_BOTS, IC_LEVEL, IC_LOOK, IC_CONTROLS, IC_LEAVE, IC_CROWN }
@@ -100,6 +102,7 @@ var settings_btn = Art.Btn.new()  # p4.19: top right, in place of LOOK and CONTR
 var one_panel := false            # is that polish on?
 var who := Names.new()
 var team_tap = Teams.Tap.new()    # TEAMS: a see-through button over your own card
+var hat_btn = Hats.Pick.new()     # p4.22: the HAT button at the bottom of your own card (only in the Christmas season)
 var known_names: Array = []       # the seats message's "names"
 var seated_names: Array = []
 var tv := false                   # p4.18 THE BIG SCREEN: no buttons; a QR code and the address to join
@@ -180,6 +183,9 @@ func _init() -> void:
 		else:
 			cards.fidget()          # p4.21: FREE FOR ALL: a tap on your own card and your fighter hops
 		)
+	root.add_child(hat_btn)           # p4.22: over your card's bottom, under every panel that opens
+	hat_btn.setup(pal["button"], pal["text"], 26)
+	hat_btn.picked.connect(func(n): hat_picked.emit(n))
 	for c in [dock, notice, corner]:
 		c.lobby = self
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -421,6 +427,7 @@ func _apply_dress(d: String) -> void:
 		b.setup(face.darkened(0.2), ink, 30)
 	settings_btn.setup(face.darkened(0.2), ink, 34)
 	champs_btn.setup(face.darkened(0.2), ink, 30)
+	hat_btn.setup(face, ink, 26)
 	champs_board.pal = pal
 	if one_panel:
 		howto_btn.size_px = 34
@@ -563,6 +570,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	settings.set_season(season_pick, season_label, can_set)
 	settings.set_mode(Teams.pick)     # TEAMS: the MODE row, and the tap on your own card (only in the lobby)
 	team_tap.place(cards, my_seat, (Teams.on or Motion.on()) and can_set and connected and not tv)   # (p4.21: in FREE FOR ALL the tap is a hop)
+	hat_btn.place(cards, my_seat, seated and phase <= P.PH_COUNTDOWN and phase >= 0 and connected and not tv)   # p4.22: in the lobby and the countdown
+	cards.hat_button = hat_btn.visible
 	if settings.visible and phase != P.PH_LOBBY and phase >= 0 and seated:
 		settings.close()                # the match starts: out of the way
 	tv_line = "ARENA: %s  ·  BOTS: %d %s  ·  POWER-UPS %s" % ["MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick), bots_wanted, lvl,

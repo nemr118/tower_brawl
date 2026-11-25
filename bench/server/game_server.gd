@@ -85,6 +85,7 @@ extends Node
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const Routes = preload("res://sim/routes.gd")
+const HatBook = preload("res://server/hat_book.gd")   # p4.22: the winter hats, kept with the names
 
 const SEATS := 8
 const MAX_BOTS := 7
@@ -253,6 +254,7 @@ class Seat:
 	var aim: int = 0
 	var in_round: bool = false  # has a fighter this round
 	var team: int = 0           # TEAMS: the seat's team, 0 or 1 (a person picks it in the lobby; a bot gets one each round)
+	var hat: int = 0            # p4.22: a person's winter hat (hat_book.gd); a bot or an empty seat wears the seat's own
 	var input_tick: int = -1    # the sim tick a late input was applied on
 	var queue := {}             # input tick -> [buttons, aim]: applied just before that tick
 	var used: int = 0           # the newest input tick applied
@@ -345,6 +347,7 @@ var mode_teams := false          # the lobby's MODE: false FREE FOR ALL, true TE
 var match_teams := false         # is the match that is on played in TEAMS? (the MODE as it was when the match began)
 var team_points := [0, 0]        # TEAMS: each team's points in this match (every seat of a team shows its team's)
 var win_team := -1               # TEAMS: the team that won the round just called (-1: none, a draw, or FREE FOR ALL)
+var hat_book = HatBook.new()     # p4.22: who picked which winter hat (<out>/known_hats.json)
 
 func _ready() -> void:
 	var o := _args()
@@ -362,6 +365,7 @@ func _ready() -> void:
 	var root_dir := ProjectSettings.globalize_path("res://").path_join("..").simplify_path()
 	var out_dir := str(o.get("out", root_dir.path_join("bench_results"))).path_join(Time.get_date_string_from_system())
 	_load_names(str(o.get("out", root_dir.path_join("bench_results"))))   # p4.18: the names seen on other nights
+	hat_book.load_from(str(o.get("out", root_dir.path_join("bench_results"))))   # p4.22: and the hats they picked
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var log_path := out_dir.path_join("v2_server.jsonl")
 	server_log = FileAccess.open(log_path, FileAccess.READ_WRITE if FileAccess.file_exists(log_path) else FileAccess.WRITE)
@@ -701,6 +705,15 @@ func _on_text(c: Conn, txt: String) -> void:
 			ts.team = 1 - ts.team
 			_say("🏰 [LOBBY] seat %d '%s' joins %s" % [ts.i, ts.name, P.team_name(ts.team, _season())])
 			seats_dirty = true
+	elif kind == "hat":       # p4.22: the HAT button on your own lobby card: your winter hat
+		# Only in the Christmas season, only from a seated person and for their own seat,
+		# only in the lobby or the countdown, and only one of the hats there are.
+		var n := _int(d.get("hat"), -1)
+		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and _season() == "christmas" \
+				and n >= 0 and n < HatBook.COUNT and n != seats[c.seat].hat and _int(d.get("seat", c.seat), -1) == c.seat:
+			seats[c.seat].hat = n
+			hat_book.keep(seats[c.seat].name, n)     # kept with the name: the same name gets it back next time
+			seats_dirty = true
 	elif kind == "name":
 		if c.seat >= 0:
 			c.name = _clean_name(str(d.get("name", "")), c.seat)
@@ -938,6 +951,7 @@ func _seat_person(s: Seat, c: Conn, back: bool) -> void:
 		mstats.erase(s.i)     # nor the match's numbers of a bot that sat here (they made the person's award)
 		s.points = 0
 		s.team = _smaller_team(s.i)      # TEAMS: a new person goes to the smaller team
+		s.hat = hat_book.hat_of(s.name, s.i)   # p4.22: the hat this name picked, or the seat's own
 		if match_teams:
 			s.points = team_points[s.team]   # and shows that team's points from the start
 		s.crowns = 0
@@ -1630,6 +1644,9 @@ func _send_seats(target: int) -> void:
 		list.append({"i": s.i, "name": s.name, "kind": s.kind, "on": s.kind == 2 or s.client_id != 0,
 			"points": s.points, "crowns": s.crowns, "in": s.in_round,
 			"team": -1 if not teams_now else (int(plan[s.i]) if not plan.is_empty() else (s.team if s.kind != 0 else -1))})
+	if _season() == "christmas":     # p4.22: each seat's winter hat (out of the season the message is as it was)
+		for s in seats:
+			list[s.i]["hat"] = s.hat if s.kind == 1 else HatBook.for_seat(s.i)
 	var msg := {"kind": "seats", "phase": phase, "round": round_no, "goal": goal if goal > 0 else _goal_next(),
 		"bots": _bots_now(), "bots_wanted": bots_wanted, "bot_level": sim.bot_level, "power": 1 if sim.powerups else 0,
 		"awards": last_awards,

@@ -215,6 +215,7 @@ func _cards(live: bool) -> void:
 			"a change of sides: a new flag drops in, the card pops, the fighter hops, sparks fly")
 	else:
 		_check(float(c.cards[0]["pop"]) > 0.5, "polish off: a change of sides moves nothing")
+	c.cards[0]["next_pose"] = 99.0      # (the card's own idle hop must not begin just before the tap: fidget() rightly ignores a tap while the fighter is in the air; it failed 1 run in 31)
 	_run(c, 1.2)
 	c.fidget()
 	_check(float(c.cards[0]["hop"]) == 0.0, "a tap on your own card: your fighter hops")

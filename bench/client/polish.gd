@@ -54,6 +54,8 @@ const SWITCHES := {
 	"juice": true,             # a +1 flies from the round's banner to the winner's card and the gold pip pops in; a card one point from the goal blinks gold; the match's leader wears a small crown in the arena
 	# p4.21 (the user: "Add animation to menus, character select, etc.")
 	"motion": true,            # the panels (SETTINGS, MENU, TONIGHT'S CHAMPIONS, WHO ARE YOU?, PICK AN ARENA, HOW TO PLAY) grow in and shrink away, their rows come one after another; a button squeezes under the finger and springs back; changed words bump; a seat card dips when someone leaves, a team flag drops in (client/motion.gd)
+	# p4.22 (the Christmas update: "a hat on every fighter in the seat's colour", "Pick your hat")
+	"hats": true,              # in the Christmas season: a winter hat on every fighter (the arena, the lobby's cards, the match's cards, the winner's screen) and the HAT button on your own lobby card (client/hats.gd)
 }
 
 static var _off := {}

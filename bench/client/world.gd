@@ -29,6 +29,7 @@ const LeavesView = preload("res://client/leaves_view.gd")
 const BG_FAR_WINTER := preload("res://assets/bg_winter_far.png")   # p4.22: the castle arenas' far backdrop in the Christmas season (ComfyUI)
 const SnowView = preload("res://client/snow_view.gd")    # p4.22: snow caps, icicles, wreaths and lights on the castle arenas
 const TeamsView = preload("res://client/teams_view.gd")   # TEAMS: a team flag over each fighter (all of its look is in that file)
+const Hats = preload("res://client/hats.gd")              # p4.22: a winter hat on each fighter (all of its look is in that file)
 const ARROWS2 := preload("res://assets/fx_arrows2.png")           # polish "arrows2"
 const SH_SHAFT2 := preload("res://shaders/shaft2.gdshader")       # polish "shaft_motes": the shafts with dust in them
 const TEAM := [Color("e8413c"), Color("3c8ce8"), Color("5fd35a"), Color("f2c230"),
@@ -157,6 +158,7 @@ var rooftops                     # THE ROOFTOPS' look (client/rooftops_view.gd),
 var workshop                     # SANTA'S WORKSHOP's look and its toy train (client/workshop_view.gd), theme "workshop"
 var dress                        # polish: the castle arenas' dressing, over the tiles (client/dress_view.gd)
 var team_marks = TeamsView.Marks.new()   # TEAMS: the flags over the fighters (nothing is drawn in FREE FOR ALL)
+var hat_layer = Hats.Arena.new()         # p4.22: the hats on the fighters (nothing is there out of the Christmas season)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
 var walls_r := Sprite2D.new()
 var arrows := {}             # id -> [sprite, trail node, trail kind, light]
@@ -345,6 +347,8 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 		m.set_shader_parameter("glow_color", TEAM[i % 8].lightened(0.3))
 		bodies.add_child(s)
 		fighters.append([s, m, FIGHTER_TEX[i % 8], null, 0.0, -1])   # [3]: the lit texture until p4.3
+	bodies.add_child(hat_layer)    # p4.22: the hats, right over the fighters (under the team flags)
+	hat_layer.setup(TEAM)
 	bodies.add_child(team_marks)   # TEAMS: over the fighters, in the layer the night never darkens
 	rain = fx.take_loop("rain")
 	rain.position = Vector2(860, -60)
@@ -842,6 +846,7 @@ func render(s: Dictionary, delta: float) -> void:
 			if slot[4] <= 0.0:
 				slot[4] = 0.035
 				fx.ghost(FIGHTER_TEX[i % 8], spr.region_rect, spr.position + Vector2(0, -58), spr.flip_h, TEAM[i % 8])
+	hat_layer.show_view(fl if by_seat else [], fighters, pw, delta, level, tier <= 1)   # p4.22: each hat follows its fighter's sprite
 	team_marks.show_view(fl if by_seat else [], fighters)   # TEAMS: a flag over each fighter the page shows
 	_render_ring(fl, delta)
 	_render_arrows(s["arrows"])

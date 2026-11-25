@@ -45,6 +45,7 @@ const MatchMenu = preload("res://client/lobby_settings.gd")   # p4.20: the same 
 const Music = preload("res://client/music.gd")     # p4.20: the songs (their own switch, off until picked)
 const Sfx = preload("res://client/sfx.gd")         # p4.19: the sounds
 const Teams = preload("res://client/teams_view.gd")   # TEAMS: what the page knows about the teams, and all of their look
+const Hats = preload("res://client/hats.gd")          # p4.22: the winter hats (each seat's hat, and all of their look)
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
@@ -151,6 +152,9 @@ func _ready() -> void:
 	if opts.has("bench"):
 		add_child(load("res://client/bench_client.tscn").instantiate())
 		return
+	if opts.has("hatsheet"):       # p4.22 a test page for pictures: every winter hat on every pose (client/hats.gd Sheet)
+		add_child(Hats.Sheet.new(str(opts["hatsheet"]), float(opts.get("slowmo", 1))))
+		return
 	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.035))
 	display.set_anchors_preset(Control.PRESET_FULL_RECT)
 	display.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -208,6 +212,9 @@ func _ready() -> void:
 	lobby.controls_picked.connect(func(b): if b != (controls == "buttons"): _on_controls())
 	lobby.mode_picked.connect(func(pick): net.send({"kind": "mode", "pick": pick}))   # TEAMS: SETTINGS' MODE, for everyone
 	lobby.team_pressed.connect(func(): net.send({"kind": "team"}))                    # TEAMS: a tap on your own card: change sides
+	lobby.hat_picked.connect(func(n):
+		net.send({"kind": "hat", "hat": n})
+		sfx.play("jingle", true))       # p4.22: a pick jingles            # p4.22: the HAT button on your own card: your next hat
 	world.pview.test_cream = opts.has("cream")   # p4.18 a test knob for pictures: PIE's cream on your own screen
 	world.pview.test_phew = opts.has("phew")     # p4.19 a test knob for pictures: a PHEW on your own fighter every 3 s
 	_show_look()
@@ -856,6 +863,7 @@ func _on_message(m: Dictionary) -> void:
 		# p4.22 the nights to Christmas, from every seats message (a page left open past midnight counts on);
 		# the test knob ?sleeps=N (pictures of the countdown) wins over the server's date
 		Season.sleeps = int(opts["sleeps"]) if opts.has("sleeps") else int(m.get("sleeps", -1))
+		Hats.read(m)               # p4.22: each seat's winter hat
 		if m.has("season") and str(m["season"]) != Season.now:   # p4.18: the server's season dresses the page
 			Season.now = str(m["season"])
 			print("🎮 [Season] %s" % P.SEASON_LABEL.get(Season.now, "NONE"))

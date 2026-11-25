@@ -19,6 +19,7 @@ const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")   # p4.18
 const AwardArt = preload("res://client/award_art.gd")   # p4.13 polish "award_art": a picture on each award card
 const Teams = preload("res://client/teams_view.gd")     # TEAMS: the winning team's members under its name
+const Hats = preload("res://client/hats.gd")            # p4.22: the winner's winter hat
 const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
 const FIGHTER := 3.0              # the fighter: 3 x its 128 px frame
@@ -78,6 +79,7 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 		if cut < HERO.y:
 			hr.size.y -= cut
 			c.draw_texture_rect_region(ht, hr, Rect2(0, 0, ht.get_width(), ht.get_height() * hr.size.y / HERO.y), Color(1, 1, 1, a))
+			Hats.on_hero(c, seat, hr, t, col, a)   # p4.22: its winter hat, drawn in code over the painting's hood
 	# the podium
 	c.draw_style_box(Art.box(col.darkened(0.55), col.darkened(0.8), 10, 3, 6, Color(0, 0, 0, 0.5), 14), pod)
 	c.draw_rect(Rect2(pod.position.x + 6, pod.position.y + 4, pod.size.x - 12, 16), col.lightened(0.1))
@@ -98,6 +100,7 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 	if not hero:
 		c.draw_colored_polygon(ell, Color(0, 0, 0, 0.5 * a))
 		c.draw_texture_rect_region(World.FIGHTER_TEX[posmod(seat, 8)], dst, Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128))
+		Hats.on_podium(c, seat, Vector2(MID.x, dst.position.y + 122.0 * FIGHTER), FIGHTER, frame, t, col)   # p4.22
 	# confetti
 	for k in 70:
 		var sp := 90.0 + (k % 7) * 26.0

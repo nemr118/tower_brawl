@@ -210,6 +210,7 @@ class Tap extends Control:
 class Marks extends Node2D:
 	const WORLD_W := 36.0         # a flag as wide as a fighter's body (36 px of the 1920 px arena: 16 px on a small phone)
 	var teams = load("res://client/teams_view.gd")   # this file's own functions (a class in a file cannot call them by name)
+	var hats = load("res://client/hats.gd")          # p4.22: how tall the hat under the flag is
 	var list: Array = []          # [x, y, team] for each flag to draw this frame
 
 	# fl: the fighters as drawn this frame; sprites: world.gd's slots ([sprite, ...] by seat).
@@ -226,7 +227,8 @@ class Marks extends Node2D:
 			if not spr.visible:
 				continue
 			# over the head; a little bob so 8 flags do not look glued on
-			list.append([float(f["x"]) + 18.0, float(f["y"]) - 52.0 + sin(Time.get_ticks_msec() / 260.0 + i) * 2.0, t])
+			# (p4.22: over the fighter's winter hat, client/hats.gd; 0 out of the Christmas season)
+			list.append([float(f["x"]) + 18.0, float(f["y"]) - 52.0 - float(hats.lift(i)) + sin(Time.get_ticks_msec() / 260.0 + i) * 2.0, t])
 		if had or not list.is_empty():
 			queue_redraw()
 

@@ -20,6 +20,7 @@ const Season = preload("res://client/season.gd")   # p4.18: the season's names a
 const HV = preload("res://client/harvest_view.gd") # p4.18: the Harvest season's pictures
 const XV = preload("res://client/christmas_view.gd")   # p4.22: the Christmas season's pictures
 const RooftopsView = preload("res://client/rooftops_view.gd")   # p4.22: THE ROOFTOPS' gust of snow
+const Hats = preload("res://client/hats.gd")       # p4.22: the marks over a head clear its winter hat (Hats.lift)
 const ICONS2 := preload("res://assets/pu_icons.png")   # p4.13 polish "icons2": ComfyUI's power-up pictures (64 px a cell, kind - 1)
 const TRICKS2 := preload("res://assets/trick_icons.png")   # 2026-10-26 polish "trick_art": the candy tricks' badges (64 px a cell)
 const TRICK_ICON := 100           # the tricks' icon kinds (the page's own, never sent): + 0 PUMPKIN HEAD, + 1 BACKWARDS, + 2 TINY; GHOSTFACE is P.PU_MASK
@@ -555,7 +556,7 @@ func _draw() -> void:
 		var lp: Dictionary = powers.get(leader, {})
 		var lhid: bool = leader != me and (blind or (int(lp.get("bits", 0)) & (P.PW_INVIS | P.PW_BATS)) != 0)
 		if lf["state"] != P.F_DEAD and not lhid:
-			var up := 62.0 if (int(lp.get("mask", 0)) & 1) != 0 else 40.0     # a costume is taller
+			var up := 62.0 if (int(lp.get("mask", 0)) & 1) != 0 else 40.0 + Hats.lift(leader)     # a costume is taller; p4.22: over the hat
 			draw_texture_rect_region(UI_ICONS, Rect2(float(lf["x"]) + 18.0 - 16.0, float(lf["y"]) - up + sin(t * 3.0) * 2.5, 32, 32),
 				Rect2(5 * 128, 0, 128, 128))
 	for ph in phews:
@@ -943,8 +944,8 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 			draw_colored_polygon(PackedVector2Array([base, tip, base + Vector2(side * 30.0, 4.0 + flap * 14.0), base + Vector2(side * 12.0, 14.0)]),
 				Color(1, 1, 1, 0.85 * a))
 			draw_polyline(PackedVector2Array([base, tip, base + Vector2(side * 30.0, 4.0 + flap * 14.0)]), Color(0.6, 0.7, 0.9, a), 2.0)
-	if (bits & P.PW_FROZEN) != 0 and Season.christmas():   # p4.22: packed into a snowman (world.gd hides the body)
-		XV.snowed(self, f, tc, a, t)
+	if (bits & P.PW_FROZEN) != 0 and Season.christmas() and (int(pw.get("mask", 0)) & P.PX_MASK) == 0 and (bits & P.PW_PUMPKIN) == 0:
+		XV.snowed(self, f, tc, a, t)   # p4.22: packed into a snowman (world.gd hides the body; not a costume or a trick's form: they keep the ice)
 	elif (bits & P.PW_FROZEN) != 0:
 		var r := Rect2(f["x"] - 9.0, f["y"] - 9.0, 54.0, 81.0)
 		draw_rect(r, Color(0.7, 0.9, 1.0, 0.42 * a))
@@ -1011,6 +1012,8 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 	if (bits & P.PW_BIG) != 0:
 		badges.append(P.PU_BIG)
 	var by: float = top.y - (30.0 if (bits & (P.PW_SPIKES | P.PW_UMBRELLA)) != 0 else 16.0) - (34.0 if (bits & P.PW_UMBRELLA) != 0 else 0.0)
+	if (bits & P.PW_PUMPKIN) == 0:
+		by -= Hats.lift(seat)      # p4.22: over the winter hat (a trick's form wears none)
 	for i in badges.size():
 		var bc := Vector2(c.x + (i - (badges.size() - 1) / 2.0) * 26.0, by)
 		var col: Color = COLORS.get(badges[i], Color.WHITE)

@@ -18,6 +18,7 @@ const Art = preload("res://client/lobby_art.gd")
 const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")        # p4.18: the season's names
 const Teams = preload("res://client/teams_view.gd")     # TEAMS: the flag on each card, the team's colour on its banner
+const Hats = preload("res://client/hats.gd")            # p4.22: a small winter hat on each card's head
 const BANNER_S := 2.6
 const FIGHT_S := 0.9
 const CARD_W := 210.0
@@ -428,6 +429,7 @@ func _card2(c: Control, st: Dictionary, f: Dictionary, x: float, leader: bool) -
 	c.draw_style_box(Art.box(col.darkened(0.75 if dim else 0.5), col.darkened(0.5 if dim else 0.0), 10, 3), tile)
 	var g := 0.45 if dim else 1.0
 	c.draw_texture_rect_region(World.FIGHTER_TEX[i % 8], tile.grow(-4.0), HEAD_SRC, Color(g, g, g, 0.55 if waiting else 1.0))
+	Hats.on_hud(c, i, tile, col, g * (0.55 if waiting else 1.0))   # p4.22
 	if dead:     # knocked out: a small red cross on the tile's corner (a big one on 7 cards hid the names)
 		var tc := tile.end - Vector2(9, 9)
 		c.draw_circle(tc, 12.0, Color(0.05, 0.02, 0.03))

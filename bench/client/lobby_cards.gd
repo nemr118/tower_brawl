@@ -22,6 +22,7 @@ const P = preload("res://sim/proto.gd")
 const Season = preload("res://client/season.gd")   # p4.19: the bots' names follow the season
 const Teams = preload("res://client/teams_view.gd")   # TEAMS: a team flag on each card
 const Motion = preload("res://client/motion.gd")      # p4.21
+const Hats = preload("res://client/hats.gd")          # p4.22: the winter hats
 const HALO := preload("res://assets/fx_halo.png")
 const N := 8
 const TOP := 240.0               # the cards' top in the 1920 x 1080 frame
@@ -46,6 +47,7 @@ var counting := false
 var level_name := "NORMAL"
 var seated := false              # you have a seat (an open card says OPEN, else JOIN)
 var connected := true            # no connection yet: an open card says OPEN
+var hat_button := false          # p4.22: the HAT button sits on your card, where its YOU tag was (lobby.gd sets it)
 var fighters := _Pass.new()
 var words := _Pass.new()
 
@@ -122,6 +124,7 @@ func set_seats(list: Array, me: int, ph: int, bots: int, awards: Array) -> void:
 					c["hop"] = 0.0
 					_sparks(c, i, Teams.color(tm).lightened(0.2))
 			c["team"] = tm
+		Hats.card_change(self, c, i, kind != 0 or fill, settled)   # p4.22: a new hat drops on; a changed one pops the card
 		c["kind"] = kind
 		c["name"] = nm
 		c["fill"] = fill
@@ -247,6 +250,7 @@ func _paint(n: Control, which: int) -> void:
 			if not xfs[i].is_empty():
 				_at(n, xfs[i])
 				_fighter(n, i)
+				Hats.on_card(n, self, i, xfs[i], World.TEAM[i])   # p4.22: its winter hat
 	else:
 		_words(n, xfs)
 	n.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -355,7 +359,7 @@ func _view(i: int) -> Dictionary:
 	var tag_ink := Color(0.85, 0.85, 0.9)
 	if kind == 1:
 		if c["me"]:
-			tag = "YOU"
+			tag = "" if hat_button else "YOU"     # p4.22: (the HAT button is there)
 			tag_fill = pal["accent"]
 			tag_ink = Color(0.12, 0.04, 0.0)
 		elif c["away"]:
@@ -387,10 +391,11 @@ func _view(i: int) -> Dictionary:
 		v["tag_ink"] = tag_ink
 	var aws: Array = c["awards"]
 	if not aws.is_empty() and (v["live"] or c["fill"]):
-		var k := int(t / AWARD_S) % aws.size()
+		var k := (int(t / AWARD_S) / Hats.award_share(i)) % aws.size()     # (p4.22: with a hat, every other turn is the hat's)
 		var ph := fmod(t, AWARD_S)
 		v["award"] = aws[k]
 		v["award_sy"] = clampf(minf(ph / 0.18, (AWARD_S - ph) / 0.18), 0.05, 1.0) if aws.size() > 1 else 1.0
+		v["award_sy"] = Hats.award_fold(self, c, i, float(v["award_sy"]))   # p4.22: the ribbon folds away in turn: it hangs where the hat is
 		v["title_size"] = Art.fit_size(Art.DISPLAY, aws[k][0], 28, W - 24, 16)
 		v["why_size"] = Art.fit_size(Art.BODY, aws[k][1], 22, W - 22, 14)
 	return v

@@ -32,7 +32,7 @@ ap.add_argument("--url", default="https://127.0.0.1:8443/v2/index.html")
 ap.add_argument("--server", default="wss://127.0.0.1:8091")
 ap.add_argument("--out", default="/tmp/v2clip")
 ap.add_argument("--name", default="Tav")
-ap.add_argument("--script", default="lobby", help="which steps to film: " + ", ".join(["lobby", "teams", "join", "menu", "tv", "match"]))
+ap.add_argument("--script", default="lobby", help="which steps to film: " + ", ".join(["lobby", "teams", "join", "menu", "tv", "hats", "match", "hatmove"]))
 ap.add_argument("--secs", type=float, default=16.0, help="p4.22 --script match: how many seconds of the match to film (after the tap on START)")
 ap.add_argument("--slowmo", type=float, default=4.0)
 ap.add_argument("--extra", default="", help="more page options, a=1&b=2")
@@ -66,7 +66,14 @@ SCRIPTS = {
     "tv": [(4.0, None)],
     # p4.22 a MATCH: START is tapped, then --secs of it (the countdown, ROUND, FIGHT and on). The server must run
     # with --slowmo N (the same N as --slowmo here): the page gets ?slowmatch=N, and both clocks run N times slower.
+    # (The server's own --slowmo gives fewer ticks a second; Godot's --time-scale would not: it changes a tick's length only.)
     "match": [(0.5, ("tap", (1230, 854))), (a.secs, None)],
+    # p4.22 the winter hats (a server with --season christmas): the HAT button on your own card (seat 1) six times, all the way round
+    "hats": [(0.8, ("tap", (166, 577))), (1.4, ("tap", (166, 577))), (1.4, ("tap", (166, 577))), (1.4, ("tap", (166, 577))),
+             (1.4, ("tap", (166, 577))), (1.4, ("tap", (166, 577))), (1.8, None)],
+    # the hats' own motion with no server: the test page ?hatsheet=move (client/hats.gd Sheet): six fighters, one in each hat,
+    # run, jump, land, turn, roll, aim and are knocked out. One whole turn of the routine is 13 s
+    "hatmove": [(13.6, None)],
 }
 steps = SCRIPTS[a.script]
 
@@ -174,8 +181,8 @@ if a.phone:
     cmd("Emulation.setUserAgentOverride", userAgent="Mozilla/5.0 (Linux; Android 15; SM-S938B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
 else:
     cmd("Emulation.setDeviceMetricsOverride", width=W, height=H, deviceScaleFactor=1, mobile=False)
-join = "" if a.script in ("join", "tv") else f"&name={a.name}&join"
-url = f"{a.url}?server={a.server}{join}&nohowto&slowmo={N:g}" + ("&tv" if a.script == "tv" else "") + (f"&{a.extra}" if a.extra else "")
+join = "" if a.script in ("join", "tv", "hatmove") else f"&name={a.name}&join"
+url = f"{a.url}?server={a.server}{join}&nohowto&slowmo={N:g}" + ("&tv" if a.script == "tv" else "") + ("&hatsheet=move" if a.script == "hatmove" else "") + (f"&{a.extra}" if a.extra else "")
 if a.script == "match":
     url += f"&slowmatch={N:g}"
 cmd("Page.navigate", url=url)
