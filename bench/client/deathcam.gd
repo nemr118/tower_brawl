@@ -23,6 +23,7 @@ signal skip_pressed
 const P = preload("res://sim/proto.gd")
 const World = preload("res://client/world.gd")
 const Banner = preload("res://client/hud_banner.gd")   # p4.17: WINS THE MATCH and MATCH POINT in the banners' style
+const Art = preload("res://client/lobby_art.gd")   # p4.19: the lobby's letters and button style on the replay
 const Polish = preload("res://client/polish.gd")
 const REC_HZ := 20.0
 const KEEP_S := 3.0               # a clip's run-up
@@ -354,7 +355,8 @@ func _paint(n: Control) -> void:
 	var size := Vector2(1920.0, 1080.0) * sc
 	var off := (win - size) / 2.0
 	var r := Rect2(off, size)
-	var font: Font = ThemeDB.fallback_font
+	var new_look := Polish.on("hud2")     # p4.19: the lobby's bold letters, SKIP as a real button
+	var font: Font = Art.BODY if new_look else ThemeDB.fallback_font
 	var sg: Dictionary = segs[seg_i]
 	var c: Dictionary = sg["clip"]
 	n.draw_rect(r, Color(0.72, 0.78, 1.0, 0.07), true)
@@ -396,8 +398,14 @@ func _paint(n: Control) -> void:
 	if can_skip and t_play >= SKIP_WAKE_S:
 		var wake := clampf((t_play - SKIP_WAKE_S) / 0.3, 0.0, 1.0)   # it fades in as it wakes
 		var br := _skip_rect()
-		n.draw_rect(br, Color(0.05, 0.06, 0.1, 0.7 * wake), true)
-		n.draw_rect(br, Color(1, 1, 1, (0.35 if skip_sent else 0.85) * wake), false, 3.0 * sc)
+		if new_look:
+			var wa := roundf(wake * 4.0) / 4.0        # the fade in 4 steps (lobby_art.gd keeps every box it makes)
+			var face := Color(0.36, 0.36, 0.42) if skip_sent else Color(1.0, 0.6, 0.12)
+			n.draw_style_box(Art.box(Color(face, 0.92 * wa), Color(face.darkened(0.65), wa), int(18 * sc), int(maxf(2.0, 3.0 * sc)), int(maxf(3.0, 8.0 * sc)),
+				Color(0, 0, 0, 0.45 * wa), int(8 * sc)), br)
+		else:
+			n.draw_rect(br, Color(0.05, 0.06, 0.1, 0.7 * wake), true)
+			n.draw_rect(br, Color(1, 1, 1, (0.35 if skip_sent else 0.85) * wake), false, 3.0 * sc)
 		var label := "SKIPPING" if skip_sent else "SKIP"
 		var ls := int(36 * sc)
 		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, ls).x
