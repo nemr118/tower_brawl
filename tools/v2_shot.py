@@ -170,7 +170,7 @@ cmd("Runtime.evaluate", expression="(function(){var g=document.getElementById('f
 drain(1.0)
 shot("lobby")
 if a.look_tap:
-    tap(1690, 58)       # p4.19: SETTINGS (lobby.gd: the button at the top right, 1520..1860 x 18..98)
+    tap(1640, 58)       # p4.19: SETTINGS (lobby.gd: the button at the top right, 1520..1860 x 18..98; on a phone 1486..1776)
     drain(1.0)
     shot("lobby_settings")
     tap(1051, 312)      # LOW in the panel's LOOK row (lobby_settings.gd: the second of its choices)

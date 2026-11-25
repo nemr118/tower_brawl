@@ -455,7 +455,9 @@ func set_phone(on: bool) -> void:
 	phone = on
 	controls_btn.visible = on and not one_panel
 	settings.set_controls(buttons_mode, phone)
-	settings_btn.position.x = 1410.0 if on else 1520.0   # a phone: clear of the page's own full-screen button in the corner
+	# a phone: narrower, between the title's last letter and the page's own full-screen button in the corner
+	settings_btn.position.x = 1486.0 if on else 1520.0
+	settings_btn.size.x = 290.0 if on else 340.0
 	help = (HELP_BUTTONS if buttons_mode else HELP_PHONE) if on else HELP_PC
 	dock.queue_redraw()
 
