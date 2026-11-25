@@ -18,6 +18,7 @@ const GAP := 28.0
 var names: Array = []             # up to 12, the most played first
 var taken: Array = []             # the names seated now
 var t := 0.0
+var pal: Dictionary = Art.DRESSES["castle"]   # p4.19: the lobby's dress (lobby.gd sets it)
 var _press := -3                  # the button a press went down on (-1 SOMEONE NEW, -2 none, -3 no press)
 
 func _init() -> void:
@@ -78,19 +79,22 @@ func _text(at: Vector2, s: String, fs: int, col: Color) -> void:
 	draw_string(Art.DISPLAY, p, s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 
 func _draw() -> void:
-	var a := clampf(t / 0.15, 0.0, 1.0)
+	var a := roundf(clampf(t / 0.15, 0.0, 1.0) * 8.0) / 8.0   # the fade in steps: lobby_art.gd keeps every box it makes
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.01, 0.05, 0.92 * a))
 	_text(Vector2(960, 170), "WHO ARE YOU?", 80, Color(GOLD, a))
 	for i in names.size():
 		var r := _rect(i)
 		var off: bool = taken.has(names[i])
-		var face := Color(0.2, 0.3, 0.5) if not off else Color(0.16, 0.16, 0.2)
+		var face: Color = Color(pal["button"]).lightened(0.06) if not off else Color(0.16, 0.16, 0.2)
+		if _press == i and not off:
+			face = face.lightened(0.18)       # p4.19: the button under the finger lights up
 		draw_style_box(Art.box(Color(face, a), Color(face.darkened(0.6), a), 18, 3, 10, Color(0, 0, 0, 0.5 * a), 12), r)
 		var fs := Art.fit_size(Art.DISPLAY, str(names[i]), 62, BTN.x - 40.0, 30)
 		_text(r.get_center() + Vector2(0, fs * 0.34 - 4.0), str(names[i]), fs, Color(1, 1, 1, a) if not off else Color(0.6, 0.6, 0.66, a))
 		if off:
 			_text(Vector2(r.get_center().x, r.end.y - 14.0), "playing now", 22, Color(0.7, 0.7, 0.76, a))
 	var nr := _new_rect()
-	draw_style_box(Art.box(Color(1.0, 0.6, 0.12, a), Color(0.45, 0.2, 0.02, a), 20, 3, 10, Color(1.0, 0.7, 0.2, 0.35 * a), 16), nr)
+	var nface: Color = pal["accent"]
+	draw_style_box(Art.box(Color(nface, a), Color(nface.darkened(0.65), a), 20, 3, 10, Color(nface.r, nface.g, nface.b, 0.35 * a), 16), nr)
 	_text(nr.get_center() + Vector2(0, 18), "SOMEONE NEW", 54, Color(0.13, 0.05, 0.0, a))
 	_text(Vector2(960, 990), "Tap your name. New here? Tap SOMEONE NEW and type one.", 32, Color(0.85, 0.85, 0.95, 0.9 * a))

@@ -218,6 +218,7 @@ const E_STEAM := 41      # a pressure pipe vents steam: x, y its valve; a = whic
 const E_PIE := 42        # p4.18 a pie splats: x, y; a = the shooter; b = 1 BIG
 const E_PIED := 43       # a fighter is covered in cream (it sees nobody for sim.gd's PIED_TICKS): a = fighter
 const E_CATCH_UP := 44   # a person far behind starts the round with a SHIELD (sim.gd catch_up): a = fighter
+const E_PHEW := 45       # p4.19 the round's winner would have died after the round was called: x, y where the hit landed; a = the fighter (the winner); b = what hit: 0 an arrow, 1 a blast, 2 anything else
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held)

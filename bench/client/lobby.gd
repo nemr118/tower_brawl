@@ -248,6 +248,7 @@ func _init() -> void:
 	who.someone_new.connect(func(): name_edit.grab_focus())
 	root.add_child(howto)             # p4.18: over the arena picker too
 	howto.pal = pal
+	who.pal = pal
 	root.add_child(settings)          # p4.19
 	settings.set_dress(pal)
 	settings.look_picked.connect(func(pick): look_picked.emit(pick))
@@ -397,6 +398,7 @@ func _apply_dress(d: String) -> void:
 	settings.set_dress(pal)
 	_name_style()
 	howto.pal = pal
+	who.pal = pal
 	notice_text.add_theme_color_override("font_color", pal["text"])
 	for c in [dock, notice, corner]:
 		c.queue_redraw()

@@ -175,6 +175,7 @@ func _ready() -> void:
 	lobby.look_picked.connect(_pick_look)          # p4.19 SETTINGS: a choice by name, not the next one
 	lobby.controls_picked.connect(func(b): if b != (controls == "buttons"): _on_controls())
 	world.pview.test_cream = opts.has("cream")   # p4.18 a test knob for pictures: PIE's cream on your own screen
+	world.pview.test_phew = opts.has("phew")     # p4.19 a test knob for pictures: a PHEW on your own fighter every 3 s
 	_show_look()
 	sticks = Sticks.new()
 	sticks.pump = str(opts.get("stick", "")) != "old"

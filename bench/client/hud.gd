@@ -26,6 +26,15 @@ const CARD_Y := 10.0
 const CARD_H := 78.0
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.19: the painted crown, cell 5 (lobby.gd IC_CROWN)
 const HEAD_SRC := Rect2(47, 27, 38, 38)   # p4.19: the hooded head in a fighter sheet's first frame (128 px cells)
+# p4.19: a silly line under a round's winner, by the season (the user: "a fun, balanced, silly game").
+# Every screen shows the same one: it is picked from the round's number and the winner's seat.
+const CHEERS := {
+	"harvest": ["GOBBLE GOBBLE!", "PASS THE GRAVY!", "SECOND HELPINGS!", "SAVE ROOM FOR PIE!", "WHO WANTS LEFTOVERS?", "STUFFED!",
+		"THAT'S THE WISHBONE!", "TOP OF THE PECKING ORDER!", "MORE MASHED POTATOES!", "NO NAP FOR YOU!"],
+	"halloween": ["SPOOKY!", "TRICK... AND TREAT!", "BOO-YAH!", "WHAT A SCREAM!", "FANG-TASTIC!", "NO BONES ABOUT IT!"],
+	"": ["BULLSEYE!", "NOT A SCRATCH!", "WHO'S NEXT?", "TOO EASY!", "WHAT A SHOT!", "STILL STANDING!"],
+}
+const DRAW_LINES := {"harvest": "EVERYBODY NAPS AFTER DINNER", "halloween": "NOBODY GETS THE CANDY", "": "NOBODY LEFT STANDING"}
 var CROWN := PackedVector2Array([Vector2(0, 16), Vector2(0, 3), Vector2(6, 9), Vector2(12, 0), Vector2(18, 9), Vector2(24, 3), Vector2(24, 16)])
 
 var seats: Array = []
@@ -63,6 +72,7 @@ var banner_fx = Banner.new()
 var title_pal: Dictionary = {}
 var round_name := ""               # p4.17: the round's winner (the big line) and a draw
 var round_draw := false
+var round_winner := 0              # p4.19: the round winner's seat (it picks the silly line)
 var view := Rect2(0, 0, 1920, 1080)   # p4.17: the part of the 1920 x 1080 design the window shows (the winner's backdrop fills it)
 
 func _init() -> void:
@@ -96,6 +106,7 @@ func round_end(m: Dictionary) -> void:
 		banner_color = Color(0.8, 0.8, 0.8)
 	else:
 		var w := int(m.get("winner", 0))
+		round_winner = w
 		banner = "%s WINS THE ROUND" % str(m.get("name", "")).to_upper()
 		banner_color = World.TEAM[w % 8]
 
@@ -167,9 +178,14 @@ func _banner_spec() -> Array:
 		var col: Color = banner_color
 		if round_draw:
 			main = ["DRAW", 112, Color(0.95, 0.95, 1.0), Color(0.62, 0.62, 0.7), Color(0.25, 0.25, 0.3), 430]
+			if Polish.on("cheers"):
+				extra.append([str(DRAW_LINES.get(Season.now, DRAW_LINES[""])), 36, Color(0.88, 0.88, 0.95), 520])
 		else:
 			main = [round_name, 112, col.lerp(Color.WHITE, 0.55), col, col.darkened(0.6), 430]
 			rib = "WINS THE ROUND"
+			if Polish.on("cheers"):
+				var list: Array = CHEERS.get(Season.now, CHEERS[""])
+				extra.append([str(list[(round_no * 7 + round_winner * 3) % list.size()]), 36, Color(1.0, 0.92, 0.6), 640])
 	return [main, rib, extra]
 
 # The seats with the most points (1 or more): they wear the crown.

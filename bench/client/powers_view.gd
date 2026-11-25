@@ -10,6 +10,7 @@
 # light: the bolt, the sparks, the glow of the orbs and cats, the flash.
 extends Node2D
 
+const LobbyArt = preload("res://client/lobby_art.gd")   # p4.19: its fonts
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const GhostfaceScript = preload("res://client/ghostface.gd")
@@ -59,6 +60,10 @@ var hearts: Array = []             # [pos, secs left]: hearts rising from a pett
 var candy_pops: Array = []         # p4.13 a candy opened: {pos, left, seat, word, icon, trick, at}
 var confetti: Array = []           # [pos, vel, colour, secs left, spin]: a candy's wrapper bits
 var pied := {}                     # p4.18 PIE: seat -> when (t) it was covered in cream
+var phews: Array = []              # p4.19 PHEW: {at, seat, t0, what, dir}: the round's winner was hit after the call, and is safe
+const PHEW_S := 1.7
+var test_phew := false             # a test knob (the page's ?phew): a PHEW on your own fighter every 3 s (pictures)
+var _phew_next := 2.0
 var test_cream := false            # a test knob (the page's ?cream): the cream on your own screen, again and again (pictures)
 const PIED_S := SimScript.PIED_TICKS / 60.0
 const FEATHER_COLS := [Color(0.55, 0.3, 0.12), Color(0.95, 0.5, 0.1), Color(0.85, 0.2, 0.1), Color(0.98, 0.8, 0.25), Color(1, 1, 1)]
@@ -74,7 +79,7 @@ class _Glow extends Node2D:
 func setup(w, glow_parent: Node2D, add_mat: Material, colors: Array) -> void:
 	world = w
 	team = colors
-	font = ThemeDB.fallback_font
+	font = LobbyArt.BODY if Polish.on("hud2") else ThemeDB.fallback_font   # p4.19: the lobby's bold letters on the arena's labels too
 	z_index = 5                     # over the arrows and clouds of the threats layer
 	glow_node = _Glow.new()
 	glow_node.pv = self
@@ -110,6 +115,10 @@ func show_view(s: Dictionary, delta: float, my_seat: int) -> void:
 	for p in pops:
 		p[3] -= delta
 	pops = pops.filter(func(p): return p[3] > 0.0)
+	phews = phews.filter(func(ph): return t - float(ph["t0"]) < PHEW_S)
+	if test_phew and t > _phew_next and fighters.has(me):
+		_phew_next = t + 3.0
+		on_event([P.E_PHEW, float(fighters[me]["x"]) + 40.0, float(fighters[me]["y"]) + 20.0, me, int(t / 3.0) % 3])
 	for h in hearts:
 		h[1] -= delta
 	hearts = hearts.filter(func(h): return h[1] > 0.0)
@@ -282,6 +291,19 @@ func on_event(e: Array) -> void:
 	elif type == P.E_PIED:       # covered in cream (your own screen gets the splat: _draw)
 		pied[int(e[3])] = t
 		_pop(pos + Vector2(0, -30), "SPLAT!", Color(1.0, 0.97, 0.9), 1.0, true)
+	elif type == P.E_PHEW:       # p4.19: the round was called, then something hit its winner. The winner is safe (the user:
+		# "winner is safe, but can we do something silly to show the winner would have died?"): what hit
+		# turns into a drumstick (a rubber chicken out of the Harvest season) and bounces off; PHEW! over the winner.
+		var who := int(e[3])
+		var fw: Dictionary = fighters.get(who, {})
+		var away := 1.0 if fw.is_empty() or pos.x >= float(fw["x"]) + 18.0 else -1.0
+		phews.append({"at": pos, "seat": who, "t0": t, "what": int(e[4]), "dir": away})
+		_pop(pos + Vector2(0, -40), ["TOO LATE!", "NICE TRY!", "NOPE!"][clampi(int(e[4]), 0, 2)], GOLD, 1.5, true)
+		rings.append([pos, 70.0, Color(1, 1, 1, 0.9), 0.3, 0.3])
+		for i in 14:
+			var ang := TAU * i / 14.0 + randf() * 0.4
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(160.0, 420.0) + Vector2(0, -160.0), CANDY_COLS[i % CANDY_COLS.size()],
+				randf_range(0.7, 1.2), randf() * TAU])
 	elif type == P.E_CATCH_UP:   # far behind: a SHIELD from the start
 		rings.append([pos + Vector2(0, 30), 80.0, COLORS[P.PU_SHIELD], 0.5, 0.5])
 		_pop(pos + Vector2(0, -36), "HEAD START", COLORS[P.PU_SHIELD], 1.6, false, P.PU_SHIELD)
@@ -390,6 +412,8 @@ func _draw() -> void:
 				_text_c(at + Vector2(0, r + 18.0), p[1], 17 if p[5] else 15, Color(col.lerp(Color.WHITE, 0.4), a))
 		else:
 			_text_c(at, p[1], 22 if p[5] else 18, Color(col, a))
+	for ph in phews:
+		_draw_phew(ph)
 	var cream_k := clampf(1.0 - (t - float(pied.get(me, -99.0))) / PIED_S, 0.0, 1.0)
 	if test_cream:
 		_draw_cream_screen(1.0 - fposmod(t, PIED_S) / PIED_S)
@@ -1040,3 +1064,62 @@ func _paint_glow(g: Node2D) -> void:
 	for cd in view.get("cats", []):
 		g.draw_circle(Vector2(cd["x"], cd["y"] - 6.0), 46.0, Color(0.45, 1.0, 0.55, 0.16))
 		g.draw_circle(Vector2(cd["x"], cd["y"] - 6.0), 28.0, Color(0.55, 1.0, 0.65, 0.2))
+
+# p4.19 PHEW: the thing that bounced off the winner tumbles away in an arc (a drumstick in the
+# Harvest season, else a rubber chicken); over the winner a speech bubble, PHEW!, and three
+# drops of sweat.
+func _draw_phew(ph: Dictionary) -> void:
+	var age: float = t - float(ph["t0"])
+	var k := age / PHEW_S
+	var dir: float = ph["dir"]
+	var at: Vector2 = ph["at"]
+	var fade := clampf((1.0 - k) * 4.0, 0.0, 1.0)
+	# the prop: up and away, then down, spinning
+	var pp := at + Vector2(dir * 260.0 * age, -420.0 * age + 620.0 * age * age)
+	draw_set_transform(pp, age * 9.0 * dir, Vector2.ONE * 1.5)
+	if Season.harvest():
+		draw_line(Vector2(6, 0), Vector2(26, 0), Color(0.16, 0.08, 0.03, fade), 9.0)          # the bone, with its edge
+		draw_line(Vector2(6, 0), Vector2(26, 0), Color(1.0, 0.97, 0.9, fade), 5.0)
+		for side in [-1.0, 1.0]:
+			draw_circle(Vector2(27, side * 4.0), 5.5, Color(0.16, 0.08, 0.03, fade))
+			draw_circle(Vector2(27, side * 4.0), 3.8, Color(1.0, 0.97, 0.9, fade))
+		draw_circle(Vector2(-4, 0), 15.0, Color(0.16, 0.08, 0.03, fade))                       # the meat
+		draw_circle(Vector2(-4, 0), 12.5, Color(0.72, 0.4, 0.15, fade))
+		draw_circle(Vector2(-8, -4), 5.0, Color(0.9, 0.6, 0.3, fade))
+	else:
+		draw_circle(Vector2(0, 0), 14.0, Color(0.2, 0.12, 0.0, fade))                           # a rubber chicken: body
+		draw_circle(Vector2(0, 0), 11.5, Color(1.0, 0.86, 0.25, fade))
+		draw_line(Vector2(8, -6), Vector2(22, -16), Color(0.2, 0.12, 0.0, fade), 12.0)          # neck
+		draw_line(Vector2(8, -6), Vector2(22, -16), Color(1.0, 0.86, 0.25, fade), 8.0)
+		draw_circle(Vector2(24, -18), 8.0, Color(0.2, 0.12, 0.0, fade))
+		draw_circle(Vector2(24, -18), 6.0, Color(1.0, 0.86, 0.25, fade))
+		draw_circle(Vector2(24, -26), 3.5, Color(0.9, 0.2, 0.15, fade))                         # comb
+		draw_colored_polygon(PackedVector2Array([Vector2(29, -20), Vector2(38, -17), Vector2(29, -14)]), Color(1.0, 0.5, 0.1, fade))
+		draw_circle(Vector2(25, -19), 1.6, Color(0, 0, 0, fade))
+		for side in [-1.0, 1.0]:
+			draw_line(Vector2(-6, 8), Vector2(-14 + side * 3.0, 22), Color(1.0, 0.5, 0.1, fade), 3.0)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# the winner: PHEW! in a bubble that pops in, and sweat
+	var f: Dictionary = fighters.get(int(ph["seat"]), {})
+	if f.is_empty():
+		return
+	var head := Vector2(float(f["x"]) + 18.0, float(f["y"]) - 6.0)
+	var pop := 1.0 + 0.4 * clampf(1.0 - age / 0.18, 0.0, 1.0)
+	var word := "PHEW!"
+	var fs := 30
+	var w := LobbyArt.DISPLAY.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 30.0
+	var bc := Vector2(clampf(head.x, w * 0.5 + 10.0, 1910.0 - w * 0.5), maxf(60.0, head.y - 62.0))
+	draw_set_transform(bc, -0.06, Vector2.ONE * pop)
+	var a8 := roundf(fade * 8.0) / 8.0
+	draw_colored_polygon(PackedVector2Array([Vector2(-10, 20), Vector2(10, 20), Vector2(0, 40)]), Color(0.06, 0.04, 0.1, a8))
+	draw_style_box(LobbyArt.box(Color(1, 1, 1, a8), Color(0.06, 0.04, 0.1, a8), 14, 4), Rect2(-w * 0.5, -24, w, 48))
+	draw_colored_polygon(PackedVector2Array([Vector2(-6, 20), Vector2(6, 20), Vector2(0, 33)]), Color(1, 1, 1, a8))
+	draw_string(LobbyArt.DISPLAY, Vector2(-w * 0.5 + 15.0, 11.0), word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.08, 0.05, 0.12, a8))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	for i in 3:
+		var dk := clampf(age / 0.7, 0.0, 1.0)
+		var dv := Vector2((i - 1) * 46.0 - dir * 16.0, -30.0 - i % 2 * 14.0) * dk + Vector2(0, 60.0 * dk * dk)
+		var dp := head + Vector2(0, -8) + dv
+		var da := (1.0 - dk) * fade
+		draw_circle(dp, 5.0, Color(0.55, 0.85, 1.0, da))
+		draw_colored_polygon(PackedVector2Array([dp + Vector2(-4, -2), dp + Vector2(0, -12), dp + Vector2(4, -2)]), Color(0.55, 0.85, 1.0, da))
