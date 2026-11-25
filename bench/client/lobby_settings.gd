@@ -106,7 +106,7 @@ func _layout() -> void:
 		if not r["shown"]:
 			continue
 		if r["key"] == "season":
-			y += 58.0 if shown_n <= 5 else 44.0     # room for the EVERYONE heading
+			y += 58.0 if shown_n <= 5 else 54.0     # room for the EVERYONE heading
 		r["y"] = y
 		var n := live.size()
 		var w := (SEG_W - (n - 1) * 12.0) / n
@@ -220,7 +220,7 @@ func _draw() -> void:
 			continue
 		var y: float = r["y"]
 		if r["key"] == "season":
-			_heading(x, y - 28.0, "EVERYONE")
+			_heading(x, y - 20.0, "EVERYONE")
 		Art.text(self, Art.DISPLAY, Vector2(x, y + 44.0), r["label"], 44, txt, 5, Color(0.03, 0.01, 0.05))
 		var hint: String = r["hint"]
 		if r["key"] == "look" and r["note"] != "":

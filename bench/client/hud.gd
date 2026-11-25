@@ -113,7 +113,13 @@ func round_end(m: Dictionary) -> void:
 		var w := int(m.get("winner", 0))
 		round_winner = w
 		if Polish.on("juice") and not hidden:     # p4.20: the +1 starts for the winner's card as the round is called
-			gains.append([w, 0.0, _points_of(w)])
+			var wt := Teams.msg_team(m)           # (TEAMS: a +1 for every card of the team that won)
+			if wt < 0:
+				gains.append([w, 0.0, _points_of(w)])
+			else:
+				for st in seats:
+					if int(st.get("kind", 0)) != 0 and Teams.team(int(st["i"])) == wt:
+						gains.append([int(st["i"]), 0.0, _points_of(int(st["i"]))])
 		banner = "%s WINS THE ROUND" % str(m.get("name", "")).to_upper()
 		banner_color = World.TEAM[w % 8]
 		if Teams.msg_team(m) >= 0:     # TEAMS: a team won: its name is in the message already, the banner takes its colour
