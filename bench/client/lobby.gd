@@ -30,6 +30,7 @@ signal season_picked(pick: String)   # p4.18: the SEASON button's next choice (s
 signal look_picked(pick: String)     # p4.19 SETTINGS (lobby_settings.gd): auto, low, normal or high
 signal controls_picked(buttons: bool)
 signal sound_picked(on: bool)
+signal music_picked(on: bool)        # p4.20 SETTINGS' MUSIC row
 
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
@@ -254,6 +255,7 @@ func _init() -> void:
 	settings.look_picked.connect(func(pick): look_picked.emit(pick))
 	settings.controls_picked.connect(func(b): controls_picked.emit(b))
 	settings.sound_picked.connect(func(on): sound_picked.emit(on))
+	settings.music_picked.connect(func(on): music_picked.emit(on))
 	settings.season_picked.connect(func(pick): season_picked.emit(pick))
 	visibility_changed.connect(_on_visibility)
 
@@ -450,6 +452,10 @@ func set_sound(on: bool, shown: bool) -> void:
 	sound_on = on
 	sound_shown = shown
 	settings.set_sound(on, shown)
+
+# p4.20: MUSIC's row in SETTINGS.
+func set_music(on: bool, shown: bool) -> void:
+	settings.set_music(on, shown)
 
 func set_phone(on: bool) -> void:
 	phone = on

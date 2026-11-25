@@ -303,7 +303,8 @@ func on_message(m: Dictionary, me: int) -> void:
 		else:
 			_play("round_win", int(m.get("winner", -1)) == me)
 	elif kind == "match_end" and _watching():
-		_play("fanfare", true)
+		if client == null or client.music == null or not client.music.has_winner():   # p4.20: the winner's song plays in the fanfare's place
+			_play("fanfare", true)
 	elif kind == "seats":
 		var n := int(m.get("people", 0))
 		if people >= 0 and n > people and int(m.get("phase", 0)) == P.PH_LOBBY:

@@ -39,6 +39,7 @@ const Predict = preload("res://client/predict.gd")
 const Present = preload("res://client/present.gd")
 const PV = preload("res://client/powers_view.gd")
 const Season = preload("res://client/season.gd")   # p4.18
+const Music = preload("res://client/music.gd")     # p4.20: the songs (their own switch, off until picked)
 const Sfx = preload("res://client/sfx.gd")         # p4.19: the sounds
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
@@ -117,6 +118,7 @@ var rep_errors := 0
 var rep_mouse_shots := 0
 var rep_ua := ""
 var deathcam                      # p4.8: the match end's montage of the winner's kills
+var music                         # p4.20: client/music.gd
 var silly_now := 0                # p4.20: the silly round the seats message last named
 var sfx                           # p4.19: the sounds (client/sfx.gd; sfx.set_on(true or false) for the lobby's SOUND button)
 var match_msg := {}               # the match_end message, shown once the montage is done
@@ -205,6 +207,13 @@ func _ready() -> void:
 	add_child(sfx)
 	sfx.setup(self)
 	lobby.set_sound(sfx.on, true)                  # SETTINGS has a SOUND row
+	music = Music.new()                            # p4.20
+	add_child(music)
+	music.setup(self)
+	lobby.set_music(music.on, true)
+	lobby.music_picked.connect(func(v):
+		music.set_on(v)
+		lobby.set_music(music.on, true))
 	lobby.sound_picked.connect(func(v):
 		sfx.set_on(v)
 		lobby.set_sound(sfx.on, true))
@@ -408,7 +417,8 @@ func _process(delta: float) -> void:
 	_watch_frames(not show_lobby and phase >= P.PH_ROUND_START)
 	hud.update(seats_msg, s, my_seat, delta, fps_now, net.last_rtt, opts.has("info"), show_lobby)
 	lobby.visible = show_lobby
-	lobby.tv_sound_hint = tv and sfx.on and not sfx.unlocked   # p4.19: a browser plays no sound before one click
+	lobby.tv_sound_hint = tv and (sfx.on or music.on) and not (sfx.unlocked or music.unlocked)   # p4.19: a browser plays no sound before one click
+	music.set_scene(show_lobby, phase, P.PH_MATCH_END)   # p4.20: the lobby's song, the match's, the winner's
 	sticks.visible = sticks.active and not show_lobby and not deathcam.playing and phase != P.PH_MATCH_END   # the winner's screen: nobody plays
 	hud.visible = not deathcam.playing
 	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad, stuck_url)

@@ -12,6 +12,7 @@ extends Control
 signal look_picked(pick: String)
 signal controls_picked(buttons: bool)
 signal sound_picked(on: bool)
+signal music_picked(on: bool)        # p4.20
 signal season_picked(pick: String)
 
 const Art = preload("res://client/lobby_art.gd")
@@ -35,13 +36,14 @@ func _init() -> void:
 	_row("look", "LOOK", "How fancy the picture is.", [["auto", "AUTO"], ["low", "LOW"], ["normal", "NORMAL"], ["high", "HIGH"]])
 	_row("controls", "CONTROLS", "How you jump and dodge.", [["classic", "CLASSIC"], ["buttons", "BUTTONS"]])
 	_row("sound", "SOUND", "Silly sounds, on this device.", [["off", "OFF"], ["on", "ON"]])
+	_row("music", "MUSIC", "Songs, on this device.", [["off", "OFF"], ["on", "ON"]])   # p4.20
 	_row("season", "SEASON", "The game's holiday.", [["auto", "AUTO"], ["off", "OFF"], ["halloween", "HALLOWEEN"], ["harvest", "HARVEST"]])
 	add_child(done)
 	done.pressed.connect(close)
 	_layout()
 
 func _row(key: String, label: String, hint: String, choices: Array) -> void:
-	var row := {"key": key, "label": label, "hint": hint, "choices": choices, "value": "", "btns": [], "shown": key != "sound", "note": ""}
+	var row := {"key": key, "label": label, "hint": hint, "choices": choices, "value": "", "btns": [], "shown": key != "sound" and key != "music", "note": ""}
 	for ch in choices:
 		var b = Art.Btn.new()
 		add_child(b)
@@ -58,6 +60,8 @@ func _picked(key: String, v: String) -> void:
 			controls_picked.emit(v == "buttons")
 		"sound":
 			sound_picked.emit(v == "on")
+		"music":
+			music_picked.emit(v == "on")
 		"season":
 			season_picked.emit(v)
 
@@ -70,6 +74,11 @@ func _row_of(key: String) -> Dictionary:
 # The rows that show, top to bottom, and each one's buttons in their places and colours.
 func _layout() -> void:
 	var y := CARD.position.y + 196.0
+	var shown_n := 0
+	for r in rows:
+		if r["shown"]:
+			shown_n += 1
+	var row_h := ROW_H if shown_n <= 4 else 102.0     # five rows (a phone with SOUND and MUSIC): closer together
 	for r in rows:
 		var btns: Array = r["btns"]
 		var live: Array = []
@@ -94,9 +103,9 @@ func _layout() -> void:
 				b.setup(Color(pal["button"]).darkened(0.25), Color(pal["text"], 0.9), 38)
 			b.say("", str(r["choices"][live[k]][1]))
 			b.position = Vector2(SEG_X + k * (w + 12.0), y)
-			b.size = Vector2(w, 92.0)
+			b.size = Vector2(w, 92.0 if shown_n <= 4 else 84.0)
 			b.disabled = r["key"] == "season" and not season_ok and not picked
-		y += ROW_H
+		y += row_h
 	done.setup(pal["accent"], Color(0.13, 0.05, 0.0), 52)
 	done.say("", "DONE")
 	done.position = Vector2(760, CARD.end.y - 124.0)
@@ -125,6 +134,12 @@ func set_controls(buttons: bool, is_phone: bool) -> void:
 # shown false: this build has no sound (the row hides).
 func set_sound(on: bool, shown: bool) -> void:
 	var r := _row_of("sound")
+	r["value"] = "on" if on else "off"
+	r["shown"] = shown
+	_layout()
+
+func set_music(on: bool, shown: bool) -> void:
+	var r := _row_of("music")
 	r["value"] = "on" if on else "off"
 	r["shown"] = shown
 	_layout()
