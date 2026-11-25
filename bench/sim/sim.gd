@@ -381,6 +381,7 @@ class Fighter:
 	var pied_t: int = 0         # p4.18 PIE: covered in cream this many ticks more (it sees nobody)
 	var caught_up: bool = false # p4.18: it started this round with catch_up's SHIELD (said once, at FIGHT)
 	var down_t: int = 0         # knocked down (GHOSTFACE) this many more ticks
+	var was_down: bool = false  # p4.22: it was knocked down once already this round (mask_once: the next hit ends it)
 	var knife_t: int = 0        # a slash's ticks left
 	var knife_cd: int = 0       # ticks until it can slash again
 	var knife_hit: bool = false # this slash landed already
@@ -485,6 +486,11 @@ var self_harm := false
 # the spots: two could start side by side, and a 2-fighter round lasted 4.4 s (bots).
 var far_starts := true
 var knife_lunge := KNIFE_LUNGE  # the costume's lunge, px a tick (the probe tries others)
+# p4.22 the costume's strength (tools/balance_probe.gd --mask-once, --mask-down=N): among bots its wearer won 45% of
+# 8-fighter rounds. mask_once: a costume gets up from ONE knock-down; the next hit ends it, standing or down
+# ("two hits to end", as the game always said). Off: it gets up every time (before p4.22).
+var mask_once := true
+var mask_down := MASK_DOWN      # how long a knocked-down costume lies there, ticks
 # Two knobs for the classes study (tools/ammo_probe.gd, docs/reference/classes-scope.md); the game leaves both alone:
 var start_quiver := START_QUIVER   # the arrows a fighter starts a round with
 var melee_no_pickup := false       # a fighter in a costume (no bow) walks over arrows and leaves them
@@ -976,10 +982,10 @@ func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1
 				0 if cause == 1 else (1 if cause == 2 else 2))
 		return
 	if f.mask and cause != 6 and cause != P.C_LEFT:   # GHOSTFACE: a hit knocks it down; a hit while it is down is the end
-		if f.down_t <= 0 and not melee_one_hit:
+		if f.down_t <= 0 and not melee_one_hit and not (mask_once and f.was_down):
 			_collapse(f)
 			return
-		if f.down_t > MASK_DOWN - MASK_GRACE:
+		if f.down_t > mask_down - MASK_GRACE:
 			return        # the same hit (a blast, the fire it fell in) does not count twice
 	f.down_t = 0
 	f.knife_t = 0
@@ -2164,10 +2170,11 @@ func _update_candies() -> void:
 
 # GHOSTFACE knocked down: it falls and lies MASK_DOWN ticks (a hurt that lasts), then gets up.
 func _collapse(f: Fighter) -> void:
-	f.down_t = MASK_DOWN
+	f.down_t = mask_down
+	f.was_down = true
 	f.state = P.F_HURT
 	f.state_t = 0
-	f.dodge_t = MASK_DOWN
+	f.dodge_t = mask_down
 	f.aiming = false
 	f.drawn = false
 	f.shot_wait = false

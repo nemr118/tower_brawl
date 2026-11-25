@@ -22,6 +22,8 @@ var sizes: Array = [8, 4, 2]
 var arenas: Array = []
 var level := 2
 var lunge := -1.0        # --lunge=N: the costume's lunge (sim.gd knife_lunge)
+var mask_once := -1      # --mask-once=0|1: the costume gets up from one knock-down only (sim.gd mask_once; -1: the game's own)
+var mask_down := -1      # --mask-down=N: how long it lies there, ticks (sim.gd mask_down; -1: the game's own)
 var all_spots := false   # --spots: every start spot's share of wins, not just the best and the worst
 var old_rules := false   # --old: your own blast knocks you out, the starts are shuffled over every spot (before p4.19)
 var total := {}          # the sum over every arena, by size
@@ -43,6 +45,10 @@ func _init() -> void:
 			level = int(a.substr(8))
 		elif a.begins_with("--lunge="):
 			lunge = float(a.substr(8))
+		elif a.begins_with("--mask-once="):
+			mask_once = int(a.substr(12))
+		elif a.begins_with("--mask-down="):
+			mask_down = int(a.substr(12))
 		elif a == "--old":
 			old_rules = true
 		elif a == "--spots":
@@ -89,6 +95,10 @@ func _run(arena: int, n: int, shield: int) -> Dictionary:
 	s.walls_start = 25 * 60       # the purple walls, as the server sets them
 	if lunge >= 0.0:
 		s.knife_lunge = lunge
+	if mask_once >= 0:
+		s.mask_once = mask_once == 1
+	if mask_down >= 0:
+		s.mask_down = mask_down
 	if old_rules:
 		s.self_harm = true
 		s.far_starts = false

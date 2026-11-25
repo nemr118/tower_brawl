@@ -76,6 +76,10 @@ var sack_fly: Array = []           # {from, by, col, t0}: one on its way into th
 var gifts: Array = []              # {spot, floor, t0}: the giant present that just landed
 var sleigh_outs: Array = []        # {x, t0}: the sleigh flying on after its drop
 var squashed := {}                 # seat -> when (t) the present landed on it
+var prints: Array = []             # [pos, t0, dir]: footprints in the snow (a snowy arena: world.fx.snowy), gone after PRINT_S
+var print_x := {}                  # seat -> where it left its last footprint
+const PRINT_S := 5.0
+const PRINT_MAX := 96
 var test_phew := false             # a test knob (the page's ?phew): a PHEW on your own fighter every 3 s (pictures)
 var _phew_next := 2.0
 var test_cream := false            # a test knob (the page's ?cream): the cream on your own screen, again and again (pictures)
@@ -135,6 +139,25 @@ func show_view(s: Dictionary, delta: float, my_seat: int) -> void:
 	gifts = gifts.filter(func(q): return t - float(q["t0"]) < 0.54)
 	sleigh_outs = sleigh_outs.filter(func(q): return t - float(q["t0"]) < 4.0)
 	knifed.clear()
+	# p4.22 footprints: on a snowy arena whoever runs on the ground leaves one every 18 px
+	if world != null and world.fx != null and world.fx.snowy:
+		for seat in fighters:
+			var pf: Dictionary = fighters[seat]
+			var pp: Dictionary = powers.get(seat, {})
+			if pf["state"] == P.F_DEAD or (int(pf["flags"]) & 2) == 0 or (int(pp.get("bits", 0)) & (P.PW_INVIS | P.PW_BATS)) != 0:
+				print_x.erase(seat)
+				continue
+			var px: float = float(pf["x"]) + 18.0
+			if not print_x.has(seat) or absf(px - float(print_x[seat])) > 400.0:
+				print_x[seat] = px          # (a first step, or through the wrap: no trail across the arena)
+			elif absf(px - float(print_x[seat])) >= 18.0:
+				prints.append([Vector2(px, float(pf["y"]) + 63.0), t, signf(px - float(print_x[seat]))])
+				print_x[seat] = px
+		if prints.size() > PRINT_MAX:
+			prints = prints.slice(prints.size() - PRINT_MAX)
+		prints = prints.filter(func(q): return t - float(q[1]) < PRINT_S)
+	elif not prints.is_empty():
+		prints.clear()
 	if test_phew and t > _phew_next and fighters.has(me):
 		_phew_next = t + 3.0
 		on_event([P.E_PHEW, float(fighters[me]["x"]) + 40.0, float(fighters[me]["y"]) + 20.0, me, int(t / 3.0) % 3])
@@ -416,6 +439,10 @@ func _draw() -> void:
 			_draw_warning(o)
 		else:
 			_draw_orb(o)
+	for q in prints:                     # p4.22: footprints in the snow, fading
+		var pa: float = clampf(1.0 - (t - float(q[1])) / PRINT_S, 0.0, 1.0)
+		var pv: Vector2 = q[0]
+		draw_rect(Rect2(pv.x - 4.0 + float(q[2]) * 2.0, pv.y - 5.0, 7.0, 3.0), Color(0.3, 0.42, 0.62, 0.8 * pa))
 	for q in gifts:                      # p4.22: the giant present that just landed bursts open over its orb
 		XV.landed_gift(self, q["spot"], float(q["floor"]), t - float(q["t0"]))
 	for cd in view.get("candies", []):
@@ -903,6 +930,8 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 	var top := Vector2(c.x, f["y"])
 	var seat := int(f["id"])
 	var tc: Color = team[seat % team.size()] if team.size() > 0 else Color.WHITE
+	if (int(pw.get("mask", 0)) & P.PX_ICY) != 0 and (int(f["flags"]) & 2) != 0:   # p4.22 SLIP AND SLIDE: on the ice
+		XV.skid(self, Vector2(c.x, f["y"] + 63.0), float(f.get("vx", 0.0)), a, t + seat)
 	if (bits & P.PW_FLY) != 0:
 		var flap := sin(t * 14.0 + seat) * 0.35
 		for side in [-1.0, 1.0]:

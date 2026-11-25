@@ -271,6 +271,20 @@ static func snowball(ci: CanvasItem, p: Vector2, r: float, a: float) -> void:
 	ci.draw_circle(p, r, Color(0.8, 0.9, 1.0, a))
 	ci.draw_circle(p + Vector2(-r * 0.2, -r * 0.2), r * 0.72, Color(1, 1, 1, a))
 
+# SLIP AND SLIDE: under a fighter on the ice a pale sheet glints, and a slide leaves streaks behind its feet.
+static func skid(ci: CanvasItem, feet: Vector2, vx: float, a: float, tt: float) -> void:
+	ci.draw_rect(Rect2(feet.x - 34.0, feet.y - 5.0, 68.0, 7.0), Color(0.1, 0.3, 0.55, 0.8 * a))      # a slab of blue ice (it shows on snow too)
+	ci.draw_rect(Rect2(feet.x - 32.0, feet.y - 4.0, 64.0, 5.0), Color(0.45, 0.82, 1.0, 0.95 * a))
+	ci.draw_line(feet + Vector2(-24.0, -2.5), feet + Vector2(-8.0, -2.5), Color(1, 1, 1, 0.9 * a), 2.0)
+	ci.draw_line(feet + Vector2(4.0, -1.0), feet + Vector2(12.0, -1.0), Color(1, 1, 1, 0.7 * a), 1.5)
+	var tw := fposmod(tt * 1.7, 1.0)
+	sparkle(ci, feet + Vector2(18.0, -3.0), 6.0 * sin(tw * PI), Color(1, 1, 1, sin(tw * PI) * a))
+	if absf(vx) > 1.2:
+		var back := -signf(vx)
+		for i in 3:
+			var x0 := feet.x + back * (16.0 + i * 14.0)
+			ci.draw_line(Vector2(x0, feet.y - 3.0 - i * 5.0), Vector2(x0 + back * minf(absf(vx) * 5.0, 34.0), feet.y - 3.0 - i * 5.0), Color(0.85, 0.95, 1.0, (0.7 - i * 0.2) * a), 2.5)
+
 # A breath in the cold: a small puff rising from a fighter's head (k 0..1 of its life).
 static func breath(ci: CanvasItem, head: Vector2, dir: float, k: float) -> void:
 	var p := head + Vector2(dir * (12.0 + 16.0 * k), -4.0 - 14.0 * k)
