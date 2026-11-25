@@ -564,6 +564,7 @@ def main():
     rss_first = [None]
     log_pos = [0]
     round_open = [False]
+    slow_lines = []
     counts = collections.Counter()
     seen_rounds = set()
 
@@ -587,8 +588,9 @@ def main():
         names, cids = {}, {}
         for s in st["seats"]:
             i, kind = s["i"], s["kind"]
-            if kind == 0 and (s["points"] != 0 or s["name"] != "" or s["crowns"] != 0):
-                find(f"an empty seat with something on it: seat {i} name '{s['name']}' points {s['points']} crowns {s['crowns']}", f"empty {i}")
+            # (crowns are left out: a bot's match wins stay on its seat between matches, by design)
+            if kind == 0 and (s["points"] != 0 or s["name"] != ""):
+                find(f"an empty seat with something on it: seat {i} name '{s['name']}' points {s['points']}", f"empty {i}")
             if s["points"] < 0 or (st["phase"] != PH_LOBBY and st["goal"] > 0 and s["points"] > st["goal"]):
                 find(f"points out of range: seat {i} '{s['name']}' has {s['points']} (goal {st['goal']})", f"points {i}")
             if kind == 1:
@@ -656,6 +658,8 @@ def main():
                 if round_open[0]:
                     counts["rounds cut short (host stop, too few fighters)"] += 1
                 round_open[0] = False
+            if "[SLOW]" in line:
+                slow_lines.append(line.strip()[:260])
             for word, name in (("PHEW:", "PHEW lines (the winner was saved)"), ("[MATCH] end after", "matches ended with a winner"),
                                ("[MATCH] start", "matches started"), ("is back from", "seats taken back by a token"),
                                (": held ", "seats held after a drop"), ("went silent", "silent sockets dropped"), ("no point:", "no-point lines"),
@@ -732,6 +736,10 @@ def main():
     print("   seen: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])))
     print(f"   the server's tick, the worst 5 s: mean {worst['tick_mean_ms']:.2f} ms, p99 {worst['tick_p99_ms']:.2f} ms, max {worst['tick_max_ms']:.2f} ms; "
           f"interval max {worst['interval_max_ms']:.1f} ms; memory {rss_first[0] or 0:.0f} -> {worst['rss_mb']:.0f} MB at most")
+    if slow_lines:
+        print(f"   the server's own [SLOW] lines (a tick over 12 ms): {len(slow_lines)}")
+        for l in slow_lines[:12]:
+            print("     " + l)
     left_open = counts["rounds started (the log)"] - counts["rounds ended"] - counts["rounds cut short (host stop, too few fighters)"]
     print(f"   every round ends: {counts['rounds started (the log)']} started = {counts['rounds ended']} ended + "
           f"{counts['rounds cut short (host stop, too few fighters)']} cut short by the lobby + {left_open} still on when the soak stopped")

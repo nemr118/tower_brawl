@@ -95,6 +95,7 @@ const DRAW_TICKS := 60           # nobody left: a shorter DRAW banner
 # 3.6 s after 3 kills, 0.8 s after 6.
 const MATCH_END_TICKS := 480
 const REPORT_S := 5
+const SLOW_TICK_US := 12000      # a tick this slow (12 ms of its 16.7) gets a [SLOW] line
 # A socket that sends nothing for 3 s is a drop (the review's bug 5). A page sends a
 # ping every 0.5 s and 60 inputs a second, so 3 s of nothing is a frozen page or a dead
 # link. Before, the server never noticed: the fighter ran on with its last buttons held
@@ -453,6 +454,13 @@ func _physics_process(_dt: float) -> void:
 	var t3 := Time.get_ticks_usec()
 	tick_us.append(t3 - t0)
 	sim_us_sum += t2 - t1
+	if t3 - t0 > SLOW_TICK_US:
+		# A tick has 16.7 ms. The chaos soak saw 6 ticks over 16 ms in 42 minutes (the worst
+		# 33 ms), most in a server's first minute. This line says where such a tick's time
+		# went, for the night's log (print, not _say: it is no event for the host page).
+		print("🏰 [SLOW] tick %d took %.1f ms: the inbox, the seats and the match %.1f, the inputs and the simulation %.1f, the snapshot and the sends %.1f; phase %s, round %d on %s, %d fighters, %.1f s after FIGHT" % [
+			sim.tick, (t3 - t0) / 1000.0, (t1 - t0) / 1000.0, (t2 - t1) / 1000.0, (t3 - t2) / 1000.0, PHASE_NAMES[phase], round_no,
+			sim.level.name, sim.fighters.size(), sim.play_t / 60.0])
 	if Time.get_ticks_msec() - sec_start_ms >= REPORT_S * 1000:
 		_report()
 	if seconds_limit > 0 and Time.get_ticks_msec() - started_ms >= seconds_limit * 1000:
@@ -1161,6 +1169,12 @@ func _start_round() -> void:
 			s.name = P.bot_name(s.i, sim.season)     # p4.19: GRAVY, STUFFING... by the season (proto.gd BOT_NAMES)
 			s.points = s.points if round_no > 1 else 0
 			to_place -= 1
+	for s in seats:
+		# A seat a bot sat on last round and nobody sits on now (fewer bots this round): its
+		# name and points go. The chaos soak found empty seats still called BOT 8 with a point.
+		if s.kind == 0 and (s.name != "" or s.points != 0):
+			s.name = ""
+			s.points = 0
 	var seat_list: Array = []
 	for s in seats:
 		s.in_round = s.kind != 0
@@ -1214,6 +1228,7 @@ func _to_lobby() -> void:
 		if s.kind == 2:
 			s.kind = 0
 			s.name = ""
+			s.points = 0      # (the match is over: an empty seat keeps no points; the soak found one with 1)
 		s.in_round = false
 	phase = P.PH_LOBBY
 	phase_t = 0
