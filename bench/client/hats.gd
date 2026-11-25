@@ -67,8 +67,8 @@ const HEAD := [
 	[0.5, -81.0, 0.0],                                                        # 27 landing
 ]
 # Each hat's dangling part (its tail) turns about this point of the hat's frame.
-const SNOWMAN_TOP := 83.0        # p4.22 a snowman's head top over its feet (christmas_view.gd SNOWMAN_H 88: the sprite's top row)
-const SNOWMAN_HAT := 1.15        # and a hat's size there
+const SNOWMAN_TOP := 76.0        # p4.22 where a hat sits on a snowman (christmas_view.gd SNOWMAN_H 88: its head top is 84 px over its feet; a quarter of the way down the head)
+const SNOWMAN_HAT := 1.5         # and a hat's size there (a round head about 35 px wide; a hood is about 20)
 const PIVOT := [Vector2(-3, -11.5), Vector2(0, -18), Vector2(0, 0), Vector2(0, 0), Vector2(0, -5), Vector2(0, 8.5)]
 const TAIL_BEHIND := [false, false, true, false, false, true]   # is the tail drawn under the body? (antlers under the band, the top hat's crown under its brim)
 # How the tail answers the head's speed: a share of LIMIT for a full run forward (+: it turns
