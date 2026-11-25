@@ -116,8 +116,18 @@ if text.count(old) != 1:
     sys.exit(1)
 open(path, "w").write(text.replace(old, new))
 PY
-# p4.13: the Home Screen icon and manifest (an iPhone added to the Home Screen opens the game full screen)
-cp bench/web/pwa/manifest.json bench/web/pwa/icon-180.png bench/web/pwa/icon-512.png "$OUT/"
+# p4.13: the Home Screen icon and manifest (an iPhone added to the Home Screen opens the game full screen).
+# The icons are drawn by tools/v2_page_art.py: 180 the iPhone's, 192 and 512 the manifest's, a
+# maskable one for Android's round masks, 32 and 96 the browser tab's.
+cp bench/web/pwa/manifest.json bench/web/pwa/icon-32.png bench/web/pwa/icon-180.png bench/web/pwa/icon-192.png \
+   bench/web/pwa/icon-512.png bench/web/pwa/icon-maskable-512.png "$OUT/"
+# Godot exports its own robot as the page's icon and its iPhone icon, and names them in the page
+# AFTER ours (a phone may take the last one): put our picture in those two files too. The page's
+# icon is asked for on every load, so it gets the small 96 px one.
+cp bench/web/pwa/icon-96.png "$OUT/index.icon.png"
+cp bench/web/pwa/icon-180.png "$OUT/index.apple-touch-icon.png"
+# The game's two fonts for the page's own words (the tips, TAP TO PLAY, the cards): local files, no internet.
+cp bench/assets/fonts/lobby_display.ttf bench/assets/fonts/lobby_body.ttf "$OUT/"
 cp bench/web/page/splash_castle.png "$OUT/"   # 2026-10-26: the loading picture outside the Halloween season (bench/web/shell.html)
 cp bench/web/page/splash_harvest.png "$OUT/"  # p4.18: the Harvest season's
 

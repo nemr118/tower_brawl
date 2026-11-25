@@ -1,14 +1,19 @@
 {
   "name": "Tower Brawl",
   "short_name": "Tower Brawl",
+  "description": "A silly archery brawl for 8 players.",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
   "orientation": "landscape",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#0a0514",
+  "theme_color": "#0a0514",
+  "categories": ["games"],
   "icons": [
-    {"src": "icon-180.png", "sizes": "180x180", "type": "image/png"},
-    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"}
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    {"src": "icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any"}
   ]
 }
