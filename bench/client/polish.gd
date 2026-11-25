@@ -50,6 +50,8 @@ const SWITCHES := {
 	"settings": true,          # the lobby: one SETTINGS button and a panel where every choice shows (LOOK, CONTROLS, SOUND, SEASON), in place of a button in every corner (client/lobby_settings.gd)
 	"cheers": true,            # a silly line under a round's winner, by the season ("PASS THE GRAVY!"; client/hud.gd CHEERS)
 	"sticks2": true,           # a phone's sticks and buttons with depth: pads with a double rim, knobs with a shine, DODGE and JUMP as coloured buttons; the long hints go once learned (client/touch_sticks.gd)
+	# p4.20 (the user picked "More juice")
+	"juice": true,             # a +1 flies from the round's banner to the winner's card and the gold pip pops in; a card one point from the goal blinks gold; the match's leader wears a small crown in the arena
 }
 
 static var _off := {}

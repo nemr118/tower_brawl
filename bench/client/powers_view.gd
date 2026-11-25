@@ -11,6 +11,7 @@
 extends Node2D
 
 const LobbyArt = preload("res://client/lobby_art.gd")   # p4.19: its fonts
+const UI_ICONS := preload("res://assets/ui_icons.png")  # p4.20: the painted crown (cell 5) over the match's leader
 const P = preload("res://sim/proto.gd")
 const SimScript = preload("res://sim/sim.gd")
 const GhostfaceScript = preload("res://client/ghostface.gd")
@@ -62,6 +63,7 @@ var confetti: Array = []           # [pos, vel, colour, secs left, spin]: a cand
 var pied := {}                     # p4.18 PIE: seat -> when (t) it was covered in cream
 var phews: Array = []              # p4.19 PHEW: {at, seat, t0, what, dir}: the round's winner was hit after the call, and is safe
 const PHEW_S := 1.7
+var leader := -1                   # p4.20 (polish "juice"): the seat alone in the lead of the match (-1: nobody): a small crown over it
 var taunts := {}                   # p4.19 the GOBBLE button: seat -> when (t) it last taunted
 const TAUNT_S := 1.3
 const TAUNT_WORDS := {"harvest": ["GOBBLE!", "GOBBLE GOBBLE!", "YUM!"], "halloween": ["BOO!", "MUAHAHA!", "EEK!"], "": ["HA HA!", "NYAH NYAH!", "TOO SLOW!"]}
@@ -417,6 +419,14 @@ func _draw() -> void:
 				_text_c(at + Vector2(0, r + 18.0), p[1], 17 if p[5] else 15, Color(col.lerp(Color.WHITE, 0.4), a))
 		else:
 			_text_c(at, p[1], 22 if p[5] else 18, Color(col, a))
+	if leader >= 0 and fighters.has(leader):      # p4.20: the leader's crown, bobbing over its head
+		var lf: Dictionary = fighters[leader]
+		var lp: Dictionary = powers.get(leader, {})
+		var lhid: bool = leader != me and (blind or (int(lp.get("bits", 0)) & (P.PW_INVIS | P.PW_BATS)) != 0)
+		if lf["state"] != P.F_DEAD and not lhid:
+			var up := 62.0 if (int(lp.get("mask", 0)) & 1) != 0 else 40.0     # a costume is taller
+			draw_texture_rect_region(UI_ICONS, Rect2(float(lf["x"]) + 18.0 - 16.0, float(lf["y"]) - up + sin(t * 3.0) * 2.5, 32, 32),
+				Rect2(5 * 128, 0, 128, 128))
 	for ph in phews:
 		_draw_phew(ph)
 	for seat in taunts:

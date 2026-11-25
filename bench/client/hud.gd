@@ -73,6 +73,9 @@ var title_pal: Dictionary = {}
 var round_name := ""               # p4.17: the round's winner (the big line) and a draw
 var round_draw := false
 var round_winner := 0              # p4.19: the round winner's seat (it picks the silly line)
+var gains: Array = []              # p4.20 (polish "juice"): [seat, seconds since the round was called, its points then]: a +1 flies to the card, the pip pops
+const GAIN_FLY_S := 0.55           # the +1's flight from the banner to the card
+const GAIN_S := 1.1                # the flight and the pip's pop
 var silly := 0                     # p4.20: this round's surprise for everyone (the seats message; proto.gd SILLY_*)
 var view := Rect2(0, 0, 1920, 1080)   # p4.17: the part of the 1920 x 1080 design the window shows (the winner's backdrop fills it)
 
@@ -108,6 +111,8 @@ func round_end(m: Dictionary) -> void:
 	else:
 		var w := int(m.get("winner", 0))
 		round_winner = w
+		if Polish.on("juice") and not hidden:     # p4.20: the +1 starts for the winner's card as the round is called
+			gains.append([w, 0.0, _points_of(w)])
 		banner = "%s WINS THE ROUND" % str(m.get("name", "")).to_upper()
 		banner_color = World.TEAM[w % 8]
 
@@ -147,6 +152,10 @@ func update(seats_msg: Dictionary, s: Dictionary, seat: int, delta: float, fps: 
 	my_seat = seat
 	hidden = lobby_shown
 	fight_t = maxf(0.0, fight_t - delta)
+	for g in gains:
+		g[1] += delta
+	# a +1 is over once its pip has popped and the server's point has come (or after 4 s: no point came)
+	gains = gains.filter(func(g): return g[1] < GAIN_S or (g[1] < 4.0 and _points_of(int(g[0])) <= int(g[2])))
 	note_t = maxf(0.0, note_t - delta)
 	if int(s.get("phase", -1)) == P.PH_ROUND_START and note.begins_with("GHOST"):
 		note_t = 0.0      # p4.13: a ghost's tip is over when the next round starts
@@ -193,6 +202,11 @@ func _banner_spec() -> Array:
 				var list: Array = CHEERS.get(Season.now, CHEERS[""])
 				extra.append([str(list[(round_no * 7 + round_winner * 3) % list.size()]), 36, Color(1.0, 0.92, 0.6), 640])
 	return [main, rib, extra]
+
+# p4.20: the seat alone in the lead (-1: nobody leads, or two share it): it wears a crown in the arena.
+func sole_leader() -> int:
+	var l := _leaders()
+	return int(l[0]) if l.size() == 1 else -1
 
 # The seats with the most points (1 or more): they wear the crown.
 func _leaders() -> Array:
@@ -289,6 +303,9 @@ func _paint(c: Control) -> void:
 		_banner(c, font, banner, 78, banner_color, 440)
 	elif phase == P.PH_MATCH_END and banner != "":
 		Winner.paint(c, end_t, winner_seat, winner_name, awards, left, view)   # client/winner_view.gd (2026-10-25)
+	for g in gains:               # p4.20: the +1 on its way from the banner to the winner's card
+		if new_look and float(g[1]) < GAIN_FLY_S:
+			_gain_fly(c, int(g[0]), float(g[1]) / GAIN_FLY_S)
 	if silly > 0 and phase == P.PH_PLAY and fight_t <= 0.0:     # p4.20: the silly round's name stays up, small
 		_silly_pill(c)
 	if banner_t > 0.0 and banner_kind > 0:
@@ -428,12 +445,21 @@ func _card2(c: Control, st: Dictionary, f: Dictionary, x: float, leader: bool) -
 	if not waiting:
 		# the points: gold pips up to a goal of 6, a number past that
 		var points := int(st.get("points", 0))
+		var gt := _gain_t(i)
+		if gt >= GAIN_FLY_S and points <= _gain_base(i):
+			points += 1          # p4.20: the +1 has landed; the server's point comes 1.5 s after the call
 		if goal <= 6:
 			for n in goal:
 				var pc := Vector2(x + CARD_W - 17 - n * 13.0, y2)
 				if goal - 1 - n < points:
-					c.draw_circle(pc, 5.5, Color(0.25, 0.14, 0.0))
-					c.draw_circle(pc, 4.4, Color(1.0, 0.82, 0.25, 0.55 if dead else 1.0))
+					var pr := 1.0
+					if goal - 1 - n == points - 1 and gt >= GAIN_FLY_S and gt < GAIN_S:   # the newest pip pops as its +1 lands
+						pr = 1.0 + 1.6 * (1.0 - clampf((gt - GAIN_FLY_S) / (GAIN_S - GAIN_FLY_S), 0.0, 1.0))
+					if pr > 0.0:
+						c.draw_circle(pc, 5.5 * pr, Color(0.25, 0.14, 0.0))
+						c.draw_circle(pc, 4.4 * pr, Color(1.0, 0.82, 0.25, 0.55 if dead else 1.0))
+						if pr > 1.05:
+							c.draw_arc(pc, 7.0 * pr, 0.0, TAU, 20, Color(1, 1, 1, 0.8), 2.0, true)
 				else:
 					c.draw_circle(pc, 5.0, Color(0, 0, 0, 0.45))
 					c.draw_arc(pc, 4.4, 0.0, TAU, 16, Color(1, 1, 1, 0.3), 1.5, true)
@@ -444,6 +470,10 @@ func _card2(c: Control, st: Dictionary, f: Dictionary, x: float, leader: bool) -
 		c.draw_set_transform(Vector2(x + 14, CARD_Y + 12), -0.42, Vector2.ONE)
 		c.draw_texture_rect_region(UI_ICONS, Rect2(-20, -22, 40, 40), Rect2(5 * 128, 0, 128, 128))
 		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# p4.20: one point from the goal: the card's rim blinks gold (two looks only: lobby_art.gd keeps every box)
+	if Polish.on("juice") and goal > 1 and int(st.get("points", 0)) == goal - 1 and phase >= P.PH_ROUND_START and phase <= P.PH_ROUND_END:
+		var blink := 0.95 if fmod(Time.get_ticks_msec() / 1000.0, 0.9) < 0.45 else 0.45
+		c.draw_style_box(Art.box(Color(0, 0, 0, 0), Color(1.0, 0.82, 0.25, blink), 14, 3, 6), r)
 	var pw: Dictionary = snap.get("powers", {}).get(i, {})
 	if not pw.is_empty() and not waiting:
 		_chips2(c, x, pw, me)
@@ -537,3 +567,34 @@ func _silly_pill(c: Control) -> void:
 	var r := Rect2(960.0 - w * 0.5, 90.0, w, 40.0)
 	c.draw_style_box(Art.box(Color(0.16, 0.08, 0.02, 0.85), Color(1.0, 0.82, 0.3, 0.9), 20, 2, 4), r)
 	c.draw_string(Art.DISPLAY, Vector2(r.position.x + 22.0, r.position.y + 29.0), words, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color(1.0, 0.88, 0.45))
+
+# p4.20 (polish "juice"): how long ago seat i's round was called (-1: no +1 for it now),
+# the points it had then, and a seat's points now.
+func _gain_t(i: int) -> float:
+	for g in gains:
+		if int(g[0]) == i:
+			return float(g[1])
+	return -1.0
+
+func _gain_base(i: int) -> int:
+	for g in gains:
+		if int(g[0]) == i:
+			return int(g[2])
+	return 999
+
+func _points_of(i: int) -> int:
+	for st in seats:
+		if int(st["i"]) == i:
+			return int(st.get("points", 0))
+	return 0
+
+# The +1: from under the round's banner to the seat's newest pip, k 0..1, on a curve, shrinking.
+func _gain_fly(c: Control, seat: int, k: float) -> void:
+	var from := Vector2(960, 560)
+	var to := Vector2(CARD_X + seat * CARD_STEP + CARD_W - 30.0, CARD_Y + 54.0)
+	var e := k * k * (3.0 - 2.0 * k)
+	var at := from.lerp(to, e) + Vector2(0, -90.0 * sin(e * PI))
+	var sc := lerpf(1.5, 0.6, e)
+	c.draw_set_transform(at, 0.0, Vector2.ONE * sc)
+	Art.text(c, Art.DISPLAY, Vector2(-34, 18), "+1", 52, Color(1.0, 0.86, 0.3), 0, Color.BLACK, HORIZONTAL_ALIGNMENT_LEFT, -1.0, false)
+	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
