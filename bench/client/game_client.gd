@@ -177,6 +177,8 @@ func _ready() -> void:
 		look = _device_look() if look_pick == "auto" else look_pick
 		world.set_tier(LOOK_TIER[look])
 	slow_ms = float(opts.get("slow", 0))
+	if opts.has("slowmo"):         # p4.21 a test knob for film clips: ?slowmo=4 runs every animation 4 times slower
+		Engine.time_scale = 1.0 / clampf(float(opts["slowmo"]), 1.0, 20.0)   # (tools/v2_motion_clip.py plays the frames back at full speed)
 	display.texture = sub.get_texture()
 	hud = Hud.new()
 	add_child(hud)

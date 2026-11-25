@@ -52,6 +52,8 @@ const SWITCHES := {
 	"sticks2": true,           # a phone's sticks and buttons with depth: pads with a double rim, knobs with a shine, DODGE and JUMP as coloured buttons; the long hints go once learned (client/touch_sticks.gd)
 	# p4.20 (the user picked "More juice")
 	"juice": true,             # a +1 flies from the round's banner to the winner's card and the gold pip pops in; a card one point from the goal blinks gold; the match's leader wears a small crown in the arena
+	# p4.21 (the user: "Add animation to menus, character select, etc.")
+	"motion": true,            # the panels (SETTINGS, MENU, TONIGHT'S CHAMPIONS, WHO ARE YOU?, PICK AN ARENA, HOW TO PLAY) grow in and shrink away, their rows come one after another; a button squeezes under the finger and springs back; changed words bump; a seat card dips when someone leaves, a team flag drops in (client/motion.gd)
 }
 
 static var _off := {}

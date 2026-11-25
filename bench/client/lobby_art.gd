@@ -7,6 +7,7 @@
 extends RefCounted
 
 const P = preload("res://sim/proto.gd")   # p4.18: the seasons
+const Polish = preload("res://client/polish.gd")   # p4.21: polish "motion" (a button's squeeze)
 
 const DISPLAY: FontFile = preload("res://assets/fonts/lobby_display.ttf")   # Noto Sans Condensed Black
 const BODY: FontFile = preload("res://assets/fonts/lobby_body.ttf")         # Noto Sans Condensed Bold
@@ -228,6 +229,9 @@ static func keycap_words(c: CanvasItem, x: float, base_y: float, key: String, si
 # alone, with a glyph: 1 play (START), 2 plus (JOIN), 3 a spinner (waiting),
 # 4 back (LEAVE), 5 a chevron at the right (a button that steps through choices),
 # 8 a gear (p4.19 SETTINGS), 9 a question mark in a ring (HOW TO PLAY).
+# p4.21 (polish "motion"): it squeezes a little under the finger and springs back past its
+# size when let go; pop() makes it jump (a choice that was just picked); its words bump
+# when they change (ARENA, POWER-UPS, START). Sizes only: no new text size.
 class Btn extends Button:
 	var caption := ""
 	var value := ""
@@ -246,6 +250,60 @@ class Btn extends Button:
 	var _shown_glow := -1.0
 	var _n: StyleBoxFlat           # the normal and hover faces (their shadows are the glow)
 	var _h: StyleBoxFlat
+	var pulse := 1.0               # p4.21: the lobby's own breathing (START), multiplied into the button's size
+	var _held := false
+	var _press := 0.0              # 0..1: how far in it is pressed
+	var _spring := 9.0             # seconds since it was let go
+	var _pop := 9.0                # seconds since pop()
+	var _bump := 9.0               # seconds since its words changed
+
+	func _init() -> void:
+		button_down.connect(_on_down)
+		button_up.connect(_on_up)
+
+	func _ready() -> void:
+		set_process(false)         # it runs only while it moves
+
+	func _on_down() -> void:
+		if Polish.on("motion"):
+			_held = true
+			set_process(true)
+
+	func _on_up() -> void:
+		if _held:
+			_held = false
+			_spring = 0.0
+			set_process(true)
+
+	# A jump: the choice that was just picked.
+	func pop() -> void:
+		if Polish.on("motion") and is_inside_tree():
+			_pop = 0.0
+			set_process(true)
+
+	func _process(delta: float) -> void:
+		if _held and not is_pressed():     # let go with no "up" (it was switched off or hidden under the finger): never left squeezed
+			_held = false
+			_spring = 0.0
+		_press = move_toward(_press, 1.0 if _held else 0.0, delta / 0.05)
+		_spring += delta
+		_pop += delta
+		if _bump < 0.3:
+			queue_redraw()
+		_bump += delta
+		apply_size()
+		if not _held and _press <= 0.0 and _spring > 0.34 and _pop > 0.32 and _bump > 0.3:
+			set_process(false)
+
+	# Its size now: the lobby's pulse, the squeeze, the spring back, the jump.
+	func apply_size() -> void:
+		var s := pulse - 0.05 * _press
+		if _spring < 0.32:
+			s += 0.05 * sin(PI * _spring / 0.32) * (1.0 - _spring / 0.32)
+		if _pop < 0.3:
+			s += 0.09 * sin(PI * _pop / 0.3)
+		pivot_offset = size * 0.5
+		scale = Vector2.ONE * s
 
 	func setup(face_col: Color, ink_col: Color, fsize: int) -> void:
 		face = face_col
@@ -300,6 +358,9 @@ class Btn extends Button:
 	# Its words: a small caption over the value, or the value alone (caption "").
 	func say(cap: String, val: String) -> void:
 		if cap != caption or val != value:
+			if val != value and value != "" and is_visible_in_tree() and Polish.on("motion"):
+				_bump = 0.0        # its words changed while it shows: they bump
+				set_process(true)
 			caption = cap
 			value = val
 			queue_redraw()
@@ -359,8 +420,14 @@ class Btn extends Button:
 			vy = mid + fs * 0.52
 			draw_string(BODY, Vector2(cap_x, mid - fs * 0.42), caption, HORIZONTAL_ALIGNMENT_CENTER, w - cap_x - (28.0 if glyph == 5 else 0.0), cs,
 				Color(col, col.a * 0.72))
+		var bump := 0.0                # p4.21: the words a little bigger for a moment, about their own middle
+		if _bump < 0.26:
+			bump = 0.22 * (1.0 - _bump / 0.26) * (1.0 - _bump / 0.26)
+			draw_set_transform(Vector2(x0 + tw * 0.5, vy - fs * 0.36) * -bump, 0.0, Vector2.ONE * (1.0 + bump))
 		draw_string_outline(DISPLAY, Vector2(x0, vy), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 5, Color(edge, 0.85 if not off else 0.3))
 		draw_string(DISPLAY, Vector2(x0, vy), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		if bump > 0.0:
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		var ic := Vector2(x0 - icon_w * 0.62, vy - fs * 0.36)
 		var r := fs * 0.34
 		match glyph:

@@ -8,6 +8,10 @@
 # they flip in turn). The cards rise in when the lobby comes up and drop away at
 # the countdown's end. Three layers: the cards (smooth), the fighters (pixel
 # art, nearest), the words (smooth).
+# p4.21 (polish "motion"): a card dips with a puff of dust when its person leaves; a seat
+# a bot takes pops in; in TEAMS a flag drops onto its card, and a change of sides pops the
+# card in the new team's colour; open seats wave JOIN! at someone with no seat; a tap on
+# your own card makes your fighter hop (fidget()).
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
@@ -17,6 +21,7 @@ const World = preload("res://client/world.gd")
 const P = preload("res://sim/proto.gd")
 const Season = preload("res://client/season.gd")   # p4.19: the bots' names follow the season
 const Teams = preload("res://client/teams_view.gd")   # TEAMS: a team flag on each card
+const Motion = preload("res://client/motion.gd")      # p4.21
 const HALO := preload("res://assets/fx_halo.png")
 const N := 8
 const TOP := 240.0               # the cards' top in the 1920 x 1080 frame
@@ -71,7 +76,7 @@ func _init() -> void:
 		glow.corner_detail = 6
 		cards.append({"kind": 0, "name": "", "fill": false, "me": false, "away": false, "next": false, "crowns": 0,
 			"points": 0, "pop": 9.0, "hop": 9.0, "pose": 0, "pose_t": 0.0, "next_pose": 3.0 + randf() * 9.0,
-			"awards": [], "sparks": [], "glow": glow})
+			"awards": [], "sparks": [], "glow": glow, "dip": 9.0, "team": -9, "flag_t": 9.0})
 
 func set_dress(p: Dictionary, hw: bool) -> void:
 	pal = p
@@ -93,10 +98,30 @@ func set_seats(list: Array, me: int, ph: int, bots: int, awards: Array) -> void:
 		if kind == 0:
 			fill = free_seen < bots and ph <= P.PH_COUNTDOWN
 			free_seen += 1
+		var settled := intro > 0.9 and is_visible_in_tree() and Motion.on()   # (not while the lobby is still rising in)
 		if kind == 1 and (int(c["kind"]) != 1 or str(c["name"]) != nm):
 			c["pop"] = 0.0
 			c["hop"] = 0.0
 			_sparks(c, i)
+		elif settled and int(c["kind"]) == 1 and kind != 1:
+			c["dip"] = 0.0             # p4.21: someone left: the card dips, a puff of dust
+			_sparks(c, i, Color(0.72, 0.7, 0.78))
+		elif settled and kind == 0 and fill != bool(c["fill"]):
+			if fill:
+				c["pop"] = 0.0         # a bot takes the seat (the BOTS buttons): it pops in
+			else:
+				c["dip"] = 0.0
+		# TEAMS: a flag drops onto its card; a change of sides pops the card in the new team's colour
+		var tm := Teams.team(i) if Teams.on else -1
+		var had := int(c["team"])
+		if tm != had:
+			if settled and had != -9 and tm >= 0:
+				c["flag_t"] = 0.0 if had >= 0 else -0.045 * i    # (TEAMS just came on: one after another)
+				if had >= 0 and (kind != 0 or fill):
+					c["pop"] = 0.0
+					c["hop"] = 0.0
+					_sparks(c, i, Teams.color(tm).lightened(0.2))
+			c["team"] = tm
 		c["kind"] = kind
 		c["name"] = nm
 		c["fill"] = fill
@@ -113,13 +138,24 @@ func set_seats(list: Array, me: int, ph: int, bots: int, awards: Array) -> void:
 				mine.append([str(aw.get("title", "")), str(aw.get("why", ""))])
 		c["awards"] = mine
 
-func _sparks(c: Dictionary, i: int) -> void:
+# col (p4.21): every spark in this colour (a puff of dust, a team's colour); none: the seat's own with white ones.
+func _sparks(c: Dictionary, i: int, col = null) -> void:
 	var list: Array = []
 	var n := 6 if tier <= 1 else 16
 	for k in n:
 		var a := TAU * k / n + randf() * 0.4
-		list.append([Vector2(0, FEET - 60.0), Vector2(cos(a), sin(a) - 0.4) * (260.0 + randf() * 200.0), 0.0, k % 3 == 0])
+		list.append([Vector2(0, FEET - 60.0), Vector2(cos(a), sin(a) - 0.4) * (260.0 + randf() * 200.0), 0.0, k % 3 == 0, col])
 	c["sparks"] = list
+
+# p4.21: a tap on your own card (lobby.gd, FREE FOR ALL): your fighter hops, the card pops.
+func fidget() -> void:
+	if my_seat < 0 or my_seat >= N:
+		return
+	var c: Dictionary = cards[my_seat]
+	if c["hop"] > 0.45:
+		c["hop"] = 0.0
+		c["pop"] = 0.0
+		_sparks(c, my_seat)
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
@@ -129,6 +165,8 @@ func _process(delta: float) -> void:
 		var c: Dictionary = cards[i]
 		c["pop"] += delta
 		c["hop"] += delta
+		c["dip"] += delta
+		c["flag_t"] += delta
 		c["pose_t"] = maxf(0.0, c["pose_t"] - delta)
 		c["next_pose"] -= delta
 		if c["next_pose"] <= 0.0:
@@ -171,6 +209,12 @@ func _xf(i: int) -> Array:
 	var pop: float = c["pop"]
 	if pop < 0.45:
 		s += 0.12 * sin(PI * pop / 0.45)
+	var dip: float = c["dip"]
+	if dip < 0.32:                 # p4.21: someone left, or a bot's seat went
+		s -= 0.09 * sin(PI * dip / 0.32)
+		cy += 14.0 * sin(PI * dip / 0.32)
+	if int(c["kind"]) == 0 and not c["fill"] and not seated and connected and Motion.on():
+		cy += sin(t * 2.4 - i * 0.6) * 5.0     # p4.21: the open seats wave at someone with no seat (JOIN!)
 	if c["me"]:
 		cy -= 10.0
 	return [Vector2(cx, cy), s]
@@ -462,6 +506,8 @@ func _words(n: Control, xfs: Array) -> void:
 		for s in cards[i]["sparks"]:
 			var a := clampf(1.0 - s[2] / 0.8, 0.0, 1.0)
 			var sc: Color = Color(1, 1, 0.85) if s[3] else col.lightened(0.3)
+			if s.size() > 4 and s[4] != null:
+				sc = s[4]
 			var sz := 9.0 * a + 3.0
 			n.draw_rect(Rect2(s[0] - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), Color(sc.r, sc.g, sc.b, a))
 	Teams.lobby_flags(n, self, xfs)   # TEAMS: each seat's team flag, on the card's top edge

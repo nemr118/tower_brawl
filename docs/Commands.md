@@ -6,21 +6,21 @@ tags: [handoff, commands]
 ## The new game (`bench/`, [[first-playable-plan]])
 ```bash
 godot --headless --path bench res://server/game_server.tscn -- --bots 7  # wss 8091; --arena mix|keep|bridges|3, --bot-level easy|normal|hard, --soak, --no-tls, --goal N, --walls-s N, --port, --out, --spots 2,3, --admin-port 8092, --no-powerups, --season auto|off|halloween|harvest, --mode ffa|teams, --silly-every N; test knobs --silly N, --pu-gallery, --hw-gallery, --boiler-demo, --pet-always, --start-power N
-godot --path bench -- --server=wss://192.168.4.21:8091  # a window
+godot --path bench -- --server=wss://192.168.4.21:8091
 tools/v2_build.sh --title "Short Title"   # check, bump, export, patch page; --phase 5 = p5.1; `none` re-exports
 godot --headless --path bench --script res://tools/check_scripts.gd
-godot --headless --path bench --script res://tools/input_probe.gd  # the rules; also review_probe.gd, teams_probe.gd, harvest_probe.gd, sfx_probe.gd, pit_probe.gd, kit_probe.gd (a perk's price), power_probe.gd -- --matches=6 --arena=3, balance_probe.gd -- --rounds=300 (who wins; --old)
+godot --headless --path bench --script res://tools/input_probe.gd  # the rules; also review_probe.gd, teams_probe.gd, motion_probe.gd, harvest_probe.gd, sfx_probe.gd, pit_probe.gd, kit_probe.gd, power_probe.gd -- --matches=6 --arena=3, balance_probe.gd -- --rounds=300 (who wins; --old)
 godot --headless --path bench --script res://tools/arena_probe.gd -- --png=/tmp/maps --rounds=200   # --layout=N --quick --list; --write-routes after a map change
 godot --headless --path bench --script res://tools/bot_probe.gd -- --rounds=200 --level=easy,normal,hard   # --catch, --reach, --kid, --deaths=<f>
 godot --headless --path bench --script res://tools/play_probe.gd -- --server=ws://127.0.0.1:8091 --name=Me --start --bots=7 --move --watch=300   # a person; --lag=60 --jitter=30, --predict, --warps --stall=150, --arena=N
-./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --start --bots 0  # 7 fakes; v2_chaos.py --spawn --minutes 20 (a soak)
-./venv/bin/python tools/v2_shot.py --out /tmp/v2shot [--phone [--ios]] [--extra "nocam"] [--burst 7] [--until "[Winner]@3,15"] [--no-join] [--host-start 8092]  # pictures (--help); v2_power_shots.py --look t1
+./venv/bin/python tools/v2_synth.py --url ws://127.0.0.1:8091 --n 7 --start --bots 0  # 7 fakes; v2_chaos.py --spawn (a soak)
+./venv/bin/python tools/v2_shot.py --out /tmp/v2shot [--phone [--ios]] [--extra "nocam"] [--burst 7] [--until "[Winner]@3,15"] [--no-join] [--host-start 8092]  # pictures (--help); v2_motion_clip.py --script lobby (a film of the menus)
 ./venv/bin/python tools/v2_soak_report.py --file <v2_server.jsonl> --map
 ./venv/bin/python tools/v2_host_check.py   # host port; v2_pull_check.py
-tools/deploy_rog.sh   # the ROG as server
+tools/deploy_rog.sh
 tools/pull_rog_logs.sh; ./venv/bin/python tools/v2_night_report.py --file <jsonl>
 ```
-Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?tv` THE BIG SCREEN, `?bench` the old benchmark; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `stick=old`, `controls=buttons`, `res=1`, `cream`, `phew`, `taunt`, `nohowto`, `sound=1`, `music=1`, `menu`, `sfxlog`). A sound: `python3 tools/make_sfx.py --only NAME`; a song's take: `python3 tools/comfy/make_music.py --pick match=2`. Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl`. The laptop: `tools/towerbrawl-v2.service`.
+Play: `https://192.168.4.21:8443/v2/` (`?name=Ava&join`, `?info`, `?arena=1`, `?tv` THE BIG SCREEN, `?bench` the old benchmark; test knobs `look=t3`, `lag=60&jitter=30`, `slow=25`, `bolt_s=5`, `nocam`, `polish_off=a,b`, `stick=old`, `controls=buttons`, `res=1`, `cream`, `phew`, `taunt`, `nohowto`, `sound=1`, `music=1`, `menu`, `slowmo=4`, `sfxlog`). A sound: `python3 tools/make_sfx.py --only NAME`; a song's take: `python3 tools/comfy/make_music.py --pick match=2`. Host page: `<PC>:8088/data/perspective/client/TowerBrawlServer` (`tower_brawl_ignition/deploy_host.sh`). Lines: `[NET] [JOIN] [LEAVE] [LOBBY] [ROUND] [KILL] [MATCH] [HOST] [POWER]`, `📊 [Server Ns]` every 5 s (`late seat:inputs/late`), `🎮 [Look]` on the page; `bench_results/<date>/v2_server.jsonl`. The laptop: `tools/towerbrawl-v2.service`.
 
 ## The old game: editor and server
 ```bash

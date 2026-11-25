@@ -48,6 +48,7 @@ const Champs = preload("res://client/lobby_champs.gd")       # p4.20: TONIGHT'S 
 const Settings = preload("res://client/lobby_settings.gd")   # p4.19: one panel for LOOK, CONTROLS, SOUND, SEASON
 const Polish = preload("res://client/polish.gd")
 const Teams = preload("res://client/teams_view.gd")          # TEAMS: the tap on your own card (the flags: lobby_cards.gd)
+const Motion = preload("res://client/motion.gd")             # p4.21: polish "motion"
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
 const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
 enum { IC_BOTS, IC_LEVEL, IC_LOOK, IC_CONTROLS, IC_LEAVE, IC_CROWN }
@@ -122,6 +123,7 @@ var t := 0.0
 var intro := 0.0                  # seconds since the lobby came up (the parts rise in)
 var was_shown := true
 var bots_now := 0
+var bots_t := 9.0                 # p4.21: seconds since the bots' number changed (it pops)
 var status := ""
 var status_t := 9.0               # seconds since the status line changed (it pops)
 var notice_title := ""
@@ -172,7 +174,12 @@ func _init() -> void:
 	root.add_child(cards)
 	cards.set_dress(pal, hw)
 	root.add_child(team_tap)          # TEAMS: over the cards, under every panel that opens
-	team_tap.pressed.connect(func(): team_pressed.emit())
+	team_tap.pressed.connect(func():
+		if Teams.on:
+			team_pressed.emit()
+		else:
+			cards.fidget()          # p4.21: FREE FOR ALL: a tap on your own card and your fighter hops
+		)
 	for c in [dock, notice, corner]:
 		c.lobby = self
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -450,7 +457,10 @@ func _paint_tv(c: Control, txt: Color) -> void:
 				if row[cx] == "1":
 					c.draw_rect(Rect2(q.position.x + 14.0 + cx * m, q.position.y + 14.0 + cy * m, m + 0.5, m + 0.5), Color.BLACK)
 		x = 400.0
+	var sp := 0.025 * sin(t * 3.0) if Motion.on() else 0.0     # p4.21: it breathes, like START on a phone
+	c.draw_set_transform(Vector2(x + 260.0, 734.0) * -sp, 0.0, Vector2.ONE * (1.0 + sp))
 	Art.text(c, Art.DISPLAY, Vector2(x, 762), "SCAN TO PLAY", 84, gold, 10, Color(0.03, 0.01, 0.05))
+	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if tv_urls.is_empty():
 		c.draw_string(Art.BODY, Vector2(x, 832), "Open this computer's address on your phone.", HORIZONTAL_ALIGNMENT_LEFT, -1, 46, txt)
 	else:
@@ -513,6 +523,8 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	var bots := int(m.get("bots", 0))
 	var people := int(m.get("people", 0))
 	bots_wanted = int(m.get("bots_wanted", bots_wanted))
+	if bots != bots_now and visible:
+		bots_t = 0.0
 	bots_now = bots
 	var lvl: String = LEVEL_NAMES[clampi(int(m.get("bot_level", 2)), 0, 3)]
 	cards.level_name = lvl
@@ -550,7 +562,7 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	season_btn.disabled = not can_set
 	settings.set_season(season_pick, season_label, can_set)
 	settings.set_mode(Teams.pick)     # TEAMS: the MODE row, and the tap on your own card (only in the lobby)
-	team_tap.place(cards, my_seat, Teams.on and can_set and connected and not tv)
+	team_tap.place(cards, my_seat, (Teams.on or Motion.on()) and can_set and connected and not tv)   # (p4.21: in FREE FOR ALL the tap is a hop)
 	if settings.visible and phase != P.PH_LOBBY and phase >= 0 and seated:
 		settings.close()                # the match starts: out of the way
 	tv_line = "ARENA: %s  ·  BOTS: %d %s  ·  POWER-UPS %s" % ["MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick), bots_wanted, lvl,
@@ -638,6 +650,7 @@ func _process(delta: float) -> void:
 	t += delta
 	intro += delta / slow
 	status_t += delta
+	bots_t += delta
 	# the parts rise in when the lobby comes up, and drop away at the countdown's end
 	var e := clampf((0.45 - count_left) / 0.45, 0.0, 1.0)
 	cards.intro = intro
@@ -655,8 +668,8 @@ func _process(delta: float) -> void:
 	elif main_glow == 2:
 		g = 1.0
 	main_btn.step(delta, g)
-	main_btn.pivot_offset = main_btn.size * 0.5
-	main_btn.scale = Vector2.ONE * (1.0 + (0.025 * sin(t * 4.5) if main_glow == 1 else 0.0))
+	main_btn.pulse = 1.0 + (0.025 * sin(t * 4.5) if main_glow == 1 else 0.0)
+	main_btn.apply_size()      # (p4.21: with its own squeeze and spring: lobby_art.gd Btn)
 	count.show_count(count_secs, count_arena, delta)
 	dock.queue_redraw()
 
@@ -700,7 +713,13 @@ func _bots_box(c: Control, txt: Color, edge: Color) -> void:
 		ix = 66.0
 	c.draw_string(Art.BODY, Vector2(bx.position.x + 22 + ix, bx.position.y + 34), "BOTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 26,
 		Color(txt, 0.72 if on else 0.4))
-	Art.text(c, Art.DISPLAY, Vector2(bx.position.x + 22 + ix, bx.position.y + 76), str(bots_now), 46, Color(txt, 1.0 if on else 0.45), 5, edge)
+	var np := Vector2(bx.position.x + 22 + ix, bx.position.y + 76)
+	var bp := 0.4 * (1.0 - Art.ease_out(bots_t / 0.25)) if Motion.on() and bots_t < 0.25 else 0.0   # p4.21: the number pops when it changes
+	if bp > 0.0:
+		c.draw_set_transform((np + Vector2(12, -16)) * -bp, 0.0, Vector2.ONE * (1.0 + bp))
+	Art.text(c, Art.DISPLAY, np, str(bots_now), 46, Color(txt, 1.0 if on else 0.45), 5, edge)
+	if bp > 0.0:
+		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	c.draw_string(Art.BODY, Vector2(bx.position.x + 78 + ix, bx.position.y + 74), "· %s" % cards.level_name if bots_now > 0 else "NONE",
 		HORIZONTAL_ALIGNMENT_LEFT, minf(170.0, 1244.0 - (bx.position.x + 78 + ix)), 26, Color(txt, 0.6 if on else 0.35))
 

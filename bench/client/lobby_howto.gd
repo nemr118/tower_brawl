@@ -5,12 +5,15 @@
 # (game_client.gd keeps that on the device) and from the lobby's HOW TO PLAY button; a
 # tap anywhere closes it. The pictures fit the controls in use: a phone's CLASSIC sticks,
 # its BUTTONS layout, or a keyboard and mouse. Drawn on the lobby's 1920 x 1080 frame.
+# p4.21 (polish "motion"): it fades in; the three pictures rise in one after another;
+# GOT IT breathes.
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
 const World = preload("res://client/world.gd")     # p4.19: the real fighters (FIGHTER_TEX), not stand-ins
 const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")
+const Motion = preload("res://client/motion.gd")
 const GOLD := Color(1.0, 0.82, 0.25)
 const INK := Color(0.96, 0.96, 1.0)
 const DIM := Color(0.75, 0.78, 0.9)
@@ -19,30 +22,33 @@ const TILE := Vector2(540, 560)
 var mode := "pc"                  # "pc", "classic" or "buttons"
 var t := 0.0
 var pal: Dictionary = Art.DRESSES["castle"]   # p4.19: the lobby's dress (lobby.gd sets it)
+var pane: Motion.Pane
 
 func _init() -> void:
 	size = Vector2(1920, 1080)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+	pane = Motion.Pane.new(self, Vector2(960, 540), 0.95)
 
 func open(m: String) -> void:
 	mode = m
 	t = 0.0
-	visible = true
+	pane.open()
 	queue_redraw()
 
 func close() -> void:
-	visible = false
+	pane.close()
 
 func _process(delta: float) -> void:
 	if visible:
 		t += delta
+		pane.step(delta)
 		queue_redraw()
 
 func _gui_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 		accept_event()
-		if not e.pressed and t > 0.4:     # a moment first: the tap that opened it must not close it
+		if not e.pressed and t > 0.4 and not pane.closing():     # a moment first: the tap that opened it must not close it
 			close()
 
 func _text(at: Vector2, s: String, fs: int, col: Color, font: Font = null) -> void:
@@ -104,7 +110,9 @@ func _archer(feet: Vector2, col: Color, s: float = 1.0) -> void:
 
 func _draw() -> void:
 	var a := clampf(t / 0.15, 0.0, 1.0)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.01, 0.05, 0.93 * a))
+	if pane.live:
+		a = 1.0                    # (p4.21: the whole page fades by itself)
+	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.05, 0.93 * a))   # (wider than the frame: it grows in)
 	_text(Vector2(960, 122), "HOW TO PLAY", 78, Color(GOLD, a))
 	var titles := ["1  MOVE", "2  SHOOT", "3  DODGE"]
 	var k := 0.5 + 0.5 * sin(t * 2.6)          # the pictures move: 0..1 and back
@@ -113,7 +121,9 @@ func _draw() -> void:
 	var real := Polish.on("howto2")
 	var a8 := roundf(a * 8.0) / 8.0       # the fade in steps: lobby_art.gd keeps every box it makes
 	for i in 3:
-		var r := Rect2(Vector2(90.0 + i * (TILE.x + 60.0), 180.0), TILE)
+		# p4.21: the pictures rise in, each from a little lower and a little later than the one before
+		# (all three show from the first frame: the page's own fade covers their start)
+		var r := Rect2(Vector2(90.0 + i * (TILE.x + 60.0), 180.0 + (1.0 - Motion.rise(t, 0.0, 0.3 + 0.1 * i)) * (90.0 + 70.0 * i)), TILE)
 		if real:
 			draw_style_box(Art.box(Color(pal["panel"], 0.97 * a8), Color(pal["accent"], 0.9 * a8), 26, 3, 8, Color(0, 0, 0, 0.55 * a8), 18), r)
 			draw_style_box(Art.box(Color(pal["accent"], 0.16 * a8), Color(0, 0, 0, 0), 20, 0), Rect2(r.position + Vector2(8, 8), Vector2(r.size.x - 16, 96)))
@@ -208,8 +218,11 @@ func _draw() -> void:
 		more = "Pick your arrows up again. Grab the glowing orbs. Catch the turkey!"
 	_text(Vector2(960, 892), more, 34, Color(DIM, a), Art.BODY)
 	var br := Rect2(710, 930, 500, 96)
+	var gk := 1.0 + 0.03 * sin(t * 4.5) if pane.live else 1.0     # p4.21: GOT IT breathes, like START
+	draw_set_transform(br.get_center() * (1.0 - gk), 0.0, Vector2.ONE * gk)
 	draw_style_box(Art.box(Color(1.0, 0.6, 0.12, a), Color(0.45, 0.2, 0.02, a), 20, 3, 9, Color(1.0, 0.7, 0.2, 0.35 * a), 16), br)
 	_text(Vector2(960, 996), "GOT IT", 56, Color(0.13, 0.05, 0.0, a))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # p4.19: a plank to stand on: a wooden top with a dark lip, mid its centre, w wide.
 func _floor(mid: Vector2, w: float) -> void:

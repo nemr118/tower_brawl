@@ -4,12 +4,15 @@
 # the keyboard). A name that sits at the table right now is greyed out. A tap on a name
 # joins with it (game_client.gd keeps it on the device); a tap anywhere else closes it.
 # Drawn on the lobby's 1920 x 1080 frame.
+# p4.21 (polish "motion"): it fades in; the names pop in one after another; the name
+# under the finger squeezes.
 extends Control
 
 signal picked(name: String)
 signal someone_new
 
 const Art = preload("res://client/lobby_art.gd")
+const Motion = preload("res://client/motion.gd")
 const GOLD := Color(1.0, 0.82, 0.25)
 const COLS := 4
 const BTN := Vector2(400, 124)
@@ -20,22 +23,24 @@ var taken: Array = []             # the names seated now
 var t := 0.0
 var pal: Dictionary = Art.DRESSES["castle"]   # p4.19: the lobby's dress (lobby.gd sets it)
 var _press := -3                  # the button a press went down on (-1 SOMEONE NEW, -2 none, -3 no press)
+var pane: Motion.Pane
 
 func _init() -> void:
 	size = Vector2(1920, 1080)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+	pane = Motion.Pane.new(self, Vector2(960, 540), 0.95)
 
 func open(list: Array, seated: Array) -> void:
 	names = list.slice(0, 12)
 	taken = seated
 	t = 0.0
 	_press = -3
-	visible = true
+	pane.open()
 	queue_redraw()
 
 func close() -> void:
-	visible = false
+	pane.close()
 
 func _rect(i: int) -> Rect2:
 	var rows := ceili(names.size() / float(COLS))
@@ -50,7 +55,12 @@ func _new_rect() -> Rect2:
 func _process(delta: float) -> void:
 	if visible:
 		t += delta
+		pane.step(delta)
 		queue_redraw()
+
+# p4.21: a button's own size, about its middle (it pops in; it squeezes under the finger).
+func _size_at(c: Vector2, k: float) -> void:
+	draw_set_transform(c * (1.0 - k), 0.0, Vector2.ONE * k)
 
 func _hit(p: Vector2) -> int:
 	for i in names.size():
@@ -62,6 +72,8 @@ func _gui_input(e: InputEvent) -> void:
 	if not (e is InputEventMouseButton) or e.button_index != MOUSE_BUTTON_LEFT:
 		return
 	accept_event()
+	if pane.closing():
+		return
 	var hit := _hit(e.position)
 	if e.pressed:
 		_press = hit
@@ -80,11 +92,18 @@ func _text(at: Vector2, s: String, fs: int, col: Color) -> void:
 
 func _draw() -> void:
 	var a := roundf(clampf(t / 0.15, 0.0, 1.0) * 8.0) / 8.0   # the fade in steps: lobby_art.gd keeps every box it makes
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.01, 0.05, 0.92 * a))
+	if pane.live:
+		a = 1.0                    # (p4.21: the whole picker fades by itself)
+	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.05, 0.92 * a))   # (wider than the frame: it grows in)
+	_size_at(Vector2(960, 150), 0.7 + 0.3 * Motion.rise(t, 0.0, 0.3))
 	_text(Vector2(960, 170), "WHO ARE YOU?", 80, Color(GOLD, a))
 	for i in names.size():
 		var r := _rect(i)
 		var off: bool = taken.has(names[i])
+		var bk := Motion.rise(t, 0.05 + 0.03 * i, 0.3) * (0.95 if _press == i and not off and pane.live else 1.0)
+		if bk <= 0.02:
+			continue
+		_size_at(r.get_center(), bk)
 		var face: Color = Color(pal["button"]).lightened(0.06) if not off else Color(0.16, 0.16, 0.2)
 		if _press == i and not off:
 			face = face.lightened(0.18)       # p4.19: the button under the finger lights up
@@ -95,6 +114,8 @@ func _draw() -> void:
 			_text(Vector2(r.get_center().x, r.end.y - 14.0), "playing now", 22, Color(0.7, 0.7, 0.76, a))
 	var nr := _new_rect()
 	var nface: Color = pal["accent"]
+	_size_at(nr.get_center(), maxf(0.02, Motion.rise(t, 0.12 + 0.03 * names.size(), 0.32)) * (0.95 if _press == -1 and pane.live else 1.0))
 	draw_style_box(Art.box(Color(nface, a), Color(nface.darkened(0.65), a), 20, 3, 10, Color(nface.r, nface.g, nface.b, 0.35 * a), 16), nr)
 	_text(nr.get_center() + Vector2(0, 18), "SOMEONE NEW", 54, Color(0.13, 0.05, 0.0, a))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_text(Vector2(960, 990), "Tap your name. New here? Tap SOMEONE NEW and type one.", 32, Color(0.85, 0.85, 0.95, 0.9 * a))
