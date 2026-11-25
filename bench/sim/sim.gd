@@ -449,6 +449,10 @@ var self_harm := false
 # the spots: two could start side by side, and a 2-fighter round lasted 4.4 s (bots).
 var far_starts := true
 var knife_lunge := KNIFE_LUNGE  # the costume's lunge, px a tick (the probe tries others)
+# Two knobs for the classes study (tools/ammo_probe.gd, docs/reference/classes-scope.md); the game leaves both alone:
+var start_quiver := START_QUIVER   # the arrows a fighter starts a round with
+var melee_no_pickup := false       # a fighter in a costume (no bow) walks over arrows and leaves them
+var melee_one_hit := false         # a fighter in a costume is out at the first hit (no knock-down first)
 var fixed_spots: Array = []     # a test knob (the server's --spots): fighter i always starts on spawns[fixed_spots[i]]
 var rng := RandomNumberGenerator.new()
 var _next_arrow_id: int = 1
@@ -850,7 +854,7 @@ func _place(f: Fighter, spot: Vector2i) -> void:
 	f.vy = 0.0
 	f.state = P.F_NORMAL
 	f.state_t = 0
-	f.arrows = START_QUIVER
+	f.arrows = start_quiver
 	f.aiming = false
 	f.drawn = false
 	f.shot_wait = false
@@ -894,7 +898,7 @@ func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1
 				0 if cause == 1 else (1 if cause == 2 else 2))
 		return
 	if f.mask and cause != 6 and cause != P.C_LEFT:   # GHOSTFACE: a hit knocks it down; a hit while it is down is the end
-		if f.down_t <= 0:
+		if f.down_t <= 0 and not melee_one_hit:
 			_collapse(f)
 			return
 		if f.down_t > MASK_DOWN - MASK_GRACE:
@@ -1742,7 +1746,7 @@ func _pickups() -> void:
 	if predicting:
 		return
 	for f in fighters:
-		if f.state == P.F_DEAD or f.arrows >= MAX_QUIVER:
+		if f.state == P.F_DEAD or f.arrows >= MAX_QUIVER or (melee_no_pickup and f.mask):
 			continue
 		var cx := float(f.x + HALF_W)
 		var cy := float(f.y + MID_Y)
