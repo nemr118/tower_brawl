@@ -226,7 +226,8 @@ static func keycap_words(c: CanvasItem, x: float, base_y: float, key: String, si
 # coloured glow (glow 0..1, the lobby pulses START and JOIN with it). It draws
 # its own words: a small caption over a big value (ARENA / MIX), or the value
 # alone, with a glyph: 1 play (START), 2 plus (JOIN), 3 a spinner (waiting),
-# 4 back (LEAVE), 5 a chevron at the right (a button that steps through choices).
+# 4 back (LEAVE), 5 a chevron at the right (a button that steps through choices),
+# 8 a gear (p4.19 SETTINGS), 9 a question mark in a ring (HOW TO PLAY).
 class Btn extends Button:
 	var caption := ""
 	var value := ""
@@ -327,7 +328,7 @@ class Btn extends Button:
 		var col := ink if not off else Color(ink, 0.38)
 		var edge := face.darkened(0.7)
 		var icon_w := 0.0
-		if glyph in [1, 2, 3, 4] and value != "":
+		if glyph in [1, 2, 3, 4, 8, 9] and value != "":
 			icon_w = size_px * 0.9
 		var cap_x := 0.0
 		if thumb != null:
@@ -381,6 +382,18 @@ class Btn extends Button:
 			4:   # back
 				var pts := PackedVector2Array([ic + Vector2(r * 0.6, -r), ic + Vector2(-r * 0.4, 0), ic + Vector2(r * 0.6, r)])
 				draw_polyline(pts, col, r * 0.42)
+			8:   # a gear: 8 teeth round a ring
+				var gr := r * 1.15
+				for k in 8:
+					var u := Vector2.from_angle(k * TAU / 8.0)
+					var v := Vector2(-u.y, u.x)
+					draw_colored_polygon(PackedVector2Array([ic + u * gr * 0.7 + v * gr * 0.24, ic + u * gr * 1.22 + v * gr * 0.17,
+						ic + u * gr * 1.22 - v * gr * 0.17, ic + u * gr * 0.7 - v * gr * 0.24]), col)
+				draw_circle(ic, gr * 0.88, col)
+				draw_circle(ic, gr * 0.4, Color(face.darkened(0.35), col.a))
+			9:   # a question mark in a ring
+				draw_circle(ic, r * 1.25, col)
+				draw_string(DISPLAY, ic + Vector2(-r * 1.25, r * 0.75), "?", HORIZONTAL_ALIGNMENT_CENTER, r * 2.5, int(r * 2.2), Color(face.darkened(0.45), col.a))
 			5:   # a chevron: tap for the next choice
 				var cx := w - 30.0
 				var pts2 := PackedVector2Array([Vector2(cx - 6, mid - 12), Vector2(cx + 6, mid), Vector2(cx - 6, mid + 12)])

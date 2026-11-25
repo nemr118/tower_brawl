@@ -47,6 +47,7 @@ const SWITCHES := {
 	# p4.19 (the user: "Make it as polished as possible. It should look app store quality")
 	"hud2": true,              # in a match: the seat cards with the fighter's head, the power-up pills, the power-up card, the notes, in the lobby's style (client/hud.gd)
 	"howto2": true,            # HOW TO PLAY: the real fighters run, shoot, dodge and catch on a plank; the cards in the lobby's dress (client/lobby_howto.gd)
+	"settings": true,          # the lobby: one SETTINGS button and a panel where every choice shows (LOOK, CONTROLS, SOUND, SEASON), in place of a button in every corner (client/lobby_settings.gd)
 }
 
 static var _off := {}

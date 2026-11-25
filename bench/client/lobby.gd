@@ -27,6 +27,9 @@ signal controls_pressed           # p4.16: CONTROLS (CLASSIC or BUTTONS, kept on
 signal bot_level_pressed
 signal power_pressed
 signal season_picked(pick: String)   # p4.18: the SEASON button's next choice (sim/proto.gd SEASON_PICKS)
+signal look_picked(pick: String)     # p4.19 SETTINGS (lobby_settings.gd): auto, low, normal or high
+signal controls_picked(buttons: bool)
+signal sound_picked(on: bool)
 
 const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
@@ -38,6 +41,7 @@ const Count = preload("res://client/lobby_count.gd")
 const Arenas = preload("res://client/lobby_arenas.gd")
 const Howto = preload("res://client/lobby_howto.gd")   # p4.18: HOW TO PLAY, three pictures
 const Names = preload("res://client/lobby_names.gd")   # p4.18: WHO ARE YOU? the names the server knows
+const Settings = preload("res://client/lobby_settings.gd")   # p4.19: one panel for LOOK, CONTROLS, SOUND, SEASON
 const Polish = preload("res://client/polish.gd")
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
 const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
@@ -82,6 +86,9 @@ var controls_btn = Art.Btn.new()  # p4.16: under LOOK, phones only
 var season_btn = Art.Btn.new()    # p4.18: top left: AUTO (by the server's date), OFF, HALLOWEEN, HARVEST
 var howto_btn = Art.Btn.new()     # p4.18: under it: HOW TO PLAY
 var howto := Howto.new()
+var settings := Settings.new()
+var settings_btn = Art.Btn.new()  # p4.19: top right, in place of LOOK and CONTROLS (polish "settings")
+var one_panel := false            # is that polish on?
 var who := Names.new()
 var known_names: Array = []       # the seats message's "names"
 var seated_names: Array = []
@@ -89,6 +96,9 @@ var tv := false                   # p4.18 THE BIG SCREEN: no buttons; a QR code 
 var tv_urls: Array = []
 var tv_qr: Array = []             # the code's rows, "0101..." (the server makes it)
 var season_pick := "auto"
+var season_label := "NONE"        # p4.19: the season in use, in words (SETTINGS shows it)
+var sound_on := false
+var sound_shown := false
 var buttons_mode := false
 var bots_minus = Art.Btn.new()
 var bots_plus = Art.Btn.new()
@@ -203,6 +213,19 @@ func _init() -> void:
 	_btn(howto_btn, face.darkened(0.2), ink, 30, Rect2(60, 164, 330, 64), 0, corner)
 	howto_btn.say("", "?  HOW TO PLAY")
 	howto_btn.pressed.connect(open_howto)
+	one_panel = Polish.on("settings")
+	_btn(settings_btn, face.darkened(0.2), ink, 34, Rect2(1520, 18, 340, 80), 8, corner)
+	settings_btn.say("", "SETTINGS")
+	settings_btn.pressed.connect(func(): settings.open())
+	settings_btn.visible = one_panel
+	if one_panel:               # the corner buttons' work moves into the panel
+		for b in [look_btn, controls_btn, season_btn]:
+			b.visible = false
+		howto_btn.position = Vector2(60, 84)
+		howto_btn.size = Vector2(340, 80)
+		howto_btn.size_px = 34
+		howto_btn.glyph = 9
+		howto_btn.say("", "HOW TO PLAY")
 	season_btn.pressed.connect(func():
 		var picks: Array = P.SEASON_PICKS
 		season_picked.emit(str(picks[(picks.find(season_pick) + 1) % picks.size()])))
@@ -225,6 +248,12 @@ func _init() -> void:
 	who.someone_new.connect(func(): name_edit.grab_focus())
 	root.add_child(howto)             # p4.18: over the arena picker too
 	howto.pal = pal
+	root.add_child(settings)          # p4.19
+	settings.set_dress(pal)
+	settings.look_picked.connect(func(pick): look_picked.emit(pick))
+	settings.controls_picked.connect(func(b): controls_picked.emit(b))
+	settings.sound_picked.connect(func(on): sound_picked.emit(on))
+	settings.season_picked.connect(func(pick): season_picked.emit(pick))
 	visibility_changed.connect(_on_visibility)
 
 # The ARENA button: the picker of painted cards (polish "arena_cards"), or the next arena as before.
@@ -320,8 +349,9 @@ func set_name_text(n: String) -> void:
 
 # The look's name on its button: LOW, NORMAL, HIGH, AUTO · LOW (or a test look's
 # name: t1 is LOW's, t3 HIGH's). LOW keeps the backdrop light.
-func set_look(name: String) -> void:
+func set_look(name: String, pick: String = "", no_high: bool = false) -> void:
 	look_btn.say("", "LOOK: %s" % name.to_upper())
+	settings.set_look(pick, name.to_upper().trim_prefix("AUTO · "), no_high)   # p4.19: pick "" (a test look): none lit
 	var u := name.to_upper()
 	tier = 1 if ("LOW" in u or u.begins_with("T1") or u.begins_with("L")) else (3 if ("HIGH" in u or u.begins_with("T3")) else 2)
 	bg.set_tier(tier)
@@ -333,6 +363,7 @@ func set_season(season: String, pick: String) -> void:
 	season_pick = pick
 	var label := str(P.SEASON_LABEL.get(season, "NONE"))
 	season_btn.say("", "SEASON: %s" % ("AUTO · " + label if pick == "auto" else ("OFF" if pick == "off" else label)))
+	season_label = label
 	arena_btn.thumb = null      # MIX's card follows the season: update() sets it again
 	var d := Art.dress_for(season)
 	if d != dress:
@@ -360,6 +391,10 @@ func _apply_dress(d: String) -> void:
 	main_btn.glow_col = pal["accent_hi"]
 	for b in [look_btn, controls_btn, season_btn, howto_btn]:
 		b.setup(face.darkened(0.2), ink, 30)
+	settings_btn.setup(face.darkened(0.2), ink, 34)
+	if one_panel:
+		howto_btn.size_px = 34
+	settings.set_dress(pal)
 	_name_style()
 	howto.pal = pal
 	notice_text.add_theme_color_override("font_color", pal["text"])
@@ -372,7 +407,7 @@ func set_tv(urls: Array, qr: Array) -> void:
 	tv = true
 	tv_urls = urls
 	tv_qr = qr
-	for b in [arena_btn, power_btn, bots_minus, bots_plus, level_btn, main_btn, leave_btn, season_btn, howto_btn, look_btn, controls_btn]:
+	for b in [arena_btn, power_btn, bots_minus, bots_plus, level_btn, main_btn, leave_btn, season_btn, howto_btn, look_btn, controls_btn, settings_btn]:
 		b.visible = false
 	name_edit.visible = false
 	dock.queue_redraw()
@@ -405,9 +440,17 @@ var tv_line := ""                 # the settings in words (a TV has no buttons)
 func open_howto() -> void:
 	howto.open(("buttons" if buttons_mode else "classic") if phone else "pc")
 
+# p4.19: SOUND's row in SETTINGS (shown false: this page has no sound to switch).
+func set_sound(on: bool, shown: bool) -> void:
+	sound_on = on
+	sound_shown = shown
+	settings.set_sound(on, shown)
+
 func set_phone(on: bool) -> void:
 	phone = on
-	controls_btn.visible = on
+	controls_btn.visible = on and not one_panel
+	settings.set_controls(buttons_mode, phone)
+	settings_btn.position.x = 1410.0 if on else 1520.0   # a phone: clear of the page's own full-screen button in the corner
 	help = (HELP_BUTTONS if buttons_mode else HELP_PHONE) if on else HELP_PC
 	dock.queue_redraw()
 
@@ -415,6 +458,7 @@ func set_phone(on: bool) -> void:
 func set_controls(buttons: bool) -> void:
 	buttons_mode = buttons
 	controls_btn.say("", "CONTROLS: %s" % ("BUTTONS" if buttons else "CLASSIC"))
+	settings.set_controls(buttons, phone)
 	if phone:
 		help = HELP_BUTTONS if buttons else HELP_PHONE
 	dock.queue_redraw()
@@ -460,6 +504,9 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	level_btn.say("BOT LEVEL", lvl)
 	level_btn.disabled = not can_set
 	season_btn.disabled = not can_set
+	settings.set_season(season_pick, season_label, can_set)
+	if settings.visible and phase != P.PH_LOBBY and phase >= 0 and seated:
+		settings.close()                # the match starts: out of the way
 	tv_line = "ARENA: %s  ·  BOTS: %d %s  ·  POWER-UPS %s" % ["MIX" if pick == P.ARENA_MIX else LevelScript.name_of(pick), bots_wanted, lvl,
 		"ON" if int(m.get("power", 0)) != 0 else "OFF"]
 	name_edit.editable = not seated

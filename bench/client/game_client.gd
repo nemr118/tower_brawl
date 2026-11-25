@@ -172,8 +172,10 @@ func _ready() -> void:
 	lobby.bot_level_pressed.connect(_on_bot_level)
 	lobby.power_pressed.connect(_on_power)
 	lobby.season_picked.connect(func(pick): net.send({"kind": "season", "pick": pick}))   # p4.18
+	lobby.look_picked.connect(_pick_look)          # p4.19 SETTINGS: a choice by name, not the next one
+	lobby.controls_picked.connect(func(b): if b != (controls == "buttons"): _on_controls())
 	world.pview.test_cream = opts.has("cream")   # p4.18 a test knob for pictures: PIE's cream on your own screen
-	lobby.set_look(str(opts["look"]) if look_test else _look_label())
+	_show_look()
 	sticks = Sticks.new()
 	sticks.pump = str(opts.get("stick", "")) != "old"
 	controls = str(opts.get("controls", _storage_get(CONTROLS_KEY)))
@@ -399,11 +401,17 @@ func _on_look() -> void:
 	if look_test:
 		return
 	var picks := _picks()
-	look_pick = picks[(picks.find(look_pick) + 1) % picks.size()]
+	_pick_look(picks[(picks.find(look_pick) + 1) % picks.size()])
+
+# p4.19: the look by name (SETTINGS): auto, low, normal or high.
+func _pick_look(pick: String) -> void:
+	if look_test or not _picks().has(pick) or pick == look_pick:
+		return
+	look_pick = pick
 	look = _device_look() if look_pick == "auto" else look_pick
 	world.set_tier(LOOK_TIER[look])
 	_storage_set(LOOK_KEY, look_pick)
-	lobby.set_look(_look_label())
+	_show_look()
 	_reset_frames(2.0)
 	print("🎮 [Look] %s, picked in the lobby" % _look_label())
 	_send_report("look")
@@ -411,6 +419,13 @@ func _on_look() -> void:
 # The looks the LOOK button offers on this device (p4.16: no HIGH on an iPhone or iPad).
 func _picks() -> Array:
 	return PICKS_IOS if _device() == "ios" else PICKS
+
+# The look on the lobby's button and in SETTINGS.
+func _show_look() -> void:
+	if look_test:
+		lobby.set_look(str(opts["look"]))
+	else:
+		lobby.set_look(_look_label(), look_pick, not _picks().has("high"))
 
 func _look_label() -> String:
 	return ("AUTO · %s" % look.to_upper()) if look_pick == "auto" else look.to_upper()
@@ -453,7 +468,7 @@ func _watch_frames(in_match: bool) -> void:
 		var was := look
 		look = LOOKS[LOOKS.find(look) - 1]
 		world.set_tier(LOOK_TIER[look])
-		lobby.set_look(_look_label())
+		_show_look()
 		hud.say("LOOK: AUTO stepped down to %s to stay smooth (pick a look in the lobby to keep one)" % look.to_upper(), 5.0)
 		rep_step_downs += 1
 		_send_report("step")
