@@ -32,6 +32,10 @@ a = ap.parse_args()
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 prof = tempfile.mkdtemp(prefix="tb-webshot-")
+
+import atexit, shutil   # p4.19: the browser's throw-away profile goes when the tool ends (they piled up in /tmp)
+
+atexit.register(lambda: shutil.rmtree(prof, ignore_errors=True))
 chrome_log = open(f"{a.out}_chrome.log", "w")
 chrome = subprocess.Popen([
     "chromium", "--headless=new", "--no-first-run", "--no-default-browser-check",

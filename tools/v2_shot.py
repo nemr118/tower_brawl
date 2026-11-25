@@ -14,7 +14,7 @@
 # Needs the venv's websocket-client. The game server should have bots (--bots 7
 # is the default) so a START with one person makes a match.
 # ==============================================================================
-import argparse, base64, json, os, subprocess, sys, tempfile, time, urllib.request
+import argparse, atexit, base64, json, os, shutil, subprocess, sys, tempfile, time, urllib.request
 import websocket
 
 ap = argparse.ArgumentParser()
@@ -44,6 +44,9 @@ os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 W, H = 1280, 720
 prof = tempfile.mkdtemp(prefix="tb-v2shot-")
+# p4.19: the browser's throw-away profile goes when the tool ends, however it ends. (It was
+# left behind: 92 of them, 3.7 GB, sat in /tmp, which is memory on this PC.)
+atexit.register(lambda: shutil.rmtree(prof, ignore_errors=True))
 chrome_log = open(f"{a.out}_chrome.log", "w")
 flags = [
     "chromium", "--headless=new", "--no-first-run", "--no-default-browser-check",
@@ -239,3 +242,4 @@ try:
     chrome.wait(5)
 except subprocess.TimeoutExpired:
     chrome.kill()
+    chrome.wait(5)

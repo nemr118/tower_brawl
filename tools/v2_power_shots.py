@@ -46,6 +46,12 @@ def host(path, body=None):
 
 
 prof = tempfile.mkdtemp(prefix="tb-cam-")
+
+
+import atexit, shutil   # p4.19: the browser's throw-away profile goes when the tool ends (they piled up in /tmp)
+
+
+atexit.register(lambda: shutil.rmtree(prof, ignore_errors=True))
 chrome = subprocess.Popen(["chromium", "--headless=new", "--no-first-run", f"--remote-debugging-port={a.port}",
                            f"--user-data-dir={prof}", "--ignore-certificate-errors", "--use-gl=angle", "--use-angle=swiftshader",
                            "--enable-unsafe-swiftshader", "--window-size=%s" % a.size.replace("x", ","), "--touch-events=enabled", "--mute-audio", "about:blank"],   # p4.19: the game has sound; a check never reaches the speakers
