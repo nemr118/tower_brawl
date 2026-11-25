@@ -269,6 +269,31 @@ const PIED_TICKS := 180
 const CATCH_UP_BEHIND := 2
 # p4.18 a costume's swing comes with a short lunge (GHOSTFACE's knife got 4 kills in 18 turns)
 const KNIFE_LUNGE := 9.5
+# p4.22 Christmas. SNOWBALLS: a snowball bursts where it lands (a wall, a floor, a fighter). No
+# blast: every living fighter within SNOW_R (not one in a dodge, not the shooter, not a
+# teammate) is packed into a snowman for SNOWED_TICKS: frozen, as by FREEZE. A direct hit
+# knocks out, as any arrow does.
+const SNOW_R := 190.0
+const SNOWED_TICKS := 90
+# The reindeer (the Christmas season's pet, in the black cat's place): it comes DEER_AT ticks
+# into a round (DEER_CHANCE of rounds, DEER_CHANCE_ROOF on THE ROOFTOPS), trots its floor,
+# and the first living fighter to touch it rides it: RIDE_TICKS of flying (FLYING's rule),
+# then the reindeer flies off. It leaves by itself after DEER_LIFE. The bots do not go looking for it.
+const DEER_CHANCE := 0.45
+const DEER_CHANCE_ROOF := 0.8
+const DEER_AT := [120, 240]
+const DEER_LIFE := 900
+const DEER_SPEED := 2.2
+const RIDE_TICKS := 300
+const RIDE_ALL := 60000          # REINDEER GAMES (a silly round): a ride for the whole round
+# SLIP AND SLIDE (a silly round): on the ground an icy fighter slows down with ICE_FRICTION of
+# the usual grip and speeds up with ICE_ACCEL of it. Only in that round.
+const ICE_FRICTION := 0.08
+const ICE_ACCEL := 0.4
+# SECRET SANTA (a silly round): everyone opens a present at the round's start: a trick
+# SECRET_TRICK of the time, else a regular power-up, for this round.
+const SECRET_TRICK := 0.25
+const ROUND_START_TICKS := 90    # the still moment before FIGHT (the server's PH_ROUND_START): a trick given at a round's start lasts this much longer
 # The winner is safe: a hit that would have killed it says E_PHEW, at most once in this
 # many ticks for a fighter (poison and fire try again every tick: no spam).
 const PHEW_EVERY := 30
@@ -359,6 +384,8 @@ class Fighter:
 	var knife_cd: int = 0       # ticks until it can slash again
 	var knife_hit: bool = false # this slash landed already
 	var carry_t: int = 0        # p4.10: dead, still carried by the arrow that killed it
+	var ride_t: int = 0         # p4.22: it rides the reindeer this many more ticks (it flies, as with FLYING)
+	var icy: bool = false       # p4.22 SLIP AND SLIDE: the floor is ice under it this round
 	var taunt_at: int = -1000   # p4.19: the tick of its last taunt (TAUNT_EVERY)
 	var phew_at: int = -1000    # the tick of its last E_PHEW (the winner is safe: PHEW_EVERY)
 
@@ -616,6 +643,8 @@ func _reset_powers_round() -> void:
 	pet = {}
 	if season == "harvest":     # p4.18: the turkey, early and often
 		pet_at = rng.randi_range(TURKEY_AT[0], TURKEY_AT[1]) if rng.randf() < (TURKEY_CHANCE_BARN if level.theme == "barn" else TURKEY_CHANCE) else -1
+	elif season == "christmas": # p4.22: the reindeer
+		pet_at = rng.randi_range(DEER_AT[0], DEER_AT[1]) if rng.randf() < (DEER_CHANCE_ROOF if level.theme == "rooftops" else DEER_CHANCE) else -1
 	else:
 		pet_at = rng.randi_range(PET_AT[0], PET_AT[1]) if rng.randf() < (PET_CHANCE_HW if level.theme == "halloween" else PET_CHANCE) else -1
 	if pet_always:
@@ -953,6 +982,9 @@ func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1
 			return        # the same hit (a blast, the fire it fell in) does not count twice
 	f.down_t = 0
 	f.knife_t = 0
+	if f.ride_t > 0:              # p4.22: the reindeer flies off
+		f.ride_t = 0
+		_event(P.E_RIDE_END, f.x + HALF_W, f.y + BODY_H, f.id, 0)
 	f.state = P.F_DEAD
 	f.state_t = 0
 	f.dead_t = RESPAWN_TICKS
@@ -982,8 +1014,9 @@ func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1
 func silly_round(kind: int) -> void:
 	for f in fighters:
 		if kind == P.SILLY_PIES:
-			f.pw_kind = P.A_PIE if season == "harvest" else (P.A_PUMPKIN if season == "halloween" else P.A_BOMB)
-			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_PIE if season == "harvest" else (P.PU_PUMPKIN if season == "halloween" else P.PU_BOMB))
+			var pk: int = {"harvest": P.PU_PIE, "halloween": P.PU_PUMPKIN, "christmas": P.PU_SNOWBALL}.get(season, P.PU_BOMB)
+			f.pw_kind = _arrow_kind_of(pk)
+			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, pk)
 		elif kind == P.SILLY_COSTUME:
 			f.mask = true
 			f.drawn = false
@@ -995,13 +1028,43 @@ func silly_round(kind: int) -> void:
 			f.trick_t = 100000        # all round (a round ends long before)
 			_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, 3)
 		elif kind == P.SILLY_FLY:
-			f.fly = true
-			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_FLY)
+			if season == "christmas":     # p4.22 REINDEER GAMES: everyone rides a reindeer all round
+				f.ride_t = RIDE_ALL
+				_event(P.E_PET, f.x + HALF_W, f.y + BODY_H - 20, f.id, 2)
+			else:
+				f.fly = true
+				_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_FLY)
 		elif kind == P.SILLY_STORM:
 			f.inf = true
 			f.big = true
 			f.arrows = maxi(f.arrows, START_QUIVER)
 			_event(P.E_PU_GET, f.x + HALF_W, f.y, f.id, P.PU_INF)
+		elif kind == P.SILLY_SECRET:      # p4.22 SECRET SANTA: a present for everyone
+			_event(P.E_CANDY_GET, f.x + HALF_W, f.y + MID_Y, f.id, 0)
+			if rng.randf() < SECRET_TRICK:
+				f.trick = 1 + rng.randi() % 3
+				f.trick_t = TRICK_TICKS[f.trick] + ROUND_START_TICKS
+				_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, f.trick)
+			else:
+				var had: bool = keep.has(f.id)
+				var was: int = keep.get(f.id, 0)
+				var treat: int = _pick_regular()
+				if treat == P.PU_TRICK:
+					treat = P.PU_SHIELD
+				_event(P.E_TRICK, f.x + HALF_W, f.y, f.id, 0)
+				_give(f, treat)
+				if had:                   # (the gift is for this round: what it kept for the match stays kept)
+					keep[f.id] = was
+				else:
+					keep.erase(f.id)
+		elif kind == P.SILLY_ICE:         # p4.22 SLIP AND SLIDE
+			f.icy = true
+
+# The arrow kind (proto A_*) a power-up kind (PU_*) gives.
+static func _arrow_kind_of(pu: int) -> int:
+	if pu >= P.PU_FIRE and pu <= P.PU_SMOKE:
+		return pu                 # the arrow kinds share the numbers 1..4
+	return {P.PU_PUMPKIN: P.A_PUMPKIN, P.PU_PIE: P.A_PIE, P.PU_SNOWBALL: P.A_SNOWBALL}.get(pu, P.A_NORMAL)
 
 # p4.19 a taunt (the GOBBLE button; a bot now and then after a knockout): only a word in a
 # bubble and a sound on the pages, nothing in the rules. At most one every TAUNT_EVERY ticks.
@@ -1153,20 +1216,22 @@ func _update_fighter(f: Fighter) -> void:
 				f.want_jump = false   # p4.15: a jump pressed in a dodge waits JUMP_BUFFER ticks, as on foot
 			else:
 				f.jump_buf -= 1
-	elif f.fly:
+	elif flying(f):
 		_fly(f)
 	else:
 		var mult := speed_mult(f)
 		if f.trick == 1 and f.on_ground and f.state_t % PUMPKIN_HOP == 0:
 			f.want_jump = true    # p4.12 a PUMPKIN hops by itself
 		var accel := (RUN_ACCEL if f.on_ground else AIR_ACCEL) * mult
+		if f.icy and f.on_ground:
+			accel *= ICE_ACCEL     # p4.22 SLIP AND SLIDE: slow to get going,
 		var stand_aim := f.aiming and f.on_ground   # aiming on the ground: you stand still
 		if f.move_dir != 0 and not stand_aim:
 			if f.knife_t <= 0:      # p4.12: GHOSTFACE keeps facing its swing
 				f.facing = f.move_dir
 			f.vx = move_toward(f.vx, RUN_MAX * mult * f.move_dir, accel)
 		else:
-			f.vx = move_toward(f.vx, 0.0, FRICTION if f.on_ground else AIR_FRICTION)
+			f.vx = move_toward(f.vx, 0.0, (FRICTION * (ICE_FRICTION if f.icy else 1.0)) if f.on_ground else AIR_FRICTION)   # (and slow to stop)
 		if f.aiming:
 			f.facing = 1 if cos(f.aim) >= 0.0 else -1
 		f.wall = 0
@@ -1333,6 +1398,10 @@ func _power_timers(f: Fighter) -> void:
 		f.batted -= 1
 	if f.pied_t > 0:
 		f.pied_t -= 1
+	if f.ride_t > 0:
+		f.ride_t -= 1
+		if f.ride_t == 0 and not predicting:
+			_event(P.E_RIDE_END, f.x + HALF_W, f.y + BODY_H, f.id, 0)
 	if f.mask:
 		_knife_tick(f)
 		if f.down_t > 0:
@@ -1356,6 +1425,10 @@ static func speed_mult(f: Fighter) -> float:
 	return (SLOW_MULT if f.slow_t > 0 and f.umbrella_t <= 0 else 1.0) * (SPEED_MULT if f.speed_t > 0 else 1.0)
 
 # INVISIBLE now: of each INVIS_CYCLE, out of sight the first part, seen INVIS_SEEN.
+# Does it fly now? FLYING, or a ride on the reindeer (p4.22): the same rule (_fly).
+static func flying(f: Fighter) -> bool:
+	return f.fly or f.ride_t > 0
+
 static func invisible(f: Fighter) -> bool:
 	return f.invis_t > 0 and posmod(INVIS_TICKS - f.invis_t, INVIS_CYCLE) < INVIS_CYCLE - INVIS_SEEN
 
@@ -1605,6 +1678,9 @@ func _arrow_hit_wall(a: Arrow, floor_hit: bool, surface_y: float) -> void:
 	elif a.kind == P.A_PIE:     # p4.18: a pie splats at once
 		a.dead = true
 		_pie(a)
+	elif a.kind == P.A_SNOWBALL:   # p4.22: a snowball bursts at once
+		a.dead = true
+		_snowball(a)
 	elif a.kind == P.A_MIASMA:
 		_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS, a.owner)
 		_event(P.E_MIASMA, int(a.x), int(a.y), 0, 0)
@@ -1660,6 +1736,9 @@ func _arrow_hit_fighters(a: Arrow) -> bool:
 		elif a.kind == P.A_PIE:
 			a.dead = true
 			_pie(a)
+		elif a.kind == P.A_SNOWBALL:
+			a.dead = true
+			_snowball(a)
 		elif a.kind == P.A_MIASMA:
 			a.dead = true
 			_add_zone(P.Z_MIASMA, a.x, a.y, MIASMA_R * k, MIASMA_TICKS, a.owner)
@@ -1776,6 +1855,28 @@ func _pie(a: Arrow) -> void:
 		if dx * dx + dy * dy <= r2:
 			f.pied_t = PIED_TICKS
 			_event(P.E_PIED, f.x + HALF_W, f.y, f.id, 0)
+
+# p4.22 SNOWBALLS: the burst. No blast: every living fighter within SNOW_R is packed into a
+# snowman (frozen SNOWED_TICKS). Not one in a dodge (a dodge is always a way out), not the
+# shooter (unless self_harm), not a teammate, not the round's winner. The page's own copy
+# (predicting) only says the burst: the server's word freezes its fighter.
+func _snowball(a: Arrow) -> void:
+	var k := BIG_FX if a.big else 1.0
+	_event(P.E_SNOW, int(a.x), int(a.y), a.owner, 1 if a.big else 0)
+	if predicting:
+		return
+	var r2 := SNOW_R * SNOW_R * k * k
+	for f in fighters:
+		if f.state == P.F_DEAD or f.state == P.F_DODGE or (f.id == a.owner and not self_harm) or friends(a.owner, f.id) or is_safe(f):
+			continue
+		var dx := wrap_d(a.x, f.x + HALF_W, W)
+		var dy := wrap_d(a.y, f.y + MID_Y, H)
+		if dx * dx + dy * dy <= r2:
+			f.freeze_t = maxi(f.freeze_t, SNOWED_TICKS)
+			f.drawn = false
+			f.aiming = false
+			f.shot_wait = false
+			_event(P.E_SNOWED, f.x + HALF_W, f.y + MID_Y, f.id, 0)
 
 func _tinks() -> void:
 	var flying: Array = []
@@ -1937,6 +2038,8 @@ func _give(f: Fighter, kind: int) -> void:
 		f.pw_kind = P.A_PUMPKIN
 	elif kind == P.PU_PIE:
 		f.pw_kind = P.A_PIE
+	elif kind == P.PU_SNOWBALL:
+		f.pw_kind = P.A_SNOWBALL
 	elif kind == P.PU_BATS:
 		f.bats_t = BAT_SWARM_TICKS
 	elif kind == P.PU_SHIELD:
@@ -1971,7 +2074,7 @@ func _give(f: Fighter, kind: int) -> void:
 		f.spike_regen = 0
 	elif kind == P.PU_SPEED:
 		f.speed_t = SPEED_TICKS
-	if (kind >= P.PU_FIRE and kind <= P.PU_SMOKE) or kind == P.PU_PUMPKIN or kind == P.PU_PIE:
+	if (kind >= P.PU_FIRE and kind <= P.PU_SMOKE) or kind == P.PU_PUMPKIN or kind == P.PU_PIE or kind == P.PU_SNOWBALL:
 		keep[f.id] = f.pw_kind
 
 # p4.12 TRICK OR TREAT: GHOSTFACE (MASK_CHANCE), a treat (a random power-up: its own pop and
@@ -2122,6 +2225,9 @@ func _update_pet() -> void:
 	if int(pet.get("kind", 0)) == 1:
 		_update_turkey()
 		return
+	if int(pet.get("kind", 0)) == 2:
+		_update_deer()
+		return
 	pet["t"] += 1
 	if pet["gone"] > 0:
 		pet["gone"] -= 1
@@ -2162,9 +2268,9 @@ func _spawn_pet() -> void:
 				long = false
 		if not long:
 			continue
-		var turkey := season == "harvest"
-		pet = {"x": sp.x, "y": sp.y, "dir": 1 if rng.randf() < 0.5 else -1, "t": 0, "gone": 0, "kind": 1 if turkey else 0, "vy": 0.0, "air": false}
-		_event(P.E_CAT_COME, int(sp.x), int(sp.y), 1 if turkey else 0, 0)
+		var pk: int = 1 if season == "harvest" else (2 if season == "christmas" else 0)   # the black cat, the turkey, the reindeer
+		pet = {"x": sp.x, "y": sp.y, "dir": 1 if rng.randf() < 0.5 else -1, "t": 0, "gone": 0, "kind": pk, "vy": 0.0, "air": false}
+		_event(P.E_CAT_COME, int(sp.x), int(sp.y), pk, 0)
 		return
 
 # p4.18 the turkey's tick (the rules: the constants' note above).
@@ -2244,6 +2350,35 @@ func _update_turkey() -> void:
 			_give(f, _pick_regular())
 			pet["gone"] = 40
 			pet["dir"] = 1 if wrap_d(f.x + HALF_W, pet["x"], W) >= 0.0 else -1
+			break
+
+# p4.22 the reindeer's tick (the rules: the constants' note above): it trots its floor, turning
+# at an edge or a wall, as the black cat walks; when its time is up it flies up and off; the
+# first living fighter that touches it (not a frozen one) gets on.
+func _update_deer() -> void:
+	pet["t"] += 1
+	if pet["gone"] > 0:
+		pet["gone"] -= 1
+		pet["x"] = fposmod(pet["x"] + pet["dir"] * 6.0, W)
+		pet["y"] -= 7.0
+		if pet["gone"] == 0:
+			pet = {}
+		return
+	if pet["t"] >= DEER_LIFE:
+		pet["gone"] = 40
+		return
+	var nx: float = pet["x"] + pet["dir"] * DEER_SPEED
+	if level.cell_at(fposmod(nx + pet["dir"] * 18.0, W), pet["y"] + 2.0) == 0 or level.cell_at(fposmod(nx + pet["dir"] * 20.0, W), pet["y"] - 12.0) == 1:
+		pet["dir"] = -pet["dir"]
+	else:
+		pet["x"] = fposmod(nx, W)
+	for f in fighters:
+		if f.state == P.F_DEAD or f.freeze_t > 0:
+			continue
+		if absf(wrap_d(f.x + HALF_W, pet["x"], W)) < 34.0 and absf(wrap_d(f.y + BODY_H, pet["y"], H)) < 40.0:
+			f.ride_t = RIDE_TICKS
+			_event(P.E_PET, int(pet["x"]), int(pet["y"]) - 20, f.id, 2)
+			pet = {}
 			break
 
 # p4.18 catch-up help: the server calls it at a round's start, once the points are in.
@@ -2424,6 +2559,8 @@ func _pick_regular() -> int:
 	var kinds: Array = REGULAR_W.keys()
 	if season == "harvest":
 		kinds.append(P.PU_PIE)      # p4.18: PIE drops in the Harvest season
+	elif season == "christmas":
+		kinds.append(P.PU_SNOWBALL) # p4.22: SNOWBALLS drop in the Christmas season
 	var total := 0
 	for k in kinds:
 		if k != pu_last:
@@ -2437,14 +2574,16 @@ func _pick_regular() -> int:
 			pu_last = k
 			# p4.12: on THE HAUNTED HOUSE the bombs are pumpkins; p4.18: on the Harvest season's
 			# own arenas they are popcorn (the same kind: the season names and draws it)
-			if k == P.PU_BOMB and (level.theme == "halloween" or (season == "harvest" and (level.theme == "barn" or level.theme == "table"))):
+			# p4.22: on the Christmas season's own arenas they are glass ornaments
+			if k == P.PU_BOMB and (level.theme == "halloween" or (season == "harvest" and (level.theme == "barn" or level.theme == "table")) \
+					or (season == "christmas" and (level.theme == "rooftops" or level.theme == "workshop"))):
 				return P.PU_PUMPKIN
 			return k
 	pu_last = P.PU_SHIELD
 	return P.PU_SHIELD
 
 func _weight(k: int) -> int:
-	return int(REGULAR_W.get(k, PIE_W))
+	return int(REGULAR_W.get(k, PIE_W))    # (a season's own arrow kind, PIE or SNOWBALLS: PIE_W)
 
 func _pick_big() -> int:
 	var pick: int = BIG_KINDS[rng.randi() % BIG_KINDS.size()]
@@ -2611,7 +2750,7 @@ func pin_demo() -> void:
 
 # The quarter seconds left of f's BIG power-up (the longest that runs), for the page.
 static func big_left(f: Fighter) -> int:
-	return maxi(maxi(maxi(f.invis_t, f.speed_t), maxi(f.umbrella_t, f.spikes_t)), maxi(f.bats_t, f.trick_t))
+	return maxi(maxi(maxi(f.invis_t, f.speed_t), maxi(f.umbrella_t, f.spikes_t)), maxi(maxi(f.bats_t, f.trick_t), f.ride_t if f.ride_t <= RIDE_TICKS else 0))
 
 # The snapshot's power bits (proto PW_*).
 static func power_bits(f: Fighter) -> int:
@@ -2806,7 +2945,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 	buf.put_u8(P.PW_TAG)
 	var pf: Array = []
 	for f in fighters:
-		if power_bits(f) != 0 or f.pw_kind != 0 or f.mask or f.bats_t > 0:
+		if power_bits(f) != 0 or f.pw_kind != 0 or f.mask or f.bats_t > 0 or f.ride_t > 0 or f.icy:
 			pf.append(f)
 	buf.put_u8(pf.size())
 	for f in pf:
@@ -2814,7 +2953,8 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_u16(power_bits(f))
 		buf.put_u8(f.pw_kind | (0x80 if f.bats_t > 0 else 0))   # p4.12: 0x80 BAT SWARM's own bats circle it
 		buf.put_u8(mini(255, ceili(big_left(f) / 15.0)))
-		buf.put_u8((1 if f.mask else 0) | (2 if f.down_t > 0 else 0) | (4 if f.knife_t > 0 else 0) | (8 if f.mask and f.drawn else 0))   # p4.12 GHOSTFACE
+		buf.put_u8((1 if f.mask else 0) | (2 if f.down_t > 0 else 0) | (4 if f.knife_t > 0 else 0) | (8 if f.mask and f.drawn else 0) \
+			| (P.PX_RIDE if f.ride_t > 0 else 0) | (P.PX_ICY if f.icy else 0))   # p4.12 GHOSTFACE; p4.22 the reindeer ride, the ice
 	buf.put_u8(orbs.size())
 	for o in orbs:
 		buf.put_u8(o.state)
@@ -2842,7 +2982,7 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(f.gx))
 		buf.put_16(int(f.gy))
 		buf.put_u8((1 if f.popped_t > 0 else 0) | (2 if f.boo_t > 0 else 0) | (4 if f.boo_cd == 0 else 0))
-	buf.put_u8(0 if pet.is_empty() else 1 + int(pet.get("kind", 0)))    # p4.12 the black cat (1); p4.18 the turkey (2)
+	buf.put_u8(0 if pet.is_empty() else 1 + int(pet.get("kind", 0)))    # p4.12 the black cat (1); p4.18 the turkey (2); p4.22 the reindeer (3)
 	if not pet.is_empty():
 		buf.put_16(int(pet["x"]))
 		buf.put_16(int(pet["y"]))
@@ -2917,7 +3057,7 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_8(f.vdir)               # p4.9 the power-ups
 	buf.put_u8(f.pw_kind)
 	buf.put_u8(f.shield)
-	buf.put_u8((1 if f.inf else 0) | (2 if f.fly else 0) | (4 if f.big else 0) | (8 if f.spike_up else 0))
+	buf.put_u8((1 if f.inf else 0) | (2 if f.fly else 0) | (4 if f.big else 0) | (8 if f.spike_up else 0) | (16 if f.icy else 0))
 	buf.put_u16(mini(f.freeze_t, 65535))
 	buf.put_u16(mini(f.slow_t, 65535))
 	buf.put_u16(mini(f.speed_t, 65535))
@@ -2942,6 +3082,7 @@ func write_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	buf.put_u8(f.down_t)
 	buf.put_u8(f.knife_t)
 	buf.put_u8(f.knife_cd)
+	buf.put_u16(mini(f.ride_t, 65535))   # p4.22 the reindeer ride (it flies)
 
 func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.x = buf.get_16()
@@ -2992,6 +3133,7 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.fly = (pb & 2) != 0
 	f.big = (pb & 4) != 0
 	f.spike_up = (pb & 8) != 0
+	f.icy = (pb & 16) != 0
 	f.freeze_t = buf.get_u16()
 	f.slow_t = buf.get_u16()
 	f.speed_t = buf.get_u16()
@@ -3018,3 +3160,4 @@ func read_fighter_state(buf: StreamPeerBuffer, f: Fighter) -> void:
 	f.down_t = buf.get_u8()
 	f.knife_t = buf.get_u8()
 	f.knife_cd = buf.get_u8()
+	f.ride_t = buf.get_u16()

@@ -276,7 +276,7 @@ static func _play(sim, f, m: Mind) -> int:
 		return _dodge(sim, f, m)
 	# p4.10: a power-up's warning near: out of there first, even in the middle of a
 	# move or in the air (a wall that way: jump); flying bots steer away in _fly_move
-	var flee := _strike_flee(sim, f) if not f.fly else 0
+	var flee := _strike_flee(sim, f) if not SimScript.flying(f) else 0
 	if flee == 0 and sim.hazards != null and f.state == P.F_NORMAL:
 		flee = sim.hazards.flee(sim, f)    # THE BOILER ROOM: a furnace or a steam pipe about to go off
 	if flee != 0:
@@ -291,11 +291,11 @@ static func _play(sim, f, m: Mind) -> int:
 	var rm = Routes.map_for(sim.level)
 	# p4.10: flying, or sped up or slowed: the routes (walked at normal speed) do not fit,
 	# so it steers by sight
-	var by_sight: bool = rm == null or f.fly or SimScript.speed_mult(f) != 1.0 or f.trick != 0   # p4.12: a trick too
+	var by_sight: bool = rm == null or SimScript.flying(f) or f.icy or SimScript.speed_mult(f) != 1.0 or f.trick != 0   # p4.12: a trick too; p4.22: a reindeer ride, the ice
 	var walk := 0
 	if by_sight:
 		m.player = null
-		if f.fly:
+		if SimScript.flying(f):
 			_fly_move(sim, f, m, tgt)
 		else:
 			_old_move(sim, f, m, tgt, _orb_point(sim, f, m))

@@ -91,6 +91,7 @@ const A_SMOKE := 4        # a thick smoke cloud: no damage, bots cannot see thro
 const A_PUMPKIN := 5      # p4.12 PUMPKIN BOMBS: a smaller blast, then 5 seeds fly out and pop
 const A_SEED := 6         # a pumpkin's seed: it pops in a small blast on a wall, a fighter, or after a moment
 const A_PIE := 7          # p4.18 PIE: it splats where it lands: a small blast, cream on everyone near
+const A_SNOWBALL := 8     # p4.22 SNOWBALLS: it bursts where it lands (no blast): whoever is near is packed in snow (frozen) a moment
 const S_FLY := 0
 const S_FALL := 1
 const S_STUCK := 2
@@ -127,13 +128,15 @@ const PU_MASK := 18        # GHOSTFACE, from TRICK OR TREAT (the user's daughter
                            # a knife swing instead; a hit knocks you down 2 s, a hit while down is the end
 const PU_PIE := 19        # p4.18 the Harvest season: every arrow is a cream pie: a small blast, and whoever is near the
                            # splat is covered in cream PIED_TICKS (they see nobody, like in smoke); an arrow kind, all match
+const PU_SNOWBALL := 20   # p4.22 the Christmas season: every arrow is a snowball: a direct hit knocks out as always; where it
+                           # lands it bursts, and whoever is near is packed into a snowman SNOWED_TICKS (frozen); an arrow kind, all match
 const PU_NAMES := {1: "FIRE ARROWS", 2: "BOMB ARROWS", 3: "POISON ARROWS", 4: "SMOKE ARROWS", 5: "SHIELD",
 	6: "INFINITE ARROWS", 7: "FLYING", 8: "BIG ARROWS", 9: "GHOST CATS", 10: "RAIN", 11: "INVISIBLE",
 	12: "FREEZE", 13: "SPIKED SHIELD", 14: "SUPER SPEED", 15: "TRICK OR TREAT", 16: "PUMPKIN BOMBS", 17: "BAT SWARM",
-	18: "GHOSTFACE", 19: "PIE"}
+	18: "GHOSTFACE", 19: "PIE", 20: "SNOWBALLS"}
 const PU_SHORT := {1: "FIRE", 2: "BOMB", 3: "POISON", 4: "SMOKE", 5: "SHIELD", 6: "INFINITE", 7: "FLY", 8: "BIG",
 	9: "CATS", 10: "RAIN", 11: "INVISIBLE", 12: "FREEZE", 13: "SPIKES", 14: "SPEED", 15: "TRICK?", 16: "PUMPKIN", 17: "BATS",
-	18: "GHOSTFACE", 19: "PIE"}
+	18: "GHOSTFACE", 19: "PIE", 20: "SNOWBALLS"}
 # what each one does, in a line (the page says it when you take one)
 const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	2: "every arrow you shoot blows up, all match", 3: "every arrow you shoot leaves a poison cloud, all match",
@@ -146,7 +149,8 @@ const PU_HELP := {1: "every arrow you shoot sets the floor on fire, all match",
 	15: "a treat (a power-up) or a silly trick", 16: "every arrow is a pumpkin: it bursts into seeds that pop, all match",
 	17: "bats circle you: they knock arrows away and hide you",
 	18: "no bow this round: let go of shoot to swing your knife; a hit knocks you down 2 seconds, a hit while you're down ends you",
-	19: "every arrow is a cream pie: it bursts, and everyone near the splat cannot see for 3 seconds, all match"}
+	19: "every arrow is a cream pie: it bursts, and everyone near the splat cannot see for 3 seconds, all match",
+	20: "every arrow is a snowball: it bursts, and everyone near is packed into a snowman for a moment, all match"}
 const ORB_WARN := 0        # an orb's states: the lightning builds up over its spot
 const ORB_LIVE := 1        # it struck: the orb waits to be taken
 const PW_TAG := 0xB5       # the snapshot's power-up part starts with this byte
@@ -199,8 +203,8 @@ const E_PIN := 27        # p4.10: an arrow pins a body to a wall: x, y the arrow
 const E_GHOST := 28      # p4.11: a person's ghost rises from the body: a = fighter
 const E_BOO := 29        # a ghost BOOs: a = the ghost, b = the one it shoved (255: the dash starts)
 const E_GHOST_POP := 30  # an arrow pops a ghost (gone 3 s): a = the ghost, b = the shooter
-const E_PET := 31        # p4.12: someone pets the black cat (a SHIELD): a = fighter; b = 1: it caught the turkey (p4.18: its power-up follows)
-const E_CAT_COME := 32   # the black cat shows up: x, y its feet; a = 1: the turkey (p4.18)
+const E_PET := 31        # p4.12: someone pets the black cat (a SHIELD): a = fighter; b = 1: it caught the turkey (p4.18: its power-up follows); b = 2: it gets on the reindeer (p4.22)
+const E_CAT_COME := 32   # the black cat shows up: x, y its feet; a = 1: the turkey (p4.18); a = 2: the reindeer (p4.22)
 const E_TRICK := 33      # TRICK OR TREAT: a = fighter, b = 0 a treat (its power-up follows), 1 pumpkin, 2 backwards, 3 tiny
 const E_BATS := 34       # a bat swarm screeches before it sweeps in: x, y where it comes in; a = 1 it flies right, 0 left
 # p4.12: two or three words beside the name on your own screen (the user: "graphics or
@@ -208,7 +212,7 @@ const E_BATS := 34       # a bat swarm screeches before it sweeps in: x, y where
 const PU_TIP := {1: "burning arrows", 2: "boom arrows", 3: "poison arrows", 4: "smoke arrows", 5: "blocks one hit",
 	6: "endless arrows", 7: "fly with the stick", 8: "huge arrows", 9: "cats hunt them", 10: "they slow down",
 	11: "you're hidden", 12: "they freeze", 13: "spikes up", 14: "run fast", 15: "", 16: "seed bombs",
-	17: "bats guard you", 18: "knife: let go to swing", 19: "pie in the face"}
+	17: "bats guard you", 18: "knife: let go to swing", 19: "pie in the face", 20: "snowman maker"}
 const E_KNIFE := 35      # GHOSTFACE swings the knife: a = fighter, b = 1 to the right
 const E_MASK_DOWN := 36  # GHOSTFACE is knocked down (2 s): a = fighter
 const E_MASK_UP := 37    # and gets back up: a = fighter
@@ -221,6 +225,18 @@ const E_PIED := 43       # a fighter is covered in cream (it sees nobody for sim
 const E_CATCH_UP := 44   # a person far behind starts the round with a SHIELD (sim.gd catch_up): a = fighter
 const E_PHEW := 45       # p4.19 the round's winner would have died after the round was called: x, y where the hit landed; a = the fighter (the winner); b = what hit: 0 an arrow, 1 a blast, 2 anything else
 const E_TAUNT := 46      # p4.19 a fighter taunts (the GOBBLE button; a bot after a knockout): x, y its head; a = fighter
+# (47 to 49 are SANTA'S WORKSHOP's: the toy train, sim/workshop.gd)
+const E_SNOW := 50       # p4.22 a snowball bursts: x, y; a = the shooter; b = 1 BIG
+const E_SNOWED := 51     # a fighter is packed into a snowman (frozen for sim.gd's SNOWED_TICKS): a = fighter
+const E_RIDE_END := 52   # a reindeer ride is over (the reindeer flies off from x, y): a = fighter
+# The snapshot's extra byte of a power-up row (p4.12): 1 the costume, 2 it is down, 4 it swings, 8 its weapon is up;
+# p4.22: 16 it rides the reindeer, 32 it slides on ice (SLIP AND SLIDE).
+const PX_MASK := 1
+const PX_DOWN := 2
+const PX_SWING := 4
+const PX_READY := 8
+const PX_RIDE := 16
+const PX_ICY := 32
 # fighter flags: 1 facing right, 2 on the ground, 4 at a wall, 8 burning, 16 poisoned,
 # 32 rolling (a dodge on the ground) or pulling up (on a ledge), 64 wall jump just now, 128 in smoke
 # fighter flags2: 1 a bot plays this seat, 2 aiming, 4 the person's socket is gone (the seat is held),
@@ -250,20 +266,40 @@ const HARVEST_HELP := {16: "every arrow is a corn cob: it bursts into popcorn th
 	17: "crows circle you: they knock arrows away and hide you",
 	18: "no bow this round: let go of shoot to peck; a hit knocks you down 2 seconds, a hit while you're down ends you"}
 const HARVEST_TIP := {16: "popcorn bombs", 17: "crows guard you", 18: "peck: let go to lunge"}
+# p4.22 Christmas: the candy is a wrapped PRESENT, the pumpkin bomb a glass ORNAMENT, the bats a
+# SNOW FLURRY, the costume KRAMPUS (GHOSTFACE's rules), RAIN a BLIZZARD.
+const XMAS_NAMES := {10: "BLIZZARD", 15: "A PRESENT", 16: "ORNAMENT BOMBS", 17: "SNOW FLURRY", 18: "KRAMPUS"}
+const XMAS_SHORT := {10: "BLIZZARD", 15: "PRESENT", 16: "ORNAMENT", 17: "FLURRY", 18: "KRAMPUS"}
+const XMAS_HELP := {10: "everyone else is slow in the blizzard; your umbrella stops stomps",
+	15: "a gift (a power-up) or a silly trick",
+	16: "every arrow is a glass ornament: it bursts into glitter that pops, all match",
+	17: "a whirl of snow circles you: it knocks arrows away and hides you",
+	18: "no bow this round: let go of shoot to swing your sticks; a hit knocks you down 2 seconds, a hit while you're down ends you"}
+const XMAS_TIP := {10: "they slow down", 16: "glitter bombs", 17: "snow guards you", 18: "sticks: let go to swing"}
+const SEASON_NAMES := {"harvest": HARVEST_NAMES, "christmas": XMAS_NAMES}
+const SEASON_SHORT := {"harvest": HARVEST_SHORT, "christmas": XMAS_SHORT}
+const SEASON_HELP := {"harvest": HARVEST_HELP, "christmas": XMAS_HELP}
+const SEASON_TIP := {"harvest": HARVEST_TIP, "christmas": XMAS_TIP}
 # a candy's tricks (sim.gd's trick numbers 1..3), then the costume (4)
 const TRICK_NAMES := ["TREAT", "PUMPKIN HEAD", "BACKWARDS", "TINY", "GHOSTFACE"]
 const HARVEST_TRICKS := ["TREAT", "TURKEY TIME", "TOO MUCH PIE", "PEA-SIZED", "THE BIG TURKEY"]
+const XMAS_TRICKS := ["GIFT", "SNOWMAN", "BRAIN FREEZE", "ELF-SIZED", "KRAMPUS"]
 const TRICK_TIPS := ["", "no shooting", "left is right!", "so small", ""]
+# What a candy is called in a season (the server's log, the page's words).
+const CANDY_WORD := {"harvest": "dish", "christmas": "present"}
 
 # p4.20 silly rounds (the user picked them on 2026-11-24): every third round the same surprise
 # for every fighter, from rules the game already has (sim.gd silly_round; the server picks:
 # game_server.gd _pick_silly). The names by the season; "": that one is not played in that season.
-const SILLY_PIES := 1       # everyone shoots pies (out of the Harvest season: bombs)
-const SILLY_COSTUME := 2    # everyone is THE BIG TURKEY (Halloween: GHOSTFACE): no bows this round
+const SILLY_PIES := 1       # everyone shoots pies (Christmas: snowballs; out of a season: bombs)
+const SILLY_COSTUME := 2    # everyone is THE BIG TURKEY (Halloween: GHOSTFACE; Christmas: KRAMPUS): no bows this round
 const SILLY_TINY := 3       # everyone is tiny all round
-const SILLY_FLY := 4        # everyone flies
+const SILLY_FLY := 4        # everyone flies (Christmas: on a reindeer)
 const SILLY_STORM := 5      # everyone has big arrows and a quiver that never empties
+const SILLY_SECRET := 6     # p4.22 SECRET SANTA: everyone opens a present at FIGHT: a random power-up, or a trick
+const SILLY_ICE := 7        # p4.22 SLIP AND SLIDE: the floor is ice this round (sim.gd Fighter.icy)
 const SILLY_NAMES := {
+	"christmas": ["", "SNOWBALL FIGHT!", "KRAMPUS NIGHT!", "ELF-SIZED!", "REINDEER GAMES!", "ARROW BLIZZARD!", "SECRET SANTA!", "SLIP AND SLIDE!"],
 	"harvest": ["", "PIE FIGHT!", "TURKEY TROT!", "PEA-SIZED!", "EVERYBODY FLIES!", "ARROW STORM!"],
 	"halloween": ["", "PUMPKIN BOMBS!", "SCREAM PARTY!", "TINY TERRORS!", "EVERYBODY FLIES!", "ARROW STORM!"],
 	"": ["", "BOOM ROUND!", "", "TINY ROUND!", "EVERYBODY FLIES!", "ARROW STORM!"],
@@ -286,6 +322,7 @@ static func silly_kinds(season: String) -> Array:
 # bot is BOT_NAMES[season][i], so a banner says GRAVY WINS THE ROUND, not BOT 3. The lobby's
 # cards and the HUD still mark them as bots.
 const BOT_NAMES := {
+	"christmas": ["JINGLE", "TINSEL", "COCOA", "MITTENS", "GUMDROP", "BLITZEN", "FRUITCAKE", "ICICLE"],
 	"harvest": ["GRAVY", "STUFFING", "YAMS", "BISCUIT", "DRUMSTICK", "CRANBERRY", "CORNBREAD", "WISHBONE"],
 	"halloween": ["BOO", "FANG", "CREEPY", "GOOP", "BONES", "SPOOKS", "WEBBY", "CACKLE"],
 	"": ["BOLT", "RUSTY", "CLANK", "BEEP", "GIZMO", "SPROCKET", "WIDGET", "ZAP"],
@@ -296,6 +333,7 @@ const BOT_NAMES := {
 # round goes to the last team standing. The two teams' names, by the season, the first team
 # then the second. Each has a colour (client/teams_view.gd: orange, teal) and a letter on its flag.
 const TEAM_NAMES := {
+	"christmas": ["TEAM NAUGHTY", "TEAM NICE"],
 	"harvest": ["TEAM TURKEY", "TEAM PIE"],
 	"halloween": ["TEAM GHOST", "TEAM PUMPKIN"],
 	"": ["TEAM GOLD", "TEAM SILVER"],
@@ -338,21 +376,29 @@ static func season_for(month: int, day: int) -> String:
 
 # A power-up's name, short name, help line and tip in a season.
 static func pu_name(kind: int, season: String) -> String:
-	return str(HARVEST_NAMES[kind]) if season == "harvest" and HARVEST_NAMES.has(kind) else str(PU_NAMES.get(kind, str(kind)))
+	var own: Dictionary = SEASON_NAMES.get(season, {})
+	return str(own[kind]) if own.has(kind) else str(PU_NAMES.get(kind, str(kind)))
 
 static func pu_short(kind: int, season: String) -> String:
-	return str(HARVEST_SHORT[kind]) if season == "harvest" and HARVEST_SHORT.has(kind) else str(PU_SHORT.get(kind, ""))
+	var own: Dictionary = SEASON_SHORT.get(season, {})
+	return str(own[kind]) if own.has(kind) else str(PU_SHORT.get(kind, ""))
 
 static func pu_help(kind: int, season: String) -> String:
-	return str(HARVEST_HELP[kind]) if season == "harvest" and HARVEST_HELP.has(kind) else str(PU_HELP.get(kind, ""))
+	var own: Dictionary = SEASON_HELP.get(season, {})
+	return str(own[kind]) if own.has(kind) else str(PU_HELP.get(kind, ""))
 
 static func pu_tip(kind: int, season: String) -> String:
-	return str(HARVEST_TIP[kind]) if season == "harvest" and HARVEST_TIP.has(kind) else str(PU_TIP.get(kind, ""))
+	var own: Dictionary = SEASON_TIP.get(season, {})
+	return str(own[kind]) if own.has(kind) else str(PU_TIP.get(kind, ""))
 
 # A candy's result by name: 0 a treat, 1..3 the tricks, 4 the costume.
 static func trick_name(n: int, season: String) -> String:
-	var list: Array = HARVEST_TRICKS if season == "harvest" else TRICK_NAMES
+	var list: Array = HARVEST_TRICKS if season == "harvest" else (XMAS_TRICKS if season == "christmas" else TRICK_NAMES)
 	return str(list[clampi(n, 0, list.size() - 1)])
+
+# What a candy is called in a season: "candy", "dish", "present".
+static func candy_word(season: String) -> String:
+	return str(CANDY_WORD.get(season, "candy"))
 
 # How long the match's end replay plays (client/deathcam.gd) for a winner with `kills`
 # kills in the match, in seconds. The server adds it to the winner's screen's 8 s (the

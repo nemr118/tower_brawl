@@ -186,6 +186,17 @@ const AWARDS := [
 	["GOBBLER", "big_turkeys", "max", 1, "turned into THE BIG TURKEY %d times", ""],
 	["PECKING ORDER", "peck_kills", "max", 1, "%d knockouts with a peck", ""],
 	["TURKEY DINNER", "turkey_ends", "max", 1, "finished off THE BIG TURKEY %d times", ""],
+	# p4.22 the Christmas season's own (counted only in that season: _match_events)
+	["NAUGHTY LIST", "naughty", "max", 3, "%d knockouts", ""],
+	["NICE LIST", "nice", "max", 2, "knocked nobody out in %d rounds", ""],
+	["SNOWBALL CHAMP", "snowed", "max", 1, "packed %d players into snowmen", ""],
+	["LUMP OF COAL", "coal", "max", 1, "%d tricks out of presents", ""],
+	["SLEIGH RIDE", "rides", "max", 1, "rode the reindeer %d times", ""],
+	["UNWRAPPED", "presents", "max", 1, "opened %d presents", ""],
+	["FRUITCAKE", "fruitcake", "max", 1, "first one out %d times", ""],
+	["HORNS AND BELLS", "krampuses", "max", 1, "turned into KRAMPUS %d times", ""],
+	["IN THE SACK", "sack_kills", "max", 1, "put %d players in the sack", ""],
+	["KRAMPUS CATCHER", "krampus_ends", "max", 1, "finished off KRAMPUS %d times", ""],
 ]
 const FALLBACK := [["GOOD SPORT", "played the whole match"], ["BEST WIGGLE", "the wiggliest archer"],
 	["MAIN CHARACTER", "every story needs one"], ["WILL WIN NEXT TIME", "just warming up"],
@@ -318,6 +329,8 @@ var stats_path := ""
 var pu_gallery := false          # --pu-gallery (a test knob: sim.gallery each round)
 var mstats := {}                 # p4.11: this match's numbers by seat (for the awards)
 var round_first := true          # no death yet this round (NAP TIME)
+var round_kills := {}            # p4.22: seat -> its knockouts this round (the Christmas season's NICE LIST: a round with none)
+var snow_by := -1                # p4.22: who threw the snowball whose burst is being read (E_SNOW, then its E_SNOWED)
 var last_pos := {}               # seat -> where its fighter was last tick (the steps it ran)
 var last_cause := {}             # seat -> its last death's cause (a kill's kind)
 var last_awards: Array = []      # the last match's awards (match_end, and the lobby's seats message)
@@ -1221,6 +1234,8 @@ func _match_tick() -> void:
 			for s in seats:
 				if _won(s.i):
 					_mcount(s.i, "round_wins")   # p4.11 (TEAMS: every seat of the winning team)
+				if sim.season == "christmas" and s.kind != 0 and sim.fighter(s.i) != null and int(round_kills.get(s.i, 0)) == 0:
+					_mcount(s.i, "nice")         # p4.22 NICE LIST: a whole round with no knockout
 				if s.kind != 0 and (s.in_round or _won(s.i)):
 					var r := _stat(s)
 					r["rounds"] += 1
@@ -1464,6 +1479,7 @@ func _start_round() -> void:
 		_say("🏰 [ROUND] %d is a silly round: %s" % [round_no, P.silly_name(silly, sim.season)])
 	seats_dirty = true         # (the pages read the round's surprise from the seats message)
 	round_first = true     # p4.11
+	round_kills.clear()
 	last_pos.clear()
 	if pu_gallery:
 		sim.gallery()
@@ -2125,10 +2141,10 @@ func _log_powers(evs: Array) -> void:
 			_say("🏰 [POWER] seat %d '%s' got a TRICK: %s" % [ti, seats[ti].name if ti < SEATS else "?", P.trick_name(e[4], sim.season)])
 		elif k == P.E_CANDY_GET:
 			var ci: int = e[3]
-			_say("🏰 [POWER] seat %d '%s' opened a %s" % [ci, seats[ci].name if ci < SEATS else "?", "dish" if sim.season == "harvest" else "candy"])
+			_say("🏰 [POWER] seat %d '%s' opened a %s" % [ci, seats[ci].name if ci < SEATS else "?", P.candy_word(sim.season)])
 		elif k == P.E_PET:
 			var pi: int = e[3]
-			_say("🏰 [POWER] seat %d '%s' %s" % [pi, seats[pi].name if pi < SEATS else "?", "caught the turkey" if e[4] == 1 else "petted the black cat: a SHIELD"])
+			_say("🏰 [POWER] seat %d '%s' %s" % [pi, seats[pi].name if pi < SEATS else "?", ["petted the black cat: a SHIELD", "caught the turkey", "rides the reindeer"][clampi(e[4], 0, 2)]])
 		elif k == P.E_CATCH_UP:
 			var ui: int = e[3]
 			_say("🏰 [POWER] seat %d '%s' starts with a SHIELD (behind the leader)" % [ui, seats[ui].name if ui < SEATS else "?"])
@@ -2152,6 +2168,7 @@ func _match_events(evs: Array) -> void:
 	if phase < P.PH_PLAY or phase > P.PH_ROUND_END:
 		return
 	var hv: bool = sim.season == "harvest"   # p4.18: the Harvest season's awards have their own numbers
+	var xm: bool = sim.season == "christmas" # p4.22: and the Christmas season's
 	for e in evs:
 		var k: int = e[0]
 		if k == P.E_JUMP and e[4] != 1:
@@ -2171,23 +2188,26 @@ func _match_events(evs: Array) -> void:
 			if P.is_big(e[4]):
 				_mcount(e[3], "bigs")
 			if e[4] == P.PU_MASK:
-				_mcount(e[3], "big_turkeys" if hv else "masks")
+				_mcount(e[3], "big_turkeys" if hv else ("krampuses" if xm else "masks"))
 		elif k == P.E_DEATH and e[4] != P.C_LEFT:   # (a fighter whose seat was given up is no death for the awards)
 			_mcount(e[3], "deaths")
 			_mcount(e[3], CAUSE_KEY.get(e[4], ""))
 			last_cause[e[3]] = e[4]
 			if round_first:
 				round_first = false
-				_mcount(e[3], "first_out")
+				_mcount(e[3], "fruitcake" if xm else "first_out")
 		elif k == P.E_KILL and e[3] < SEATS:
 			if e[3] == e[4]:
 				_mcount(e[3], "self_kills")
 			else:
 				_mcount(e[3], "kills")
+				round_kills[e[3]] = int(round_kills.get(e[3], 0)) + 1
+				if xm:
+					_mcount(e[3], "naughty")
 				var c: int = last_cause.get(e[4], 0)
-				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills", 11: "peck_kills" if hv else "knife_kills"}.get(c, ""))
+				_mcount(e[3], {1: "arrow_kills", 2: "blast_kills", 3: "stomp_kills", 8: "cat_kills", 11: "peck_kills" if hv else ("sack_kills" if xm else "knife_kills")}.get(c, ""))
 				if e[4] < SEATS and sim.fighter(e[4]) != null and sim.fighter(e[4]).mask:
-					_mcount(e[3], "turkey_ends" if hv else "mask_kills")   # finished GHOSTFACE off while it was down
+					_mcount(e[3], "turkey_ends" if hv else ("krampus_ends" if xm else "mask_kills"))   # finished GHOSTFACE off while it was down
 		elif k == P.E_PIN:
 			_mcount(e[3], "pinned")
 			var pf = sim.fighter(e[3])
@@ -2196,11 +2216,15 @@ func _match_events(evs: Array) -> void:
 		elif k == P.E_BOO and e[4] != 255:
 			_mcount(e[3], "boos")
 		elif k == P.E_PET:
-			_mcount(e[3], "turkeys" if e[4] == 1 else "pets")
+			_mcount(e[3], ["pets", "turkeys", "rides"][clampi(e[4], 0, 2)])
 		elif k == P.E_TRICK and e[4] > 0:
-			_mcount(e[3], "tricks")
+			_mcount(e[3], "coal" if xm and e[4] <= 3 else "tricks")
 		elif k == P.E_CANDY_GET:
-			_mcount(e[3], "dishes" if hv else "candies")
+			_mcount(e[3], "dishes" if hv else ("presents" if xm else "candies"))
+		elif k == P.E_SNOW:
+			snow_by = e[3]
+		elif k == P.E_SNOWED and snow_by >= 0 and snow_by != e[3]:
+			_mcount(snow_by, "snowed")
 		elif k == P.E_PIED:
 			_mcount(e[3], "pied")
 
