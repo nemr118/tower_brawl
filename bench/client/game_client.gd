@@ -39,6 +39,7 @@ const Predict = preload("res://client/predict.gd")
 const Present = preload("res://client/present.gd")
 const PV = preload("res://client/powers_view.gd")
 const Season = preload("res://client/season.gd")   # p4.18
+const Sfx = preload("res://client/sfx.gd")         # p4.19: the sounds
 const NAME_KEY := "towerbrawl_v2_name"
 const TOKEN_KEY := "towerbrawl_v2_token"
 const LOOK_KEY := "towerbrawl_v2_look"
@@ -115,6 +116,7 @@ var rep_errors := 0
 var rep_mouse_shots := 0
 var rep_ua := ""
 var deathcam                      # p4.8: the match end's montage of the winner's kills
+var sfx                           # p4.19: the sounds (client/sfx.gd; sfx.set_on(true or false) for the lobby's SOUND button)
 var match_msg := {}               # the match_end message, shown once the montage is done
 var fps_t := 0.0
 var fps_now := 0.0
@@ -197,6 +199,13 @@ func _ready() -> void:
 	deathcam = Deathcam.new()
 	add_child(deathcam)
 	deathcam.skip_pressed.connect(func(): net.send({"kind": "skip"}))   # p4.8: back to the lobby for everyone
+	sfx = Sfx.new()                # p4.19: a phone starts with sound off, a PC and THE BIG SCREEN with it on
+	add_child(sfx)
+	sfx.setup(self)
+	lobby.set_sound(sfx.on, true)                  # SETTINGS has a SOUND row
+	lobby.sound_picked.connect(func(v):
+		sfx.set_on(v)
+		lobby.set_sound(sfx.on, true))
 	sticks.active = OS.has_feature("web_android") or OS.has_feature("web_ios") or OS.has_feature("mobile") \
 		or DisplayServer.is_touchscreen_available()
 	_setup_keys()
@@ -310,6 +319,8 @@ func _process(delta: float) -> void:
 		world.replaying = false
 		for e in evs:
 			world.on_event(e)
+			sfx.on_event(e, my_seat)   # p4.19
+			_feel(e)
 			if e[0] == P.E_PU_GET and e[3] == my_seat:
 				hud.power_banner(e[4])   # p4.9: you took a power-up: what it is and what it does
 			elif e[0] == P.E_TRICK and e[3] == my_seat and e[4] > 0 and e[4] < 4:   # p4.12: a trick: the small card
@@ -382,6 +393,7 @@ func _process(delta: float) -> void:
 	_watch_frames(not show_lobby and phase >= P.PH_ROUND_START)
 	hud.update(seats_msg, s, my_seat, delta, fps_now, net.last_rtt, opts.has("info"), show_lobby)
 	lobby.visible = show_lobby
+	lobby.tv_sound_hint = tv and sfx.on and not sfx.unlocked   # p4.19: a browser plays no sound before one click
 	sticks.visible = sticks.active and not show_lobby and not deathcam.playing and phase != P.PH_MATCH_END   # the winner's screen: nobody plays
 	hud.visible = not deathcam.playing
 	lobby.update(seats_msg, my_seat, phase, int(s.get("left", 0)), status, connected, version_bad, stuck_url)
@@ -396,6 +408,25 @@ func _device_look() -> String:
 	if OS.has_feature("web_android") or OS.has_feature("mobile"):
 		return "normal"
 	return "high"
+
+# p4.19: a phone buzzes for a moment when something happens to YOU: knocked out, your
+# shot lands, a pie in the face, a power-up, your shield goes, a PHEW. (Android only: an
+# iPhone's browser cannot buzz, and nothing happens there.)
+func _feel(e: Array) -> void:
+	if my_seat < 0 or not sticks.active or not OS.has_feature("web"):
+		return
+	var t := int(e[0])
+	var ms := 0
+	if t == P.E_DEATH and e[3] == my_seat:
+		ms = 90
+	elif t == P.E_KILL and e[3] == my_seat and e[4] != my_seat:
+		ms = 35
+	elif t == P.E_PIED and e[3] == my_seat:
+		ms = 60
+	elif (t == P.E_PU_GET or t == P.E_SHIELD_POP or t == P.E_PHEW) and e[3] == my_seat:
+		ms = 25
+	if ms > 0:
+		JavaScriptBridge.eval("if (navigator.vibrate) { try { navigator.vibrate(%d); } catch (e) {} }" % ms, true)
 
 # p4.19 the GOBBLE button (a phone) or G (a PC): a taunt. The server says it to everyone
 # (sim.gd taunt: at most one every 75 ticks; this page asks at most once a second).
@@ -652,6 +683,7 @@ func _mouse_aim() -> int:
 
 func _on_phase(new_phase: int, s: Dictionary) -> void:
 	phase = new_phase
+	sfx.on_phase(new_phase, s)     # p4.19: the countdown's beeps, FIGHT
 	if new_phase == P.PH_ROUND_START:
 		_reset_frames(2.0)   # a round's first moment (spawns, new sprites) is no measure
 	hud.on_phase(new_phase, int(s["round"]))
@@ -665,6 +697,7 @@ func _on_phase(new_phase: int, s: Dictionary) -> void:
 
 func _on_message(m: Dictionary) -> void:
 	var kind := str(m.get("kind", ""))
+	sfx.on_message(m, my_seat)     # p4.19: a round's end, the match's end, a player joins
 	if kind == "tv":
 		lobby.set_tv(m.get("urls", []), m.get("qr", []))
 	elif kind == "welcome":

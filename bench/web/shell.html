@@ -267,6 +267,49 @@ html, body, #canvas {
 		<div id="rotate-hint"><div class="phone"></div>Please turn your phone sideways<small class="ios-tip">On an iPhone: tap Share, then "Add to Home Screen", and open the game from there to play full screen.</small></div>
 		<div id="ios-pill">Full screen: Share &#x2192; Add to Home Screen</div>
 
+		<script>
+// ---- Tower Brawl: sound needs one tap (p4.19) ----
+// A browser lets a page play sound only after the player has tapped or clicked
+// it once. The game engine makes one "AudioContext" (the browser's sound
+// machine) when it starts. We keep a note of it in window.tbAudio, so that:
+//   1. the first tap anywhere wakes it, also a tap on the signs above (the game
+//      itself only hears taps on its own canvas),
+//   2. the game can ask if sound is awake yet, and stay quiet until then
+//      (bench/client/sfx.gd).
+// Nothing else changes: the engine gets the very AudioContext it asked for.
+(function () {
+	try {
+		const key = window.AudioContext ? 'AudioContext' : 'webkitAudioContext';
+		const Real = window[key];
+		if (!Real || typeof Proxy !== 'function') {
+			return;
+		}
+		window[key] = new Proxy(Real, {
+			construct: function (target, args) {
+				const ctx = new target(...args);
+				if (!window.tbAudio) {
+					window.tbAudio = ctx;
+				}
+				return ctx;
+			},
+		});
+		const wake = function () {
+			const ctx = window.tbAudio;
+			if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') {
+				const asked = ctx.resume();
+				if (asked && asked.catch) {
+					asked.catch(function () { /* still locked: the next tap tries again */ });
+				}
+			}
+		};
+		for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+			document.addEventListener(ev, wake, true);
+		}
+	} catch (err) {
+		console.log('[shell] no sound helper: ' + err.message);   // the game still wakes its sound on a tap on the canvas
+	}
+}());
+		</script>
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;

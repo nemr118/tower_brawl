@@ -61,7 +61,7 @@ prof = tempfile.mkdtemp(prefix="tb-pull-")
 chrome = subprocess.Popen(["chromium", "--headless=new", "--no-first-run", "--no-default-browser-check",
                            f"--remote-debugging-port={a.port}", f"--user-data-dir={prof}", "--ignore-certificate-errors",
                            "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
-                           f"--window-size={W},{H}", "--touch-events=enabled", "about:blank"],
+                           f"--window-size={W},{H}", "--touch-events=enabled", "--mute-audio", "about:blank"],   # p4.19: the game has sound; a check never reaches the speakers
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     tabs = None

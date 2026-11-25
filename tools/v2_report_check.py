@@ -59,7 +59,7 @@ def client_lines():
 prof = tempfile.mkdtemp(prefix="tb-report-")
 chrome = subprocess.Popen(["chromium", "--headless=new", "--no-first-run", f"--remote-debugging-port={a.port}",
                            f"--user-data-dir={prof}", "--ignore-certificate-errors", "--use-gl=angle", "--use-angle=swiftshader",
-                           "--enable-unsafe-swiftshader", "--window-size=1280,720", "--touch-events=enabled", "about:blank"],
+                           "--enable-unsafe-swiftshader", "--window-size=1280,720", "--touch-events=enabled", "--mute-audio", "about:blank"],   # p4.19: the game has sound; a check never reaches the speakers
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     tabs = None

@@ -435,8 +435,11 @@ func _paint_tv(c: Control, txt: Color) -> void:
 		c.draw_string(Art.DISPLAY, Vector2(x, 838), str(tv_urls[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 60, txt)
 	c.draw_string(Art.BODY, Vector2(x, 896), "Point a phone's camera at the code, or type the address. Up to 8 players.", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color(pal["dim"]))
 	c.draw_string(Art.BODY, Vector2(x, 944), tv_line, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(pal["faint"], 0.95))
+	if tv_sound_hint:
+		Art.text(c, Art.BODY, Vector2(x, 996), "Click this screen once to turn the sound on.", 34, gold, 5, Color(0.03, 0.01, 0.05))
 
 var tv_line := ""                 # the settings in words (a TV has no buttons)
+var tv_sound_hint := false        # p4.19: sound is on but the browser waits for one click
 
 # p4.18: the three HOW TO PLAY pictures, for the controls in use.
 func open_howto() -> void:

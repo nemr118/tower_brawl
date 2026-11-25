@@ -48,7 +48,7 @@ def host(path, body=None):
 prof = tempfile.mkdtemp(prefix="tb-cam-")
 chrome = subprocess.Popen(["chromium", "--headless=new", "--no-first-run", f"--remote-debugging-port={a.port}",
                            f"--user-data-dir={prof}", "--ignore-certificate-errors", "--use-gl=angle", "--use-angle=swiftshader",
-                           "--enable-unsafe-swiftshader", "--window-size=%s" % a.size.replace("x", ","), "--touch-events=enabled", "about:blank"],
+                           "--enable-unsafe-swiftshader", "--window-size=%s" % a.size.replace("x", ","), "--touch-events=enabled", "--mute-audio", "about:blank"],   # p4.19: the game has sound; a check never reaches the speakers
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 console = []
 errors = []

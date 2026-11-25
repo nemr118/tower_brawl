@@ -50,7 +50,8 @@ flags = [
     f"--remote-debugging-port={a.port}", f"--user-data-dir={prof}",
     "--ignore-certificate-errors", "--use-gl=angle", "--use-angle=swiftshader",
     "--enable-unsafe-swiftshader", "--enable-logging=stderr", "--v=0",
-    f"--window-size={W},{H}", "--autoplay-policy=no-user-gesture-required"]
+    f"--window-size={W},{H}", "--autoplay-policy=no-user-gesture-required",
+    "--mute-audio"]   # p4.19: the game has sound now; a picture run never reaches the speakers
 if a.phone:
     flags.append("--touch-events=enabled")
 flags.append("about:blank")
