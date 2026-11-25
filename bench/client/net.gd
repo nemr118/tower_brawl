@@ -34,6 +34,39 @@ const RTT_CLOCK_MAX := 300.0
 # Now each keeps the newest LOG_KEEP at most (20 000: 11 minutes of T_OWN, 80 kB):
 # when one is full, its older half goes. The probes read at most 5 minutes.
 const LOG_KEEP := 20000
+# The page's own watchdog for a dead link (p4.19's "found, not fixed" 3). A phone that
+# walks out of the Wi-Fi keeps a socket that says "open": the browser only says "closed"
+# when its own retries give up, and that can take minutes. The match stood frozen on
+# the screen all that time, with the seat's 60 s running out.
+# What a live link carries: the server sends every socket a snapshot every 2 ticks, 30
+# a second, in every phase (the lobby, the countdown, a round, the winner's screen), to
+# a seated player, to someone who only watches and to THE BIG SCREEN alike
+# (game_server.gd _physics_process), and an answer to each of this page's 2 pings a
+# second. So an open socket with nothing at all on it for QUIET_MAX_MS is dead: the
+# page gives it up (_give_up), poll() says CLOSED, and the page's own "The connection
+# dropped. Joining again by itself" path opens a new one and takes the seat back.
+# Why 5 s: that is 150 snapshots and 10 answers missing in a row. On the October nights
+# the longest gap a real phone saw on a link that lived was 2.3 s (2 904 samples, 99.9%
+# of them under 0.52 s). And the server calls a phone that sends nothing a drop after 3
+# s (SILENT_MS): on a link that stalls both ways the server gives up first, and this
+# watchdog only decides when the server's goodbye cannot get through.
+# The time is counted while the page is awake: one poll adds QUIET_STEP_MS at most, and
+# what has arrived is read before the count is looked at. A page in a background tab,
+# or a phone that wakes up, has not polled for a long while: its unread packets set the
+# count back to 0, and the sleep itself counts as one step, never as silence.
+const QUIET_MAX_MS := 5000.0
+const QUIET_STEP_MS := 250.0
+# The watchdog's second half: the NEW socket that will not open. On a dead link the
+# browser's tries to connect come further and further apart (1, 2, 4, 8, 16, 32 s), so
+# when the Wi-Fi was back, the next try could be 30 s away. Measured with every packet
+# thrown away for 50 s: the page was back in its seat 24 s after the link was, and the
+# seat's 60 s had run out. Now a socket still connecting after CONNECT_MAX_MS gives way
+# to a fresh one, whose first tries come 0, 1 and 3 s in: never more than 2 s to the
+# next try. Only for a page that has been connected before (was_open): its very first
+# socket waits as it always did (a phone may be asking about a certificate).
+# Why 4 s: a new socket on a live link opens in well under 1 s (3 to 5 trips to the
+# server and back), and a try cut short costs nothing: the next one starts at once.
+const CONNECT_MAX_MS := 4000.0
 const W := 1920.0
 const H := 1080.0
 const GLIDE_MAX := 6.0         # p4.16 (the warping): no newer snapshot: the others go on at their last speed this many ticks at most
@@ -98,6 +131,13 @@ var sampled_frames := 0        # p4.16 (the warping): frames sample() drew,
 var starved_frames := 0        # and those with no newer snapshot to glide to (the others stood still)
 var eased := 0                 # p4.16: jumps of the others eased out (late snapshots), and the biggest, px
 var eased_max := 0.0
+var quiet_ms := 0.0            # the watchdog: how long the open socket has brought nothing (awake time)
+var quiet_worst := 0.0         # the longest of those since the phone report last took it (take_quiet)
+var watchdog_closes := 0       # sockets the watchdog gave up, since the page loaded
+var _quiet_poll_ms := 0.0      # when poll() last looked
+var was_open := false          # a socket of this page has been open before
+var connect_ms := 0.0          # how long the new socket has been connecting (awake time)
+var connect_retries := 0       # connecting sockets that gave way to a fresh one
 var _in_q: Array = []          # [due ms, packet, was a string]
 var _out_q: Array = []         # [due ms, PackedByteArray or String]
 var _in_due := 0.0
@@ -112,12 +152,18 @@ func open(u: String, name: String, seat_token: String = "") -> void:
 	url = u
 	who = name
 	token = seat_token
-	ws = WebSocketPeer.new()
-	ws.inbound_buffer_size = 1 << 20
-	var tls := TLSOptions.client_unsafe() if u.begins_with("wss") and OS.get_name() != "Web" else null
-	ws.connect_to_url(u, tls)
+	_connect()
 	_in_q.clear()
 	_out_q.clear()
+
+# A new socket to url (open, and the watchdog's fresh try while connecting).
+func _connect() -> void:
+	ws = WebSocketPeer.new()
+	ws.inbound_buffer_size = 1 << 20
+	var tls := TLSOptions.client_unsafe() if url.begins_with("wss") and OS.get_name() != "Web" else null
+	ws.connect_to_url(url, tls)
+	connect_ms = 0.0
+	_quiet_poll_ms = now_ms()
 
 func now_ms() -> float:
 	return Time.get_ticks_usec() / 1000.0
@@ -146,7 +192,20 @@ func poll() -> void:
 		margins.clear()
 		clock_debt = 0
 		pay_now = false
+		quiet_ms = 0.0         # the watchdog starts over with the new socket
+		_quiet_poll_ms = now_ms()
+		was_open = true
 	state = st
+	if st == WebSocketPeer.STATE_CONNECTING and was_open:
+		# the watchdog's second half (CONNECT_MAX_MS), counted in awake time too
+		var tc := now_ms()
+		connect_ms += clampf(tc - _quiet_poll_ms, 0.0, QUIET_STEP_MS)
+		_quiet_poll_ms = tc
+		if connect_ms >= CONNECT_MAX_MS:
+			connect_retries += 1
+			print("🎮 [Net] the new socket has not opened in %.0f s: a fresh try (number %d)" % [CONNECT_MAX_MS / 1000.0, connect_retries])
+			ws.close(-1)
+			_connect()
 	if st != WebSocketPeer.STATE_OPEN:
 		return
 	var t := now_ms()
@@ -154,6 +213,7 @@ func poll() -> void:
 	if stall_ms > 0.0 and t >= _next_stall:
 		_stall_until = t + stall_ms
 		_next_stall = t + stall_every_ms
+	var got := ws.get_available_packet_count() > 0
 	while ws.get_available_packet_count() > 0:
 		var pkt := ws.get_packet()
 		var was_text := ws.was_string_packet()
@@ -162,6 +222,13 @@ func poll() -> void:
 			_in_q.append([_in_due, pkt, was_text])
 		else:
 			_on_packet(pkt, was_text)
+	# the watchdog (QUIET_MAX_MS): anything at all from the server sets the count back
+	quiet_ms = 0.0 if got else quiet_ms + clampf(t - _quiet_poll_ms, 0.0, QUIET_STEP_MS)
+	_quiet_poll_ms = t
+	quiet_worst = maxf(quiet_worst, quiet_ms)
+	if quiet_ms >= QUIET_MAX_MS:
+		_give_up()
+		return
 	while _in_q.size() > 0 and _in_q[0][0] <= t:
 		var q: Array = _in_q.pop_front()
 		_on_packet(q[1], q[2])
@@ -182,6 +249,26 @@ func poll() -> void:
 		worst_gap = 0.0
 		_send_bin(out)
 	_update_delay(t)
+
+# The watchdog's verdict: the link is dead. The socket goes at once, with no waiting
+# for a goodbye that cannot come (close(-1); a browser still sends one if it can, so a
+# server that only stood still hears it). The socket in its place was never opened, so
+# poll() says CLOSED from now on, and the page opens a new one as after any drop.
+func _give_up() -> void:
+	watchdog_closes += 1
+	print("🎮 [Net] nothing from the server for %.1f s on an open socket: the link is dead (watchdog, time %d). Closing it; a new one opens by itself." % [
+		quiet_ms / 1000.0, watchdog_closes])
+	ws.close(-1)
+	ws = WebSocketPeer.new()
+	state = WebSocketPeer.STATE_CLOSED
+	quiet_ms = 0.0
+
+# The longest quiet time on an open socket since the last call, in ms (the phone
+# report: a night's log then says how close a live link came to QUIET_MAX_MS).
+func take_quiet() -> float:
+	var q := quiet_worst
+	quiet_worst = 0.0
+	return q
 
 func _on_packet(pkt: PackedByteArray, was_text: bool) -> void:
 	bytes_in += pkt.size()

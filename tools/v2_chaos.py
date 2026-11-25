@@ -13,6 +13,9 @@
 #   - no phase stuck (each phase has a longest time), so every round ends
 #   - seats and points stay sane: an empty seat has no name and no points, no two
 #     seats for one fake player, no client on two seats, points from 0 to the goal
+#   - a bot keeps its seat, its name and its points through a match (looked at twice a
+#     second): the same name and points on a seat that is still a bot's, and never one
+#     bot gone from its seat while a new one appears on another (the bots moved)
 #   - no round or match winner without a name
 #   - TEAMS: every seated fighter has a team, every seat of a team shows its team's
 #     points, a team's win names the team and its members, the fighters' team flags in
@@ -602,6 +605,7 @@ def main():
     slow_lines = []
     counts = collections.Counter()
     seen_rounds = set()
+    bots_seen = {"match": -1, "bots": {}}      # the last look: the match, and {seat: (name, points)} of its bots
 
     def check_state():
         nonlocal last_key, key_since
@@ -657,6 +661,28 @@ def main():
             counts["checks in FREE FOR ALL"] += 1
             if st.get("team_points", [0, 0]) != [0, 0]:
                 find(f"FREE FOR ALL: team points are not 0: {st.get('team_points')}", "ffa teampoints")
+        # A bot keeps its seat, its name and its points through a match (p4.19's "found, not
+        # fixed" 6: the bots were put back on the lowest empty seats every round, and the
+        # points stayed on the seats). Two looks in the same match:
+        #  - the same seat, a bot then and now: the same name, the same points or one more;
+        #  - a bot's seat is empty now AND a seat that was no bot's has a bot now: the bots
+        #    moved (with fewer bots wanted, bots only go; with more, bots only come).
+        bots_now = {s["i"]: (s["name"], s["points"]) for s in st["seats"] if s["kind"] == 2}
+        if st["match"] == bots_seen["match"]:
+            for i, (name, pts) in bots_now.items():
+                old = bots_seen["bots"].get(i)
+                if old and (old[0] != name or not old[1] <= pts <= old[1] + 1):
+                    find(f"a bot changed in the middle of match {st['match']}: seat {i} was '{old[0]}' with {old[1]} points, now it is '{name}' with {pts}", f"bot {i}")
+                elif old:
+                    counts["looks at a bot that stayed as it was"] += 1
+            gone = [i for i in bots_seen["bots"] if st["seats"][i]["kind"] == 0]
+            came = [i for i in bots_now if i not in bots_seen["bots"]]
+            if gone and came:
+                counts["times the bots moved seats"] += 1
+                find(f"the bots moved seats in the middle of match {st['match']} (round {st['round']}): the bot of seat {gone[0]} "
+                     f"('{bots_seen['bots'][gone[0]][0]}', {bots_seen['bots'][gone[0]][1]} points) is gone, and a new one sits on seat {came[0]} "
+                     f"('{bots_now[came[0]][0]}', {bots_now[came[0]][1]} points)", "bots moved")
+        bots_seen["match"], bots_seen["bots"] = st["match"], bots_now
         t = st.get("tick", {})
         worst["rss_mb"] = max(worst["rss_mb"], float(t.get("rss_mb", 0.0)))
         if rss_first[0] is None and float(t.get("rss_mb", 0.0)) > 0:

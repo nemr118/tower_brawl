@@ -58,7 +58,7 @@
 # mode {pick} ("ffa" or "teams": the lobby's MODE, for everyone), team (TEAMS: you change sides; both only in the lobby),
 # report {why, device, ua, screen, pick, look, fps, slow_pct, frame_max_ms, frames, ping_ms, reconnects,
 # step_downs, shots_armed, shots_cancelled, mouse_shots, errors [], errors_total; p4.15: stick, jumps, rim_dodges,
-# button_dodges, mem_mb, tex_mb; p4.16: late_pct, eased, eased_px} (p4.7: a phone's own
+# button_dodges, mem_mb, tex_mb; p4.16: late_pct, eased, eased_px; quiet_ms, watchdog (net.gd's watchdog)} (p4.7: a phone's own
 # numbers every 30 s and at a look change or a page error; logged as a "client" line, kept for /state). From the server: welcome {seat, version, name, phase},
 # version_error {server, yours}, full, note {text}, seats {phase, round, goal,
 # bots, bots_wanted, bot_level, power, people, arena (the pick), arena_now (the round's,
@@ -594,12 +594,12 @@ func _on_text(c: Conn, txt: String) -> void:
 			c.name = _clean_name(str(d.get("name", "")), -1)
 		# this token waits for a bot's seat already, on a socket that hangs or in another
 		# tab: this socket waits there in its place, never for a second seat (as bug 5)
-		for ws in seats:
-			var g: Conn = conns.get(ws.guest) if ws.guest != 0 else null
+		for w in seats:
+			var g: Conn = conns.get(w.guest) if w.guest != 0 else null
 			if g != null and g.token == c.token and c.token != "":
 				g.wait_seat = -1
 				_out(g.id, JSON.stringify({"kind": "welcome", "seat": -1, "version": P.VERSION, "name": g.name, "phase": phase}))
-				_wait_for_seat(ws, c)
+				_wait_for_seat(w, c)
 				return
 		var s := _free_seat(_int(d.get("seat"), -1))
 		if s == null:
@@ -703,7 +703,7 @@ func _on_report(c: Conn, d: Dictionary) -> void:
 	for k in ["fps", "slow_pct", "frame_max_ms", "mem_mb", "tex_mb", "late_pct", "eased_px", "res"]:
 		r[k] = snappedf(clampf(_num(d.get(k)), 0.0, 100000.0), 0.1)
 	for k in ["frames", "ping_ms", "reconnects", "step_downs", "shots_armed", "shots_cancelled", "mouse_shots", "errors_total",
-			"jumps", "rim_dodges", "button_dodges", "eased", "aim_taps"]:
+			"jumps", "rim_dodges", "button_dodges", "eased", "aim_taps", "quiet_ms", "watchdog"]:
 		r[k] = clampi(_int(d.get(k), 0), 0, 100000000)
 	var errs: Array = []
 	var raw = d.get("errors", [])
@@ -711,6 +711,8 @@ func _on_report(c: Conn, d: Dictionary) -> void:
 		for e in raw.slice(0, 10):
 			errs.append(str(e).substr(0, 240))
 	r["errors"] = errs
+	# the page's own watchdog (client/net.gd QUIET_MAX_MS) gave a dead link up since this socket's last report
+	var gave_up: bool = r["watchdog"] > int(c.report.get("watchdog", 0))
 	c.report = r
 	c.report_ms = now
 	if r["frames"] >= 30:
@@ -724,6 +726,9 @@ func _on_report(c: Conn, d: Dictionary) -> void:
 		_say("🏰 [PHONE] %s (%s): the look stepped down to %s (%.0f fps)" % [who, r["device"], r["look"].to_upper(), r["fps"]])
 	if not errs.is_empty():
 		_say("🏰 [PHONE] %s (%s): %d page error%s: %s" % [who, r["device"], errs.size(), "" if errs.size() == 1 else "s", errs[0]])
+	if gave_up:
+		_say("🏰 [PHONE] %s (%s): its page closed a dead link by itself and came back (%d time%s since it loaded)" % [who, r["device"],
+			r["watchdog"], "" if r["watchdog"] == 1 else "s"])
 
 # The host page's view of a phone (p4.7), or null before its first report.
 func _phone(c: Conn):
@@ -739,8 +744,8 @@ func _phone(c: Conn):
 # What goes, and why:
 #  - the direction characters (U+202E and its family). A name with one made the rest
 #    of its line read from right to left, on every screen and in the logs;
-#  - every other character that draws nothing, so no name looks empty and no two names
-#    look the same while they differ;
+#  - every other character that draws nothing, so no name looks empty and none hides
+#    letters nobody sees;
 #  - < > [ ] & { } / \ : % and the like: a page that shows the name (the host page, a
 #    report) could read them as markup. "<b>Bob</b>" comes out as "bBobb";
 #  - accents past NAME_STACK (3) on one letter: stacked by the dozen they grow over
@@ -1026,6 +1031,8 @@ func _on_close(c: Conn, code: int = 0) -> void:
 				how = "could not be sent to"
 			_say("🏰 [LEAVE] seat %d '%s' (client %d, %s) %s: held %d s" % [s.i, s.name, c.id, c.ip, how, s.hold_t / 60])
 			seats_dirty = true
+	elif c.ok and c.wait_seat >= 0:
+		_say("🏰 [LEAVE] '%s' (client %d, %s) waited for seat %d and went away: the bot keeps it" % [c.name, c.id, c.ip, c.wait_seat])
 	elif c.ok:
 		_say("🏰 [LEAVE] watcher '%s' (client %d, %s) left" % [c.name, c.id, c.ip])
 	if c.wait_seat >= 0 and seats[c.wait_seat].guest == c.id:

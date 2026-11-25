@@ -45,6 +45,7 @@ a = ap.parse_args()
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 W, H = (int(v) for v in a.size.lower().split("x"))
+T0 = time.time()
 prof = tempfile.mkdtemp(prefix="tb-v2shot-")
 # p4.19: the browser's throw-away profile goes when the tool ends, however it ends. (It was
 # left behind: 92 of them, 3.7 GB, sat in /tmp, which is memory on this PC.)
@@ -85,7 +86,7 @@ def cmd(method, **params):
         m = json.loads(ws.recv())
         if m.get("method") == "Runtime.consoleAPICalled":
             args = m["params"].get("args", [])
-            console.append(" ".join(str(x.get("value", x.get("description", ""))) for x in args))
+            console.append("[+%6.2fs] " % (time.time() - T0) + " ".join(str(x.get("value", x.get("description", ""))) for x in args))   # p4.20: when, since the tool began
         if m.get("id") == _id[0]:
             return m.get("result", m)
 
@@ -99,13 +100,13 @@ def drain(secs):
             continue
         if m.get("method") == "Runtime.consoleAPICalled":
             args = m["params"].get("args", [])
-            console.append(" ".join(str(x.get("value", x.get("description", ""))) for x in args))
+            console.append("[+%6.2fs] " % (time.time() - T0) + " ".join(str(x.get("value", x.get("description", ""))) for x in args))   # p4.20: when, since the tool began
     ws.settimeout(40)
 
 def _console(m):
     if m.get("method") == "Runtime.consoleAPICalled":
         args = m["params"].get("args", [])
-        console.append(" ".join(str(x.get("value", x.get("description", ""))) for x in args))
+        console.append("[+%6.2fs] " % (time.time() - T0) + " ".join(str(x.get("value", x.get("description", ""))) for x in args))   # p4.20: when, since the tool began
 
 # Every frame the page draws for secs seconds, as JPEGs in <out>_<name>/ (000.jpg, 001.jpg, ...).
 def cast(name, secs):

@@ -134,7 +134,12 @@ static func lobby_flags(n: CanvasItem, cards, xfs: Array) -> void:
 		n.draw_set_transform_matrix(xf)
 		# yours sways a little: it is the one you can tap
 		var sway := sin(cards.t * 3.0) * 3.0 if c["me"] and cards.phase == P.PH_LOBBY else 0.0
-		flag(n, Vector2(sway, -cards.H * 0.5 - 12.0), t, 54.0, 0.55 if int(c["kind"]) == 0 else 1.0, xf)
+		if c.has("awards") and not c["awards"].is_empty():
+			# after a match the card's top carries its award: the flag goes small into the top right
+			# corner (it hung over the award's words)
+			flag(n, Vector2(cards.W * 0.5 - 28.0 + sway, -cards.H * 0.5 - 10.0), t, 36.0, 0.55 if int(c["kind"]) == 0 else 1.0, xf)
+		else:
+			flag(n, Vector2(sway, -cards.H * 0.5 - 12.0), t, 54.0, 0.55 if int(c["kind"]) == 0 else 1.0, xf)
 	n.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 # ------------------------------------------------------------------ the match's cards (the HUD)

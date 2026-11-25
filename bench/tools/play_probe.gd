@@ -518,6 +518,9 @@ func _clock_line() -> void:
 		int(net.lag_ms), int(net.jitter_ms), net.last_rtt, n, net.late_total, 100.0 * net.late_total / maxf(1.0, n),
 		m[0] if m.size() > 0 else 0, m[m.size() / 2] if m.size() > 0 else 0, m[m.size() - 1] if m.size() > 0 else 0,
 		" ".join(parts), net.clock_changes, net.clock_jumps, net.delay_ticks])
+	# the page's watchdog for a dead link (client/net.gd QUIET_MAX_MS): on a live link it must never fire
+	print("🧪 [PlayProbe] watchdog: %d socket(s) given up, %d connecting socket(s) given up; the longest the open socket brought nothing: %.0f ms (%.0f closes it)" % [
+		net.watchdog_closes, net.connect_retries, net.quiet_worst, net.QUIET_MAX_MS])
 
 # p4.16: the others as the page draws them, frame by frame (--warps).
 const WARP_PX := 40.0
