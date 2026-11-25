@@ -12,7 +12,7 @@
 # with a blinking dot, a caption. Each kill pops (the user: "a nice little pop as
 # each kill happens"): the camera punches in toward the kill and eases back, a
 # flash, a gold KILL!; the last kill: the camera pushes in and holds close through
-# the slow motion, FINAL KILL. A seated player's SKIP button (or Esc, space, enter
+# the slow motion, FINAL KILL. A seated player's SKIP button (or Esc or enter
 # on a PC) asks the server to end the match's end for everyone (the user: "skip
 # the montage for everyone and go back to the lobby"): skip_pressed, the JSON skip.
 # The button is at the top in the middle and wakes 2 s in (SKIP_RECT's note says why).
@@ -52,7 +52,8 @@ const POP_S := 0.7                # the KILL! pop
 # replay's first frame: 10 of 31 matches were skipped on 25 October, 4 of them within
 # 2 s (a thumb still shooting). Now it is at the top, in the middle (no thumb rests
 # there; REPLAY is to its left, the kill count to its right), and it wakes SKIP_WAKE_S
-# into the replay: before that it is not drawn and no tap or key skips.
+# into the replay: before that it is not drawn and no tap or key skips. On a PC, Esc and
+# enter skip; space no longer does (it is the JUMP key: the same trap as the corner).
 const SKIP_RECT := Rect2(840, 20, 240, 76)
 const SKIP_WAKE_S := 2.0
 
@@ -331,7 +332,7 @@ func _input(event: InputEvent) -> void:
 	if (event is InputEventScreenTouch or event is InputEventMouseButton) and event.pressed:
 		hit = _skip_rect().has_point(event.position)
 	elif event is InputEventKey and event.pressed and not event.echo:
-		hit = event.keycode in [KEY_ESCAPE, KEY_SPACE, KEY_ENTER, KEY_KP_ENTER]
+		hit = event.keycode in [KEY_ESCAPE, KEY_ENTER, KEY_KP_ENTER]   # (not space any more: it is the PC's JUMP key, as the old corner was the phone's)
 	if hit:
 		get_viewport().set_input_as_handled()
 		skip_sent = true
