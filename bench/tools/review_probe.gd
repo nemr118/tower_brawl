@@ -14,6 +14,11 @@
 # Bug 9, THE WINNER'S SCREEN: the server adds the replay's length to its 8 s. The
 # length is worked out in proto.gd (replay_secs) from numbers that live in the page's
 # client/deathcam.gd: the test plays the real deathcam and compares.
+# Bug 10, THE LISTS THAT ONLY GREW: two hours of packets go into the page's network
+# code (client/net.gd) and its prediction, and the four lists stay small.
+# Bug 7, THE RESTING THUMB: touch events go straight into the phone controls
+# (client/touch_sticks.gd): a thumb that was down before the sticks showed works from
+# its first move, and a touch the phone cancels lowers the bow.
 # Prints a PASS/FAIL line per rule and exits 1 on a fail.
 extends SceneTree
 
@@ -22,6 +27,8 @@ const SimScript = preload("res://sim/sim.gd")
 const Boiler = preload("res://sim/boiler.gd")
 const Predict = preload("res://client/predict.gd")
 const Deathcam = preload("res://client/deathcam.gd")
+const Net = preload("res://client/net.gd")
+const Sticks = preload("res://client/touch_sticks.gd")
 
 var fails := 0
 var checks := 0
@@ -39,6 +46,8 @@ func _init() -> void:
 	_safe_prediction()
 	_freed_seat()
 	_replay_length()
+	_lists_stay_small()
+	_resting_thumb()
 	if fails == 0:
 		print("✅ review_probe: %d of %d checks passed" % [checks, checks])
 		quit(0)
@@ -500,3 +509,122 @@ func _replay_length() -> void:
 		lines.append("%d kills: the deathcam plays %.2f s, replay_secs says %.2f s" % [n, secs, want])
 		cam.free()
 	_check("the server's replay length (proto.gd replay_secs) is the deathcam's own", ok, "; ".join(lines))
+
+# Bug 10: two hours of a match's packets, as the server sends them: a snapshot and a
+# T_OWN 30 times a second (216 000 each), a pong twice a second (14 400), fed straight
+# into net.gd (no socket) and predict.gd. Before, each list kept every number: 216 000
+# floats is 0.86 MB a list.
+func _lists_stay_small() -> void:
+	var server = _game(2)
+	var f = server.fighters[0]
+	server._place(f, Vector2i(300, 1020))
+	var net = Net.new()
+	var pred = Predict.new()
+	pred.seat = 0
+	var snap := StreamPeerBuffer.new()
+	var own := StreamPeerBuffer.new()
+	var pong := PackedByteArray()
+	pong.resize(9)
+	pong[0] = P.T_PONG
+	var n := 216000
+	for i in n:
+		server.step()
+		server.step()
+		server.take_events()
+		server.write_snapshot(snap, [], {"phase": P.PH_PLAY, "round": 1})
+		net._on_packet(snap.data_array, false)
+		own.clear()
+		own.put_u8(P.T_OWN)
+		own.put_u32(server.tick)
+		own.put_u32(server.tick)
+		own.put_8(2)
+		own.put_u8(0)
+		own.put_u8(P.OWN_FIGHTER)
+		own.put_u32(0)
+		server.write_fighter_state(own, f)
+		net._on_packet(own.data_array, false)
+		pred.on_tick(server.tick, 0, 0)
+		for o in net.take_owns():
+			pred.reconcile(o)
+		if i % 15 == 0:
+			net._on_packet(pong, false)
+		net.events.clear()
+	var sizes := [net.rtts.size(), net.gaps.size(), net.margin_log.size(), pred.errors.size()]
+	var biggest: int = sizes.max()
+	_check("the page's four lists stay small over two hours of packets", biggest <= Net.LOG_KEEP and sizes.min() >= 7000 and pred.inputs.size() < 400 and net.snaps.size() <= 8,
+		"after %d snapshots and T_OWNs and %d pongs: rtts %d, gaps %d, margin_log %d, the prediction's errors %d numbers (%d kept at most; before: %d, %d, %d, %d)" % [
+		n, n / 15, sizes[0], sizes[1], sizes[2], sizes[3], Net.LOG_KEEP, n / 15, n - 1, n, n - 1])
+
+func _touch_ev(index: int, pos: Vector2, pressed: bool, canceled: bool = false) -> InputEventScreenTouch:
+	var e := InputEventScreenTouch.new()
+	e.index = index
+	e.position = pos
+	e.pressed = pressed
+	e.canceled = canceled
+	return e
+
+func _drag_ev(index: int, pos: Vector2) -> InputEventScreenDrag:
+	var e := InputEventScreenDrag.new()
+	e.index = index
+	e.position = pos
+	return e
+
+# Bug 7: the phone controls on a 1920 x 1080 window, fed touch events as the page gets
+# them. (a) A thumb whose press came while the sticks were hidden (3-2-1) moves on the
+# left half: the fighter runs. (b) The same on the right half: the bow draws, and a
+# let-go past the ring fires. (c) BUTTONS: a thumb resting on JUMP holds jump from its
+# first move. (d) An armed shot whose touch the phone cancels: the bow comes down
+# (B_CANCEL), no arrow. (e) A third finger pressed in play, with both sticks in use,
+# is still ignored when it moves (as before).
+func _resting_thumb() -> void:
+	var lines: Array = []
+	var ok := true
+	var s = Sticks.new()
+	s.fit(Vector2(1920, 1080))
+	s.active = true
+	# (a) the left thumb was down before: its first move is its press, the next one runs right
+	s._drag(_drag_ev(0, Vector2(400, 800)))
+	s._drag(_drag_ev(0, Vector2(520, 800)))
+	var b: int = s.buttons()
+	var a_ok: bool = s.move_touch == 0 and (b & P.B_RIGHT) != 0
+	lines.append("(a) a resting left thumb moves right: buttons %d (%s)" % [b, "runs right" if a_ok else "NOTHING"])
+	# (b) the right thumb was down before: pull back past the ring, let go
+	s._drag(_drag_ev(1, Vector2(1500, 700)))
+	s._drag(_drag_ev(1, Vector2(1300, 700)))
+	var held: int = s.buttons()
+	s._touch(_touch_ev(1, Vector2(1300, 700), false))
+	var after: int = s.buttons()
+	var b_ok: bool = (held & P.B_SHOOT) != 0 and (after & (P.B_SHOOT | P.B_CANCEL)) == 0 and s.shots_armed == 1
+	lines.append("(b) a resting right thumb pulls 200 px and lets go: held %d, then %d (%s)" % [held, after, "an arrow" if b_ok else "NO ARROW"])
+	# (d) an armed shot, then the phone cancels the touch
+	s._touch(_touch_ev(2, Vector2(1500, 700), true))
+	s._drag(_drag_ev(2, Vector2(1300, 700)))
+	var armed: bool = s.aim_armed
+	s.buttons()
+	s._touch(_touch_ev(2, Vector2(1300, 700), false, true))
+	var cancelled: int = s.buttons()
+	var d_ok: bool = armed and (cancelled & P.B_CANCEL) != 0 and (cancelled & P.B_SHOOT) == 0 and s.shots_armed == 1 and s.shots_cancelled == 1
+	lines.append("(d) an armed shot, the touch is cancelled: buttons %d (%s)" % [cancelled, "the bow comes down" if d_ok else "IT FIRES"])
+	# (e) both sticks in use, a third finger comes down on the left and moves: ignored
+	s._touch(_touch_ev(3, Vector2(1500, 700), true))
+	var mt: int = s.move_touch
+	s._touch(_touch_ev(4, Vector2(200, 500), true))
+	s._drag(_drag_ev(4, Vector2(700, 300)))
+	var e_ok: bool = s.move_touch == mt and s.aim_touch == 3
+	lines.append("(e) a third finger in play: %s" % ("ignored, as before" if e_ok else "IT TOOK A STICK"))
+	s.free()
+	# (c) BUTTONS: a thumb resting on JUMP (bottom right) moves a little
+	var s2 = Sticks.new()
+	s2.fit(Vector2(1920, 1080))
+	s2.active = true
+	s2.buttons_mode = true
+	s2._drag(_drag_ev(0, Vector2(1720, 880)))
+	var j1: int = s2.buttons()
+	s2.buttons()
+	s2.buttons()
+	var j4: int = s2.buttons()
+	var c_ok: bool = s2.jump_touch == 0 and (j1 & P.B_JUMP) != 0 and (j4 & P.B_JUMP) != 0
+	lines.append("(c) BUTTONS, a thumb resting on JUMP moves: buttons %d, 3 ticks later %d (%s)" % [j1, j4, "jump is held" if c_ok else "NOTHING"])
+	s2.free()
+	ok = a_ok and b_ok and c_ok and d_ok and e_ok
+	_check("a thumb already on the glass works from its first move; a cancelled touch lowers the bow", ok, "; ".join(lines))

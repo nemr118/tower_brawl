@@ -44,6 +44,11 @@
 #   falls so on a page at 60 frames a second). The line at the end says how many ticks the probe's clock runs ahead of the server
 #   before the freeze, 1 s after it and 6 s after it, and FAILs when it is still more
 #   than 8 ticks further ahead 6 s after.
+# --reopen (the review's bug 6): when the socket closes, open it again every second as
+#   the page does, take a seat again, and press START again with --start. For a server
+#   that is stopped and started again under the probe: the line at the end says how
+#   many of the new server's corrections the prediction took after it, and whether the
+#   new server used the probe's inputs. Fails when either is none.
 # Exit 0 when every expected thing happened, 1 otherwise. Lines start with 🧪.
 extends SceneTree
 
@@ -112,9 +117,12 @@ func _process(_delta: float) -> bool:
 	if done:
 		return false
 	net.poll()
+	_reopen_step()
 	for m in net.take_messages():
 		_on_message(m)
 	for o in net.take_owns():
+		if reopens > 0 and int(o["used"]) > 0:
+			used_after[int(o["used"])] = true
 		pred.reconcile(o)
 	if mode_catcher != "":
 		_catch_events()
@@ -366,6 +374,8 @@ func _finish(timed_out: bool) -> void:
 		_warps_line()
 	if freeze_ms > 0:
 		_freeze_line()
+	if opts.has("reopen"):
+		_reopen_line()
 	if mode_catcher != "":
 		_catch_line()
 	if watch_s > 0.0 and not mode_idle and not mode_predict and not mode_shooter and mode_catcher == "":
@@ -383,6 +393,54 @@ func _finish(timed_out: bool) -> void:
 	print("🧪 [PlayProbe] %s (%d fail)" % ["PASS" if fails == 0 else "FAIL", fails])
 	net.ws.close()
 	quit(0 if fails == 0 else 1)
+
+# Bug 6: the server stops and starts again under an open page.
+var reopens := 0
+var reopen_wait_ms := 0
+var was_open := false
+var errors_at_reopen := 0
+var used_after := {}             # the input ticks the new server said it used
+var me_after := 0                # frames in a round with a predicted fighter, after the reopen
+var play_after := 0              # frames in a round, after the reopen
+
+func _reopen_step() -> void:
+	if not opts.has("reopen"):
+		return
+	var now := Time.get_ticks_msec()
+	if net.state == WebSocketPeer.STATE_OPEN:
+		if not was_open and reopens == 0 and errors_at_reopen == 0 and seat >= 0:
+			pass
+		was_open = true
+	elif net.state == WebSocketPeer.STATE_CLOSED:
+		if was_open:
+			was_open = false
+			reopens += 1
+			errors_at_reopen = pred.errors.size()
+			seat = -1
+			start_sent = false
+			print("🧪 [PlayProbe] the socket closed (%d corrections so far): opening it again every second" % errors_at_reopen)
+		if now >= reopen_wait_ms:
+			reopen_wait_ms = now + 1000
+			net.open(net.url, net.who, net.token)
+	if "fresh" in net and net.fresh:      # (the page does this: game_client.gd)
+		net.fresh = false
+		if pred.has_method("reset"):
+			pred.reset()
+	if reopens > 0 and phase == P.PH_PLAY and net.state == WebSocketPeer.STATE_OPEN and seat >= 0:
+		play_after += 1
+		if pred.me != null:
+			me_after += 1
+
+func _reopen_line() -> void:
+	var n: int = pred.errors.size() - errors_at_reopen
+	var worst := 0.0
+	for i in range(errors_at_reopen, pred.errors.size()):
+		worst = maxf(worst, pred.errors[i])
+	var ok: bool = reopens >= 1 and n >= 100 and used_after.size() >= 100 and me_after > play_after * 0.7
+	if not ok:
+		fails += 1
+	print("🧪 [PlayProbe] %s reopen: the socket closed %d time(s); after it the prediction took %d corrections from the new server (the worst %.1f px), had my fighter on %d of %d frames in a round, and the new server used %d of my inputs" % [
+		"PASS" if ok else "FAIL", reopens, n, worst, me_after, play_after, used_after.size()])
 
 # Bug 2: the frozen page. How far the clock runs ahead of the server: the tick of the
 # newest input, less the server's tick now (the newest snapshot's, plus the time since).

@@ -23,6 +23,12 @@
 # the thumb up, two more ways to jump again, as a climb out of a pit needs: pump it
 # (down PUMP_DOWN of the reach from its highest, then up PUMP_UP) or swing it over
 # the top to the other side. Before, only dipping under JUMP_DEG jumped again.
+# 2026-11-24 (the November review's bug 7): a thumb already on the glass when the sticks
+# appear (kids rest their thumbs through 3-2-1) was ignored until it was lifted: its
+# press came while the sticks were hidden, and a move of a touch nobody knew did
+# nothing. Now the first move of a touch whose press was never seen counts as its
+# press, there. And a touch the phone takes away (cancelled: a call, a notification
+# pulled down, a palm) lowers the bow: before, it fired an armed shot.
 extends CanvasLayer
 
 signal taunt_pressed              # p4.19: the small taunt button (GOBBLE! in the Harvest season)
@@ -97,6 +103,7 @@ var _aim_hist: Array = []         # p4.16: [msec, offset] of the aim thumb's las
 var jumps := 0                    # p4.15 (the phone report): jumps the stick made,
 var rim_dodges := 0               # dodges from the stick's rim,
 var button_dodges := 0            # and from the DODGE button
+var seen := {}                    # the touches whose press came while the sticks showed (index -> true)
 var gfx := _Gfx.new()
 
 class _Gfx extends Node2D:
@@ -116,10 +123,12 @@ func _init() -> void:
 func _on_visibility() -> void:
 	if visible:
 		return
+	taunt_touch = -1
 	move_touch = -1
 	aim_touch = -1
 	dodge_touch = -1
 	jump_touch = -1
+	seen.clear()
 	move_offset = Vector2.ZERO
 	move_dir = Vector2.ZERO
 	in_down = false
@@ -140,19 +149,29 @@ func _input(event: InputEvent) -> void:
 		if not visible:
 			return
 		get_viewport().set_input_as_handled()
-		if event.pressed and event.position.distance_to(_taunt_center()) <= (TAUNT_R + HIT_PAD) * k:   # p4.19: a tap on the taunt button
-			_taunt_ms = Time.get_ticks_msec()
-			taunt_pressed.emit()
-			gfx.queue_redraw()
+		if event.pressed:
+			if event.index == taunt_touch:
+				taunt_touch = -1            # a new touch with that number: the taunt finger is long gone
+			if event.position.distance_to(_taunt_center()) <= (TAUNT_R + HIT_PAD) * k:   # p4.19: a tap on the taunt button
+				_taunt_ms = Time.get_ticks_msec()
+				taunt_touch = event.index
+				taunt_pressed.emit()
+				gfx.queue_redraw()
+				return
+		elif event.index == taunt_touch:    # the taunt finger lifts: it never was a stick's
+			taunt_touch = -1
 			return
 		_touch(event)
 	elif event is InputEventScreenDrag:
 		if not visible:
 			return
 		get_viewport().set_input_as_handled()
+		if event.index == taunt_touch:      # the taunt finger slid a little: not a stick (an unknown moving finger is taken as one)
+			return
 		_drag(event)
 
 var _taunt_ms := -9999            # when the taunt button was last tapped (it flashes)
+var taunt_touch := -1             # the finger on the taunt button
 
 func _taunt_center() -> Vector2:
 	return Vector2(118.0 * k, win.y - 690.0 * k)
@@ -177,32 +196,40 @@ func _on_dodge(p: Vector2) -> bool:
 	var pad := BTN_PAD if buttons_mode else HIT_PAD
 	return p.distance_to(_dodge_center()) <= (_dodge_r() + pad) * k
 
+# A touch comes down at p (or, bug 7, a touch that was down before the sticks showed
+# moves for the first time): JUMP, DODGE, the move stick or the aim, whichever is there
+# and free.
+func _press(index: int, p: Vector2) -> void:
+	seen[index] = true
+	if jump_touch == -1 and _on_jump(p):
+		jump_touch = index        # p4.16 BUTTONS: JUMP, held for a higher jump; a quick tap still jumps
+		jump_tap = TAP_TICKS
+		jumps += 1
+	elif dodge_touch == -1 and _on_dodge(p):
+		dodge_touch = index
+		dodge_tap = TAP_TICKS     # p4.16: a quick tap (down and up between two ticks) still dodges
+		button_dodges += 1
+	elif p.x < win.x * 0.5 and move_touch == -1:
+		move_touch = index
+		move_center = p
+		_jump_armed = true
+		_rim_armed = true
+		_move(p)
+	elif p.x >= win.x * 0.5 and aim_touch == -1:
+		aim_touch = index
+		aim_center = p
+		aim_armed = false
+		aim_cancel = false
+		aim_drawn = false
+		_aim_hist.clear()
+		_aim(p)
+
 func _touch(e: InputEventScreenTouch) -> void:
 	var p: Vector2 = e.position
 	if e.pressed:
-		if jump_touch == -1 and _on_jump(p):
-			jump_touch = e.index      # p4.16 BUTTONS: JUMP, held for a higher jump; a quick tap still jumps
-			jump_tap = TAP_TICKS
-			jumps += 1
-		elif dodge_touch == -1 and _on_dodge(p):
-			dodge_touch = e.index
-			dodge_tap = TAP_TICKS     # p4.16: a quick tap (down and up between two ticks) still dodges
-			button_dodges += 1
-		elif p.x < win.x * 0.5 and move_touch == -1:
-			move_touch = e.index
-			move_center = p
-			_jump_armed = true
-			_rim_armed = true
-			_move(p)
-		elif p.x >= win.x * 0.5 and aim_touch == -1:
-			aim_touch = e.index
-			aim_center = p
-			aim_armed = false
-			aim_cancel = false
-			aim_drawn = false
-			_aim_hist.clear()
-			_aim(p)
+		_press(e.index, p)
 	else:
+		seen.erase(e.index)
 		if e.index == move_touch:
 			move_touch = -1
 			move_offset = Vector2.ZERO
@@ -213,6 +240,8 @@ func _touch(e: InputEventScreenTouch) -> void:
 			_gap = 0
 		elif e.index == aim_touch:
 			_settle_aim()
+			if e.canceled:
+				aim_armed = false   # bug 7: the phone took the touch away: that is no let-go, the bow comes down
 			aim_touch = -1          # let go: the next tick sends no shoot bit: past the ring it fires,
 			aim_cancel = aim_drawn and not aim_armed   # inside it B_CANCEL lowers the bow
 			if not aim_drawn:
@@ -235,6 +264,8 @@ func _drag(e: InputEventScreenDrag) -> void:
 		_move(e.position)
 	elif e.index == aim_touch:
 		_aim(e.position)
+	elif not seen.has(e.index):
+		_press(e.index, e.position)   # bug 7: it was on the glass before the sticks showed: this move is its press
 	gfx.queue_redraw()
 
 func _move(p: Vector2) -> void:

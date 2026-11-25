@@ -271,11 +271,14 @@ def s7():
         a2.connect()
         wait(lambda: len(a2.welcomes) >= 1, 5)
         first = a2.welcomes[-1] if a2.welcomes else None
-        a2.send({"kind": "join", "name": a2.name})     # as an old page would
-        time.sleep(1.0)
+        time.sleep(0.5)
+        check(first == -1 and a.seat == sa, f"S7 (bug 5) hello alone takes nothing from a live socket (a second tab that only looks, THE BIG SCREEN): welcome {first}, the first socket keeps seat {a.seat}")
+        a2.send({"kind": "join", "name": a2.name})     # JOIN (the page sends it by itself after a drop)
+        wait(lambda: a2.seat >= 0, 3)
+        time.sleep(0.5)
         seats = [s for s in r.host.state()["seats"] if s["kind"] == 1 and s["name"] == a.name]
-        check(first == sa and len(seats) == 1 and seats[0]["i"] == sa,
-              f"S7 (bug 5) a second socket with the same token takes its own seat over: welcome {first} (the seat was {sa}); seats with that name: {[s['i'] for s in seats]}")
+        check(a2.seat == sa and len(seats) == 1 and seats[0]["i"] == sa,
+              f"S7 (bug 5) join on a second socket with the same token takes its own seat over: seat {a2.seat} (it was {sa}); seats with that name: {[s['i'] for s in seats]}")
         check(a.seat == -1, f"S7 (bug 5) the old socket was told it has no seat any more: its seat reads {a.seat}")
         r.start(b)
         mine = wait(lambda: a2.own and (a2.own["flags"] & OWN_FIGHTER) and not (a2.own["flags"] & OWN_BRAIN), 8, 0.05)

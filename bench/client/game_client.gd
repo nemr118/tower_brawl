@@ -87,6 +87,7 @@ var had_seat := false        # this page had a seat when its socket went
 var last_seat := -1          # that seat
 var first_welcome := false   # the next welcome is the first on a new socket
 var sock_open := false       # the socket was open on the last frame it was open or closed
+var stuck_said := false      # the lobby shows ONE MORE STEP now (said once on the console)
 var version_bad := false
 var auto_join := false
 var tv := false                   # p4.18 ?tv: THE BIG SCREEN (a TV: the match full screen, a QR code to join in the lobby)
@@ -219,6 +220,7 @@ func _ready() -> void:
 	tv = opts.has("tv")            # p4.18 THE BIG SCREEN: this page only watches
 	if tv:
 		auto_join = false
+		token = ""                 # and it has no seat token: a player's tab in the same browser keeps its seat (the token is the browser's)
 	auto_start = opts.has("start")
 	server_url = str(opts.get("server", ""))
 	if server_url == "":
@@ -286,6 +288,7 @@ func _process(delta: float) -> void:
 	if net.fresh:                # the socket opened (the first time, or again after a drop)
 		net.fresh = false
 		first_welcome = true
+		pred.reset()             # bug 6: the prediction starts over with the new socket (a server started again counts from 0)
 	for m in net.take_messages():
 		_on_message(m)
 	for o in net.take_owns():
@@ -382,9 +385,20 @@ func _process(delta: float) -> void:
 		net.open(server_url, my_name, token)
 	# a phone's browser drops a wss to a certificate it has not accepted, and never asks:
 	# the page's own port (8443) was accepted, the game server's (8091) must be too
+	# Only when the socket has never opened (the review's bug 11): once it has, the
+	# certificate is fine, and 5 s without a connection is a Wi-Fi blip or a server that
+	# is starting again. "ONE MORE STEP: open https://..." was wrong advice then, in every
+	# lobby at once. The page says what it is doing instead, and keeps trying.
 	var stuck_url := ""
-	if stuck_t >= STUCK_S and server_url.begins_with("wss://") and not version_bad:
+	if stuck_t >= STUCK_S and server_url.begins_with("wss://") and not version_bad and not ever_open:
 		stuck_url = "https://" + server_url.trim_prefix("wss://")
+	if (stuck_url != "") != stuck_said:
+		stuck_said = stuck_url != ""
+		if stuck_said:
+			print("🎮 [Client] ONE MORE STEP shown: no connection to %s yet, ever" % server_url)   # (tools/v2_drop_check.py reads it)
+	if not connected and ever_open and not version_bad and status_t <= 0.0:
+		status = "The connection dropped. Joining again by itself…"
+		status_t = 0.5
 	if sticks.active != lobby.phone:
 		lobby.set_phone(sticks.active)
 	var show_lobby: bool = my_seat < 0 or phase < 0 or phase <= P.PH_COUNTDOWN or not connected

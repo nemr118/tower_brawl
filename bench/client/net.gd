@@ -28,6 +28,12 @@ const JUMP_TICKS := 20         # the clock is further off than this: jump (the f
 # own fighter 3 s in the future until a reload. At 300 ms the most a false ping adds is
 # 18 ticks, under JUMP_TICKS, and the margins bring that back in about 3 s.
 const RTT_CLOCK_MAX := 300.0
+# Three lists here (rtts, gaps, margin_log) and one in predict.gd (errors) took a number
+# for every ping, snapshot and T_OWN and were never emptied on the game's page (only
+# the benchmark's cards empty them): about 1.3 MB an hour of play (the review's bug 10).
+# Now each keeps the newest LOG_KEEP at most (20 000: 11 minutes of T_OWN, 80 kB):
+# when one is full, its older half goes. The probes read at most 5 minutes.
+const LOG_KEEP := 20000
 const W := 1920.0
 const H := 1080.0
 const GLIDE_MAX := 6.0         # p4.16 (the warping): no newer snapshot: the others go on at their last speed this many ticks at most
@@ -128,6 +134,15 @@ func poll() -> void:
 		synced = false
 		pred_tick = 0          # a new connection: the server takes any tick again
 		fresh = true
+		# Nothing of the old socket's ticks may stay (bug 6: a server started again counts
+		# from 0). The last 4 inputs went out again with the first new one: the new server
+		# took their old, high ticks as the newest it had seen and then threw away every
+		# real input as "old" (measured: 1 input used in 20 s). Old events would wait
+		# for a tick that comes hours later.
+		input_hist.clear()
+		events.clear()
+		_ease.clear()
+		last_snap_ms = 0.0     # (the time with no socket is no snapshot gap)
 		margins.clear()
 		clock_debt = 0
 		pay_now = false
@@ -185,6 +200,8 @@ func _on_packet(pkt: PackedByteArray, was_text: bool) -> void:
 		var sent := pkt.decode_u32(1)
 		last_rtt = int((int(now_ms()) & 0xFFFFFFFF) - sent) & 0xFFFFFFFF
 		rtts.append(last_rtt)
+		if rtts.size() > LOG_KEEP:
+			rtts = rtts.slice(LOG_KEEP / 2)
 
 # Every packet out goes through here (the test knob holds it lag/2 + jitter).
 func _send_bin(pkt: PackedByteArray) -> void:
@@ -335,6 +352,8 @@ func _on_own(pkt: PackedByteArray) -> void:
 		while margins.size() > 0 and margins[0][0] < t - 3000.0:
 			margins.pop_front()
 		margin_log.append(int(o["margin"]))
+		if margin_log.size() > LOG_KEEP:
+			margin_log = margin_log.slice(LOG_KEEP / 2)
 
 # ------------------------------------------------------------------ snapshots and the render clock
 func _on_snapshot(pkt: PackedByteArray) -> void:
@@ -342,6 +361,8 @@ func _on_snapshot(pkt: PackedByteArray) -> void:
 	if last_snap_ms > 0.0:
 		var g := t - last_snap_ms
 		gaps.append(g)
+		if gaps.size() > LOG_KEEP:
+			gaps = gaps.slice(LOG_KEEP / 2)
 		gap_hist.append(g)
 		if gap_hist.size() > GAP_KEEP:
 			gap_hist.remove_at(0)

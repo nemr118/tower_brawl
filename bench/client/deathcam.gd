@@ -15,6 +15,7 @@
 # the slow motion, FINAL KILL. A seated player's SKIP button (or Esc, space, enter
 # on a PC) asks the server to end the match's end for everyone (the user: "skip
 # the montage for everyone and go back to the lobby"): skip_pressed, the JSON skip.
+# The button is at the top in the middle and wakes 2 s in (SKIP_RECT's note says why).
 extends CanvasLayer
 
 signal skip_pressed
@@ -46,7 +47,14 @@ const PUNCH_UP_S := 0.1
 const PUNCH_DOWN_S := 0.6
 const FINAL_ZOOM := 1.5           # the last kill: held this close
 const POP_S := 0.7                # the KILL! pop
-const SKIP_RECT := Rect2(1620, 958, 240, 76)   # the SKIP button, in the arena's 1920 x 1080
+# The SKIP button, in the arena's 1920 x 1080. 2026-11-24 (the November review's bug 8):
+# it sat at the bottom right (1620, 958), where right thumbs play, and worked from the
+# replay's first frame: 10 of 31 matches were skipped on 25 October, 4 of them within
+# 2 s (a thumb still shooting). Now it is at the top, in the middle (no thumb rests
+# there; REPLAY is to its left, the kill count to its right), and it wakes SKIP_WAKE_S
+# into the replay: before that it is not drawn and no tap or key skips.
+const SKIP_RECT := Rect2(840, 20, 240, 76)
+const SKIP_WAKE_S := 2.0
 
 var recording := true
 var clock := 0.0
@@ -317,7 +325,7 @@ func _aim_camera(delta: float) -> void:
 	focus = Vector2(clampf(focus.x, half.x, 1920.0 - half.x), clampf(focus.y, half.y, 1080.0 - half.y))
 
 func _input(event: InputEvent) -> void:
-	if not playing or not can_skip or skip_sent:
+	if not playing or not can_skip or skip_sent or t_play < SKIP_WAKE_S:
 		return
 	var hit := false
 	if (event is InputEventScreenTouch or event is InputEventMouseButton) and event.pressed:
@@ -384,22 +392,23 @@ func _paint(n: Control) -> void:
 	var count := "KILL %d OF %d" % [int(sg["n"]), int(sg["of"])]
 	var cw := font.get_string_size(count, HORIZONTAL_ALIGNMENT_LEFT, -1, int(34 * sc)).x
 	_text(n, font, Vector2(off.x + size.x - 150.0 * sc - cw, top), count, int(34 * sc), white)   # clear of the page's full-screen button
-	if can_skip:
+	if can_skip and t_play >= SKIP_WAKE_S:
+		var wake := clampf((t_play - SKIP_WAKE_S) / 0.3, 0.0, 1.0)   # it fades in as it wakes
 		var br := _skip_rect()
-		n.draw_rect(br, Color(0.05, 0.06, 0.1, 0.7), true)
-		n.draw_rect(br, Color(1, 1, 1, 0.35 if skip_sent else 0.85), false, 3.0 * sc)
+		n.draw_rect(br, Color(0.05, 0.06, 0.1, 0.7 * wake), true)
+		n.draw_rect(br, Color(1, 1, 1, (0.35 if skip_sent else 0.85) * wake), false, 3.0 * sc)
 		var label := "SKIPPING" if skip_sent else "SKIP"
 		var ls := int(36 * sc)
 		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, ls).x
 		var bx := br.position.x + (br.size.x - lw - (0.0 if skip_sent else 40.0 * sc)) / 2.0
 		var by := br.position.y + br.size.y / 2.0 + 13.0 * sc
-		_text(n, font, Vector2(bx, by), label, ls, Color(1, 1, 1, 0.5 if skip_sent else 1.0))
+		_text(n, font, Vector2(bx, by), label, ls, Color(1, 1, 1, (0.5 if skip_sent else 1.0) * wake))
 		if not skip_sent:   # two small triangles: fast forward
 			var ax := bx + lw + 10.0 * sc
 			var h := 13.0 * sc
 			for j in 2:
 				var x0 := ax + j * 15.0 * sc
-				n.draw_colored_polygon(PackedVector2Array([Vector2(x0, by - 2.0 * h + 4.0 * sc), Vector2(x0 + 14.0 * sc, by - h + 4.0 * sc), Vector2(x0, by + 4.0 * sc)]), white)
+				n.draw_colored_polygon(PackedVector2Array([Vector2(x0, by - 2.0 * h + 4.0 * sc), Vector2(x0 + 14.0 * sc, by - h + 4.0 * sc), Vector2(x0, by + 4.0 * sc)]), Color(1, 1, 1, wake))
 	# the caption: who and whom, and MATCH POINT on the last kill
 	var wn := _name(winner)
 	var col: Color = World.TEAM[winner % 8].lightened(0.25)

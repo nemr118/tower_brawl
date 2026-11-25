@@ -19,6 +19,8 @@
 #   --spawn starts its own test server (ws, no TLS) and stops it by its PID at the end.
 #   Without it: --url ws://host:port --admin-port N [--server-log FILE] for a server
 #   that already runs (it must have --admin-port).
+#   --calm: the host never stops a match and never kicks (more whole matches).
+#   --bench DIR: with --spawn, the server from another copy of bench/.
 #   -> a line every 30 s, a summary at the end, <out>/chaos_report.json; exit 1 on a finding.
 # The same fake player (class Client) is used by tools/v2_seat_check.py, the check with
 # a fixed script for each seat bug of the review.
@@ -316,13 +318,14 @@ class Host:
 class Server:
     """A test server of our own: ws (no TLS), its output in a file, stopped by its PID."""
 
-    def __init__(self, port, admin_port, out_dir, extra, bench_dir=None):
+    def __init__(self, port, admin_port, out_dir, extra, bench_dir=None, tls=None, log_name="server_stdout.log"):
         os.makedirs(out_dir, exist_ok=True)
-        self.log_path = os.path.join(out_dir, "server_stdout.log")
+        self.log_path = os.path.join(out_dir, log_name)
         self.log = open(self.log_path, "w")
         self.port, self.admin_port = port, admin_port
         cmd = ["godot", "--headless", "--path", bench_dir or os.path.join(ROOT, "bench"), "res://server/game_server.tscn", "--",
-               "--no-tls", "--port", str(port), "--admin-port", str(admin_port), "--out", os.path.join(out_dir, "results")] + extra
+               "--port", str(port), "--admin-port", str(admin_port), "--out", os.path.join(out_dir, "results")] + extra
+        cmd += ["--cert", tls[0], "--key", tls[1]] if tls else ["--no-tls"]      # tls: (cert file, key file) for wss
         self.proc = subprocess.Popen(cmd, stdout=self.log, stderr=subprocess.STDOUT)
         end = time.time() + 30
         while time.time() < end:
@@ -407,6 +410,7 @@ def main():
     ap.add_argument("--arena", default="mix")
     ap.add_argument("--goal", type=int, default=0, help="points to win (0: the server's rule)")
     ap.add_argument("--calm", action="store_true", help="no host stop, no kick: matches run to their end (more rounds, more winner's screens)")
+    ap.add_argument("--bench", default="", help="with --spawn: the server from another copy of bench/ (an older commit: the soak should find its bugs)")
     ap.add_argument("--out", default=os.path.join(ROOT, "bench_results", "chaos"))
     a = ap.parse_args()
     rng = random.Random(a.seed)
@@ -416,13 +420,16 @@ def main():
         extra = ["--bots", str(a.bots), "--season", a.season, "--arena", a.arena]
         if a.goal > 0:
             extra += ["--goal", str(a.goal)]
-        server = Server(a.port, a.admin_port, a.out, extra)
+        server = Server(a.port, a.admin_port, a.out, extra, a.bench or None)
         url, log_path = f"ws://127.0.0.1:{a.port}", server.log_path
     else:
         url, log_path = a.url, a.server_log
         a.port = int(url.rsplit(":", 1)[1].split("/")[0])
     host = Host(a.admin_port)
     version = game_version()
+    if a.bench:
+        with open(os.path.join(a.bench, "sim", "proto.gd")) as f:
+            version = re.search(r'const VERSION := "([^"]+)"', f.read()).group(1)
     clients = [Client(url, i, version) for i in range(a.fakes)]
     zombies = []                       # old sockets left open and silent: [socket, close at]
     did = collections.Counter()
@@ -430,10 +437,12 @@ def main():
     seen_find = set()
     t0 = time.monotonic()
 
+    repeats = [0]
+
     def find(text, key=None):
         key = key or text
         if key in seen_find:
-            did["repeat findings"] += 1
+            repeats[0] += 1
             return
         seen_find.add(key)
         findings.append((round(time.monotonic() - t0, 1), text))
@@ -521,15 +530,18 @@ def main():
         st = host.state()
         k = rng.random()
         ph = st.get("phase", 0)
-        if ph == PH_LOBBY and k < 0.55:
-            host.cmd("start")
-            did["host: start"] += 1
-        elif k < 0.62 and not a.calm:
-            host.cmd("stop")
-            did["host: stop"] += 1
-        elif k < 0.72 and not a.calm:
-            host.cmd("kick", seat=rng.randrange(8))
-            did["host: kick"] += 1
+        if k < 0.55:
+            if ph == PH_LOBBY:           # (in a match: nothing this time, the match plays on)
+                host.cmd("start")
+                did["host: start"] += 1
+        elif k < 0.58:
+            if not a.calm:               # about once a minute and a half
+                host.cmd("stop")
+                did["host: stop"] += 1
+        elif k < 0.68:
+            if not a.calm:
+                host.cmd("kick", seat=rng.randrange(8))
+                did["host: kick"] += 1
         elif k < 0.80:
             host.cmd("arena", n=rng.choice([-1, -1, -1, 1, 2, 3, 4, 5, 6]))
             did["host: arena"] += 1
@@ -551,6 +563,7 @@ def main():
     worst = {"tick_mean_ms": 0.0, "tick_p99_ms": 0.0, "tick_max_ms": 0.0, "interval_max_ms": 0.0, "rss_mb": 0.0}
     rss_first = [None]
     log_pos = [0]
+    round_open = [False]
     counts = collections.Counter()
     seen_rounds = set()
 
@@ -629,10 +642,26 @@ def main():
                 # a tick has 16.7 ms: a mean over 8 ms or a p99 over 16.7 ms is a server too slow to keep 60 a second
                 if float(m.group(1)) > 8.0 or float(m.group(2)) > 16.7:
                     find(f"the server's tick is slow: {m.group(0)}", "slow tick")
-            for word, name in (("] PHEW:", "PHEW lines (the winner was saved)"), ("FIGHT", "FIGHT lines"), (" end after ", "round or match end lines"),
+            # every round ends: a round that started is followed by its end, or by the lobby
+            # (the host stopped the match, too few fighters were left)
+            if re.search(r"\[ROUND\] \d+ start on", line):
+                counts["rounds started (the log)"] += 1
+                round_open[0] = True
+            elif re.search(r"\[ROUND\] \d+ end after", line):
+                counts["rounds ended"] += 1
+                if " a draw" in line:
+                    counts["draws"] += 1
+                round_open[0] = False
+            elif "[LOBBY] back in the lobby" in line:
+                if round_open[0]:
+                    counts["rounds cut short (host stop, too few fighters)"] += 1
+                round_open[0] = False
+            for word, name in (("PHEW:", "PHEW lines (the winner was saved)"), ("[MATCH] end after", "matches ended with a winner"),
                                ("[MATCH] start", "matches started"), ("is back from", "seats taken back by a token"),
-                               ("dropped: held", "seats held after a drop"), ("silent", "silent sockets dropped"), ("no point", "no-point lines"),
-                               ("took over", "seats taken over by a second socket"), ("is free again", "held seats freed")):
+                               (": held ", "seats held after a drop"), ("went silent", "silent sockets dropped"), ("no point:", "no-point lines"),
+                               ("took over", "seats taken over by a second socket"), ("is free again", "held seats freed"),
+                               ("left the round", "fighters taken out (seat given up)"), ("skipped the montage", "replays skipped"),
+                               ("[KILL]", "kill lines")):
                 if word in line:
                     counts[name] += 1
 
@@ -703,8 +732,13 @@ def main():
     print("   seen: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])))
     print(f"   the server's tick, the worst 5 s: mean {worst['tick_mean_ms']:.2f} ms, p99 {worst['tick_p99_ms']:.2f} ms, max {worst['tick_max_ms']:.2f} ms; "
           f"interval max {worst['interval_max_ms']:.1f} ms; memory {rss_first[0] or 0:.0f} -> {worst['rss_mb']:.0f} MB at most")
+    left_open = counts["rounds started (the log)"] - counts["rounds ended"] - counts["rounds cut short (host stop, too few fighters)"]
+    print(f"   every round ends: {counts['rounds started (the log)']} started = {counts['rounds ended']} ended + "
+          f"{counts['rounds cut short (host stop, too few fighters)']} cut short by the lobby + {left_open} still on when the soak stopped")
+    if left_open not in (0, 1):
+        find(f"rounds that neither ended nor were cut short: {left_open}", "open rounds")
     if findings:
-        print(f"   FOUND {len(findings)} (and {did['repeat findings']} repeats):")
+        print(f"   FOUND {len(findings)} (and {repeats[0]} repeats):")
         for t, text in findings:
             print(f"     {t:7.1f} s  {text}")
     else:

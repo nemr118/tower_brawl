@@ -15,6 +15,7 @@ const SimScript = preload("res://sim/sim.gd")
 const KEEP := 240                 # inputs and positions kept: 4 s
 const SNAP_PX := 120.0            # a correction this big jumps instead of fading
 const CORRECT_S := 0.06           # a small correction fades with this time constant
+const ERRORS_KEEP := 20000        # `errors` keeps the newest 20 000 at most (net.gd LOG_KEEP says why): 11 minutes of T_OWN
 # your events the prediction gives at once; the server's copies are dropped
 # (a stomp's jump, E_JUMP with b = 1, is the server's: the copy has nobody to stomp)
 const PREDICTED := [P.E_JUMP, P.E_LAND, P.E_DODGE, P.E_WALLJUMP, P.E_LEDGE, P.E_SHOOT, P.E_DRYFIRE]
@@ -58,6 +59,26 @@ func on_tick(t: int, buttons: int, aim: int) -> void:
 		tick += 1
 		_run(tick, true)
 
+# A new socket (game_client.gd, when net.gd says `fresh`): everything that holds a
+# server tick starts over. Why (the review's bug 6): a server that was started again
+# counts its ticks from 0. The copy kept the old server's tick, threw away every T_OWN
+# of the new one as "older than what I have" (reconcile), and the page drew a fighter
+# that no server corrected, until a reload.
+func reset() -> void:
+	me = null
+	sim.fighters.clear()
+	sim.arrows.clear()
+	sim.safe = -1
+	tick = 0
+	shown_tick = 0
+	server_tick = 0
+	moves_from = 0
+	inputs.clear()
+	placed.clear()
+	last_input = [0, 0]
+	offset = Vector2.ZERO
+	out_events.clear()
+
 # The clock jumped (the first sync, a tab that slept): the copy waits at the new
 # tick for the next T_OWN.
 func jump_to(t: int) -> void:
@@ -96,6 +117,8 @@ func reconcile(o: Dictionary) -> void:
 	if not fresh and placed.has(s) and moves_from == 0:   # (a new round's first T_OWN is no correction)
 		var at: Vector2i = placed[s]
 		errors.append(Vector2(SimScript.wrap_d(at.x, me.x, 1920.0), SimScript.wrap_d(at.y, me.y, 1080.0)).length())
+		if errors.size() > ERRORS_KEEP:
+			errors = errors.slice(ERRORS_KEEP / 2)
 	placed[s] = Vector2i(me.x, me.y)
 	# your arrows shot after tick s come back when the inputs run again; the earlier ones are the server's
 	sim.arrows.clear()

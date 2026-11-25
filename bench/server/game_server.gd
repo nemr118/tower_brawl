@@ -498,7 +498,12 @@ func _drain_inbox() -> void:
 			_on_close(conns[id], int(m[2]))
 
 func _on_text(c: Conn, txt: String) -> void:
-	var d = JSON.parse_string(txt)
+	# (JSON.new().parse, not JSON.parse_string: that one prints an ERROR line in the log for
+	# every text that is no JSON, and a client can send anything: the chaos soak's junk)
+	var js := JSON.new()
+	if js.parse(txt) != OK:
+		return
+	var d = js.data
 	if typeof(d) != TYPE_DICTIONARY:
 		return
 	var kind := str(d.get("kind", ""))
@@ -512,10 +517,11 @@ func _on_text(c: Conn, txt: String) -> void:
 		c.name = _clean_name(str(d.get("name", "")), -1)
 		if c.seat < 0:      # (a second hello from a seated socket changes nothing about its seat)
 			c.token = str(d.get("token", "")).substr(0, 32)
-			# this token's seat: the same person is back (a held seat), or is here on a new
-			# socket while the old one still has the seat (bug 5: it takes the seat over)
+			# a held seat with this token: the same person is back. (A seat that is still on
+			# another socket is not taken here: a second tab that only looks, or THE BIG
+			# SCREEN in the same browser, says hello with the same token. join takes it over.)
 			var mine := _seat_of(c.token)
-			if mine != null:
+			if mine != null and mine.client_id == 0:
 				_take_seat(mine, c)
 		_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
 		_send_seats(c.id)
@@ -541,7 +547,7 @@ func _on_text(c: Conn, txt: String) -> void:
 		if c.seat >= 0:
 			return
 		var mine := _seat_of(c.token)
-		if mine != null:    # bug 5: this token has a seat (on another socket): that one, never a second seat
+		if mine != null:    # bug 5: this token has a seat already (on a socket that hangs, or in another tab): that one, never a second seat
 			_take_seat(mine, c)
 			_out(c.id, JSON.stringify({"kind": "welcome", "seat": c.seat, "version": P.VERSION, "name": c.name, "phase": phase}))
 			return
@@ -576,11 +582,11 @@ func _on_text(c: Conn, txt: String) -> void:
 			seats_dirty = true
 	elif kind == "bots":
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN):
-			bots_wanted = clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
+			bots_wanted = clampi(_int(d.get("n"), bots_wanted), 0, MAX_BOTS)
 			seats_dirty = true
 			_save_lobby()
 	elif kind == "bot_level":
-		var lv := int(d.get("n", sim.bot_level))
+		var lv := _int(d.get("n"), sim.bot_level)
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and lv != sim.bot_level \
 				and lv >= SimScript.BrainScript.EASY and lv <= SimScript.BrainScript.HARD:
 			sim.bot_level = lv
@@ -588,7 +594,7 @@ func _on_text(c: Conn, txt: String) -> void:
 			seats_dirty = true
 			_save_lobby()
 	elif kind == "arena":
-		var n := int(d.get("n", arena_pick))
+		var n := _int(d.get("n"), arena_pick)
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and n != arena_pick \
 				and (n == P.ARENA_MIX or (n >= 0 and n < SimScript.LevelScript.count())):
 			arena_pick = n
@@ -601,7 +607,7 @@ func _on_text(c: Conn, txt: String) -> void:
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and pick != season_pick and P.SEASON_PICKS.has(pick):
 			_set_season(pick, "seat %d '%s'" % [c.seat, seats[c.seat].name])
 	elif kind == "power":
-		var on := int(d.get("n", 0)) != 0
+		var on := _int(d.get("n"), 0) != 0
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and on != sim.powerups:
 			sim.powerups = on
 			_say("🏰 [LOBBY] power-ups %s, picked by seat %d '%s'" % ["ON" if on else "OFF", c.seat, seats[c.seat].name])
@@ -627,10 +633,10 @@ func _on_report(c: Conn, d: Dictionary) -> void:
 	r["ua"] = str(d.get("ua", "")).substr(0, 140)
 	r["screen"] = str(d.get("screen", "")).substr(0, 12)
 	for k in ["fps", "slow_pct", "frame_max_ms", "mem_mb", "tex_mb", "late_pct", "eased_px", "res"]:
-		r[k] = snappedf(clampf(float(d.get(k, 0.0)), 0.0, 100000.0), 0.1)
+		r[k] = snappedf(clampf(_num(d.get(k)), 0.0, 100000.0), 0.1)
 	for k in ["frames", "ping_ms", "reconnects", "step_downs", "shots_armed", "shots_cancelled", "mouse_shots", "errors_total",
 			"jumps", "rim_dodges", "button_dodges", "eased", "aim_taps"]:
-		r[k] = clampi(int(d.get(k, 0)), 0, 100000000)
+		r[k] = clampi(_int(d.get(k), 0), 0, 100000000)
 	var errs: Array = []
 	var raw = d.get("errors", [])
 	if typeof(raw) == TYPE_ARRAY:
@@ -699,12 +705,29 @@ func _free_seat(want: int = -1) -> Seat:
 				return s
 	return null
 
-# A number from a client's JSON, or the fallback when it is no number (a list, a
-# word, nothing): int() of a list is a script error, and a client can send anything.
+# A number from a client's JSON (or the host page's), or the fallback when it is no
+# number (a list, a word, nothing). int() of a list or of null is a script error, and a
+# client can send anything: the chaos soak's junk ({"kind": "bot_level", "n": {}}) made
+# "SCRIPT ERROR: Nonexistent 'int' constructor" in _on_text. A number as text ("3")
+# still counts, as before.
 static func _int(v, fallback: int) -> int:
-	if typeof(v) == TYPE_INT or typeof(v) == TYPE_FLOAT:
+	var t := typeof(v)
+	if t == TYPE_INT or t == TYPE_FLOAT:
 		return int(clampf(float(v), -2147483648.0, 2147483647.0)) if not is_nan(float(v)) else fallback
+	if t == TYPE_BOOL:
+		return 1 if v else 0
+	if t == TYPE_STRING and (v.is_valid_int() or v.is_valid_float()):
+		return int(clampf(float(v), -2147483648.0, 2147483647.0))
 	return fallback
+
+# The same for a number with a fraction (a phone report's fps): 0 when it is no number.
+static func _num(v) -> float:
+	var t := typeof(v)
+	if t == TYPE_INT or t == TYPE_FLOAT:
+		return 0.0 if is_nan(float(v)) else float(v)
+	if t == TYPE_STRING and v.is_valid_float():
+		return float(v)
+	return 0.0
 
 # The seat this token sits on (held, or on another socket), or null.
 func _seat_of(token: String) -> Seat:
@@ -715,11 +738,11 @@ func _seat_of(token: String) -> Seat:
 			return s
 	return null
 
-# c gets the seat its token already has. A held seat: the person is back. A seat still
-# on another socket (bug 5: a phone that came back on a new socket while the old one
-# hung, or a second tab): the old socket is told it has no seat, and this one plays.
-# Before, the new socket got a second seat and the old seat stayed "on" with its last
-# buttons held.
+# c gets the seat its token already has. A held seat: the person is back (hello). A seat
+# still on another socket (join; bug 5: a phone that came back on a new socket while
+# the old one hung, or a second tab): the old socket is told it has no seat, and this
+# one plays. Before, the new socket got a second seat and the old seat stayed "on" with
+# its last buttons held.
 func _take_seat(s: Seat, c: Conn) -> void:
 	if s.client_id == c.id:
 		return
@@ -973,12 +996,12 @@ func _match_tick() -> void:
 	elif phase == P.PH_ROUND_END:
 		phase_t -= 1
 		if phase_t <= 0:
-			# The point goes to a seat that had its own fighter in this round. Not to an empty
-			# seat (the winner left in these 1.5 s), and not to a person who sat down on a
-			# bot's seat during the round (the bot won it, they play from the next one).
-			if winner != P.NO_ONE and not (seats[winner].kind != 0 and seats[winner].in_round):
-				_say("🏰 [ROUND] %d: no point: the winner's seat %d %s" % [round_no, winner,
-					"is empty now" if seats[winner].kind == 0 else "has a new person, who did not play this round"])
+			# The point never goes to an empty seat (the winner left in these 1.5 s: bug 3).
+			# (A person who sat down on a bot's seat during the round still gets the round that
+			# bot wins, banner and point, as before: the soak showed that taking only the
+			# point away leaves "C03 WINS THE ROUND" on the screen with no point for C03.)
+			if winner != P.NO_ONE and seats[winner].kind == 0:
+				_say("🏰 [ROUND] %d: no point: the winner's seat %d is empty now" % [round_no, winner])
 				winner = P.NO_ONE
 			if winner != P.NO_ONE:
 				seats[winner].points += 1
@@ -1230,7 +1253,10 @@ func _log_deaths(evs: Array) -> void:
 		var vn: String = seats[victim].name if victim < SEATS else "?"
 		var when := _round_secs()
 		round_deaths.append([victim, killer, e[4], e[1], e[2], snappedf(when, 0.01)])
-		if victim < SEATS and seats[victim].kind != 0:
+		# (a fighter whose seat was given up is no death in the night's numbers: and by now
+		# the seat may have its next person, who must not get it. tools/v2_host_check.py
+		# found that: Kid, kicked and back at once, had one death too many.)
+		if victim < SEATS and seats[victim].kind != 0 and e[4] != P.C_LEFT:
 			var rv := _stat(seats[victim])
 			rv["deaths"] += 1
 			if killer == victim:
@@ -1991,14 +2017,14 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 	var later := " from the next round" if in_match else ""
 	match cmd:
 		"bots":
-			var n := clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
+			var n := clampi(_int(d.get("n"), bots_wanted), 0, MAX_BOTS)
 			bots_wanted = n
 			seats_dirty = true
 			_save_lobby()
 			_say("🏰 [HOST] bots %d%s" % [n, later])
 			return [true, "Bots: %d%s." % [n, later]]
 		"bot_level":
-			var lv := int(d.get("n", -1))
+			var lv := _int(d.get("n"), -1)
 			if lv < SimScript.BrainScript.EASY or lv > SimScript.BrainScript.HARD:
 				return [false, "The bots' level is 1 (EASY), 2 (NORMAL) or 3 (HARD)."]
 			sim.bot_level = lv
@@ -2007,7 +2033,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			_say("🏰 [HOST] bots %s%s" % [SimScript.BrainScript.NAMES[lv], later])
 			return [true, "Bots %s%s." % [SimScript.BrainScript.NAMES[lv], later]]
 		"arena":
-			var n := int(d.get("n", -99))
+			var n := _int(d.get("n"), -99)
 			if n != P.ARENA_MIX and not SimScript.LevelScript.PLAY.has(n):
 				return [false, "No arena %d." % n]
 			arena_pick = n
@@ -2018,7 +2044,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			_say("🏰 [HOST] arena %s%s" % [_arena_label(n), later])
 			return [true, "Arena %s%s." % [_arena_label(n), later]]
 		"kick":
-			var i := int(d.get("seat", -1))
+			var i := _int(d.get("seat"), -1)
 			if i < 0 or i >= SEATS or seats[i].kind != 1:
 				return [false, "Seat %d has no person in it." % i]
 			var s: Seat = seats[i]
@@ -2039,7 +2065,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			_set_season(pick, "the host")
 			return [true, "Season %s (now %s)." % [pick.to_upper(), P.SEASON_LABEL.get(sim.season, "NONE")]]
 		"power":
-			sim.powerups = int(d.get("n", 0)) != 0
+			sim.powerups = _int(d.get("n"), 0) != 0
 			seats_dirty = true
 			_save_lobby()
 			_say("🏰 [HOST] power-ups %s" % ("ON" if sim.powerups else "OFF"))
