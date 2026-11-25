@@ -18,6 +18,8 @@ var swags: Array = []            # [from, to]: a string of lights between two po
 var lights: Node2D
 var t := 0.0
 var acc := 0.0
+var flash_t := 0.0               # a knockout: every bulb burns bright for this long more
+const FLASH_S := 0.45
 
 class _Lights extends Node2D:
 	var sv
@@ -69,12 +71,21 @@ func build(level, torches: Array) -> void:
 	queue_redraw()
 	lights.queue_redraw()
 
+# A knockout somewhere in the arena: the lights all flash.
+func flash() -> void:
+	if visible:
+		flash_t = FLASH_S
+		lights.queue_redraw()
+
 func _process(delta: float) -> void:
 	if not visible:
 		return
 	t += delta
 	acc += delta
-	if acc >= 1.0 / HZ:
+	if flash_t > 0.0:
+		flash_t = maxf(0.0, flash_t - delta)
+		lights.queue_redraw()        # (smooth while it fades)
+	elif acc >= 1.0 / HZ:
 		acc = 0.0
 		lights.queue_redraw()
 
@@ -116,5 +127,10 @@ func _draw_lights(ci: CanvasItem) -> void:
 		for i in range(1, n):
 			var col: Color = BULBS[(i + si * 2) % BULBS.size()]
 			var on := 0.55 + 0.45 * sin(t * 2.6 + i * 1.9 + si)
+			var fk := flash_t / FLASH_S
+			if fk > 0.0:              # the flash: brighter, whiter, a wider glow
+				on = lerpf(on, 1.6, fk)
+				col = col.lerp(Color(1.0, 0.97, 0.85), fk * 0.6)
+				ci.draw_circle(pts[i] + Vector2(0, 5), 16.0, Color(col.r * BOOST, col.g * BOOST, col.b * BOOST, 0.22 * fk))
 			ci.draw_circle(pts[i] + Vector2(0, 5), 9.0, Color(col.r * BOOST, col.g * BOOST, col.b * BOOST, 0.16 * on))
 			ci.draw_circle(pts[i] + Vector2(0, 5), 4.2, Color(col.r * BOOST * on, col.g * BOOST * on, col.b * BOOST * on))

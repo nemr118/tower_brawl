@@ -460,6 +460,8 @@ func on_event(e: Array) -> void:
 	fx.on_event(e)
 	pview.on_event(e)
 	boiler.on_event(e)
+	if snow != null and e[0] == P.E_DEATH:
+		snow.flash()       # p4.22: a knockout: the strings of lights all flash
 
 # p4.8 (the deathcam): the camera's zoom (1: the whole arena) and where it looks.
 func set_view_zoom(z: float, at: Vector2) -> void:
@@ -572,6 +574,7 @@ func _apply_theme() -> void:
 	if snow == null and winter:
 		snow = SnowView.new()         # made the first time a castle arena is shown in the season
 		add_child(snow)
+	fx.snowy = Season.christmas() and (castle or level.theme == "rooftops")   # p4.22: out in the snow, a landing kicks up white powder
 	if snow != null:
 		snow.build(level if winter else null, level.torches)
 		move_child(snow, (dress.get_index() if dress != null else tiles_lit.get_index()) + 1)

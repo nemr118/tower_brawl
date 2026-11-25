@@ -18,11 +18,13 @@ const KIND_COLOR := [Color(0.85, 0.95, 1.0), Color(1.0, 0.6, 0.15), Color(1.0, 0
 	Color(1.0, 0.55, 0.1), Color(1.0, 0.82, 0.3),   # p4.12: 5 a pumpkin, 6 its seed
 	Color(1.0, 0.95, 0.85), Color(0.8, 0.92, 1.0)]  # p4.18: 7 a pie; p4.22: 8 a snowball
 
+const SNOW_DUST := Color(2.2, 2.3, 2.5)      # white powder (over 1: the night darkens this layer)
 var cpu := false
 var mult := 1.0
 var ratio := 1.0
 var all_emitters: Array = []
 var enabled := false
+var snowy := false              # p4.22: the arena lies under snow (world.gd): a jump's and a landing's dust is white powder
 var lights_enabled := false
 var team: Array = []
 var lit: Node2D
@@ -209,13 +211,15 @@ func on_event(e: Array) -> void:
 	var pos := Vector2(e[1], e[2])
 	var type: int = e[0]
 	if type == P.E_JUMP:
-		_burst("dust_jump", pos)
+		_burst("dust_jump", pos, SNOW_DUST if snowy else Color.WHITE)
 		if e[4] == 1:
 			_burst("spark", pos)
 			flash(pos, 2.0, Color(1, 1, 0.8), 0.1)
 	elif type == P.E_LAND:
 		if e[4] >= 6:
-			_burst("dust_land", pos)
+			_burst("dust_land", pos, SNOW_DUST if snowy else Color.WHITE)
+			if snowy:
+				_burst("dust_jump", pos + Vector2(0, -4), SNOW_DUST)   # a bigger puff: powder flies
 	elif type == P.E_WALLJUMP:
 		_burst("wall_dust", pos, Color.WHITE, PI if e[4] == 1 else 0.0)
 	elif type == P.E_DODGE:

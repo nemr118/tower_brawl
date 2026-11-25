@@ -577,14 +577,14 @@ def main():
                 host.cmd("kick", seat=rng.randrange(8))
                 did["host: kick"] += 1
         elif k < 0.74:
-            host.cmd("arena", n=rng.choice([-1, -1, -1, 1, 2, 3, 4, 5, 6]))
+            host.cmd("arena", n=rng.choice([-1, -1, -1, 1, 2, 3, 4, 5, 6, 7, 8]))
             did["host: arena"] += 1
         elif k < 0.80:
             if not a.no_mode_moves:
                 host.cmd("mode", pick=rng.choice(["teams", "teams", "teams", "ffa"]))     # TEAMS: in a match it counts from the next one
                 did["host: mode"] += 1
         elif k < 0.87:
-            host.cmd("season", pick=rng.choice(["harvest", "harvest", "harvest", "auto", "off", "halloween"]))
+            host.cmd("season", pick=rng.choice([a.season, a.season, a.season, "auto", "off", "halloween", "harvest", "christmas"]))   # (mostly the run's own season)
             did["host: season"] += 1
         elif k < 0.93:
             host.cmd("bots", n=rng.choice([0, 1, 2, 3, 3, 5, 7]))
