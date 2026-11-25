@@ -56,7 +56,7 @@ const STEP_S := 5.0            # (p4.6; it was 3 s: a few hitches from explosion
 const STUCK_S := 5.0   # this long with no connection: the lobby says how to accept the game server's certificate
 const PROXY_S := 4.0   # p4.13: this long with no connection through the page's own address: try the game server's port
 const KEYS := {"tb_left": [KEY_A, KEY_LEFT], "tb_right": [KEY_D, KEY_RIGHT], "tb_up": [KEY_W, KEY_UP],
-	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT]}
+	"tb_down": [KEY_S, KEY_DOWN], "tb_jump": [KEY_SPACE], "tb_dodge": [KEY_SHIFT], "tb_taunt": [KEY_G, KEY_T]}   # p4.19: G or T taunts
 
 var opts := {}
 var net
@@ -193,6 +193,7 @@ func _ready() -> void:
 	sticks.buttons_mode = controls == "buttons"
 	lobby.set_controls(sticks.buttons_mode)
 	add_child(sticks)
+	sticks.taunt_pressed.connect(_taunt)   # p4.19
 	deathcam = Deathcam.new()
 	add_child(deathcam)
 	deathcam.skip_pressed.connect(func(): net.send({"kind": "skip"}))   # p4.8: back to the lobby for everyone
@@ -395,6 +396,17 @@ func _device_look() -> String:
 	if OS.has_feature("web_android") or OS.has_feature("mobile"):
 		return "normal"
 	return "high"
+
+# p4.19 the GOBBLE button (a phone) or G (a PC): a taunt. The server says it to everyone
+# (sim.gd taunt: at most one every 75 ticks; this page asks at most once a second).
+var _taunt_ms := 0
+
+func _taunt() -> void:
+	var now := Time.get_ticks_msec()
+	if my_seat < 0 or now - _taunt_ms < 1000:
+		return
+	_taunt_ms = now
+	net.send({"kind": "taunt"})
 
 # The lobby's LOOK button (p4.6): AUTO, LOW, NORMAL, HIGH, kept on this device. A
 # picked look stays (the user: the look kept falling back to LOW after a round);
@@ -599,6 +611,8 @@ func _physics_process(_dt: float) -> void:
 		buttons |= P.B_JUMP
 	if Input.is_action_pressed("tb_dodge"):
 		buttons |= P.B_DODGE
+	if (Input.is_action_just_pressed("tb_taunt") or opts.has("taunt")) and not lobby.visible:   # ?taunt: a test knob, a taunt a second (pictures)
+		_taunt()
 	if not sticks.active and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not lobby.visible:
 		buttons |= P.B_SHOOT
 		aim_deg10 = _mouse_aim()

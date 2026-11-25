@@ -349,6 +349,7 @@ func _ready() -> void:
 		arena_pick = _arena_arg(str(o["arena"]))
 	if o.has("bot-level"):
 		sim.bot_level = maxi(0, SimScript.BrainScript.NAMES.find(str(o["bot-level"]).to_upper()))
+	_load_lobby(str(o.get("out", root_dir.path_join("bench_results"))), o)   # p4.19: what the lobby picked last time
 	sim.set_arena(_next_arena())   # the lobby shows the arena that comes next
 	for i in SEATS:
 		var s := Seat.new()
@@ -527,6 +528,10 @@ func _on_text(c: Conn, txt: String) -> void:
 	if kind == "report":
 		_on_report(c, d)
 		return
+	if kind == "taunt":      # p4.19 the GOBBLE button: a speech bubble (and a sound) over your fighter, for everyone
+		if c.seat >= 0 and (phase == P.PH_PLAY or phase == P.PH_ROUND_END):
+			sim.taunt(c.seat)
+		return
 	if kind == "skip":
 		if c.seat >= 0 and phase == P.PH_MATCH_END:
 			_say("🏰 [MATCH] seat %d '%s' skipped the montage: back to the lobby" % [c.seat, seats[c.seat].name])
@@ -573,6 +578,7 @@ func _on_text(c: Conn, txt: String) -> void:
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN):
 			bots_wanted = clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
 			seats_dirty = true
+			_save_lobby()
 	elif kind == "bot_level":
 		var lv := int(d.get("n", sim.bot_level))
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and lv != sim.bot_level \
@@ -580,6 +586,7 @@ func _on_text(c: Conn, txt: String) -> void:
 			sim.bot_level = lv
 			_say("🏰 [LOBBY] bots %s, picked by seat %d '%s'" % [SimScript.BrainScript.NAMES[lv], c.seat, seats[c.seat].name])
 			seats_dirty = true
+			_save_lobby()
 	elif kind == "arena":
 		var n := int(d.get("n", arena_pick))
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and n != arena_pick \
@@ -588,6 +595,7 @@ func _on_text(c: Conn, txt: String) -> void:
 			sim.set_arena(_next_arena())
 			_say("🏰 [LOBBY] arena %s, picked by seat %d '%s'" % [_arena_label(arena_pick), c.seat, seats[c.seat].name])
 			seats_dirty = true
+			_save_lobby()
 	elif kind == "season":
 		var pick := str(d.get("pick", ""))
 		if c.seat >= 0 and (phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN) and pick != season_pick and P.SEASON_PICKS.has(pick):
@@ -598,6 +606,7 @@ func _on_text(c: Conn, txt: String) -> void:
 			sim.powerups = on
 			_say("🏰 [LOBBY] power-ups %s, picked by seat %d '%s'" % ["ON" if on else "OFF", c.seat, seats[c.seat].name])
 			seats_dirty = true
+			_save_lobby()
 	elif kind == "name":
 		if c.seat >= 0:
 			c.name = _clean_name(str(d.get("name", "")), c.seat)
@@ -949,7 +958,8 @@ func _match_tick() -> void:
 			server_log.store_line(JSON.stringify({"kind": "round", "t": Time.get_unix_time_from_system(), "match": match_no,
 				"round": round_no, "arena": sim.level.id, "secs": snappedf(_round_secs(), 0.01), "winner": winner, "draw": draw,
 				"fighters": sim.fighters.size(), "people": _people(), "bot_level": sim.bot_level, "deaths": round_deaths,
-				"names": _seat_names(), "arena_name": sim.level.name, "season": sim.season}))   # p4.18: the arena by name (numbers move), the season
+				"names": _seat_names(), "arena_name": sim.level.name, "season": sim.season,   # p4.18: the arena by name (numbers move), the season
+				"bots": _bot_seats()}))   # p4.19: the bots' seats (a bot is GRAVY now, not BOT 3)
 			server_log.flush()
 			if not draw:
 				_mcount(winner, "round_wins")   # p4.11
@@ -1037,9 +1047,59 @@ func _season() -> String:
 		return P.season_for(int(d["month"]), int(d["day"]))
 	return season_pick
 
+# p4.19: the lobby's settings are kept over a restart (the October nights: the server came
+# up with 7 bots every time, and the family plays with 0 or 1). <out>/lobby_settings.json
+# holds the bots, their level, the arena, the power-ups and the season; an option on the
+# command line wins over it. A soak never reads or writes it.
+var lobby_path := ""
+
+func _load_lobby(root: String, o: Dictionary) -> void:
+	if soak:
+		return
+	lobby_path = root.path_join("lobby_settings.json")
+	if not FileAccess.file_exists(lobby_path):
+		return
+	var d = JSON.parse_string(FileAccess.get_file_as_string(lobby_path))
+	if typeof(d) != TYPE_DICTIONARY:
+		return
+	if not o.has("bots"):
+		bots_wanted = clampi(int(d.get("bots", bots_wanted)), 0, MAX_BOTS)
+	if not o.has("bot-level"):
+		var lv := int(d.get("bot_level", sim.bot_level))
+		if lv >= SimScript.BrainScript.EASY and lv <= SimScript.BrainScript.HARD:
+			sim.bot_level = lv
+	if not o.has("arena"):
+		var n := int(d.get("arena", arena_pick))
+		if n == P.ARENA_MIX or SimScript.LevelScript.PLAY.has(n):
+			arena_pick = n
+	if not o.has("no-powerups"):
+		sim.powerups = bool(d.get("power", sim.powerups))
+	if not o.has("season") and P.SEASON_PICKS.has(str(d.get("season", ""))):
+		season_pick = str(d["season"])
+		sim.season = _season()
+	_say("🏰 [LOBBY] the settings of last time: %d bots %s, arena %s, power-ups %s, season %s" % [bots_wanted,
+		SimScript.BrainScript.NAMES[sim.bot_level], _arena_label(arena_pick), "ON" if sim.powerups else "OFF", season_pick.to_upper()])
+
+func _save_lobby() -> void:
+	if lobby_path == "" or soak:
+		return
+	var f := FileAccess.open(lobby_path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify({"bots": bots_wanted, "bot_level": sim.bot_level, "arena": arena_pick, "power": sim.powerups,
+			"season": season_pick}))
+
+# The seats bots sit on now (the logs: a bot's name does not say it is one).
+func _bot_seats() -> Array:
+	var out: Array = []
+	for s in seats:
+		if s.kind == 2:
+			out.append(s.i)
+	return out
+
 func _set_season(pick: String, by: String) -> void:
 	season_pick = pick
 	sim.season = _season()
+	_save_lobby()
 	if phase == P.PH_LOBBY or phase == P.PH_COUNTDOWN:
 		sim.set_arena(_next_arena())     # MIX's list may have changed
 	_say("🏰 [LOBBY] season %s (now %s), picked by %s" % [pick.to_upper(), P.SEASON_LABEL.get(sim.season, "NONE"), by])
@@ -1075,7 +1135,7 @@ func _start_round() -> void:
 	for s in seats:
 		if to_place > 0 and s.kind == 0:
 			s.kind = 2
-			s.name = "BOT %d" % (s.i + 1)
+			s.name = P.bot_name(s.i, sim.season)     # p4.19: GRAVY, STUFFING... by the season (proto.gd BOT_NAMES)
 			s.points = s.points if round_no > 1 else 0
 			to_place -= 1
 	var seat_list: Array = []
@@ -1723,7 +1783,7 @@ func _awards() -> Array:
 		if not got.has(i):
 			var f: Array = FALLBACK[fb % FALLBACK.size()]
 			fb += 1
-			out.append({"seat": i, "name": seats[i].name, "title": f[0], "why": f[1]})
+			out.append({"seat": i, "name": seats[i].name, "title": f[0], "why": f[1], "bot": seats[i].kind == 2})
 	var extra := 0
 	for L in leads:
 		if extra >= 3:
@@ -1745,7 +1805,7 @@ func _award_line(seat: int, aw: Array, value: float) -> Dictionary:
 	if n == 1:   # one of them, not ones
 		for pl in [" knockouts", " times", " power-ups", " stomps", " arrows", " jumps", " dodges", " players", " rounds", " seconds", " steps"]:
 			why = why.replace(pl, pl.substr(0, pl.length() - 1))
-	return {"seat": seat, "name": seats[seat].name, "title": aw[0], "why": why}
+	return {"seat": seat, "name": seats[seat].name, "title": aw[0], "why": why, "bot": seats[seat].kind == 2}
 
 func _count_events(evs: Array) -> void:
 	for e in evs:
@@ -1934,6 +1994,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			var n := clampi(int(d.get("n", bots_wanted)), 0, MAX_BOTS)
 			bots_wanted = n
 			seats_dirty = true
+			_save_lobby()
 			_say("🏰 [HOST] bots %d%s" % [n, later])
 			return [true, "Bots: %d%s." % [n, later]]
 		"bot_level":
@@ -1942,6 +2003,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 				return [false, "The bots' level is 1 (EASY), 2 (NORMAL) or 3 (HARD)."]
 			sim.bot_level = lv
 			seats_dirty = true
+			_save_lobby()
 			_say("🏰 [HOST] bots %s%s" % [SimScript.BrainScript.NAMES[lv], later])
 			return [true, "Bots %s%s." % [SimScript.BrainScript.NAMES[lv], later]]
 		"arena":
@@ -1952,6 +2014,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 			if not in_match:
 				sim.set_arena(_next_arena())
 			seats_dirty = true
+			_save_lobby()
 			_say("🏰 [HOST] arena %s%s" % [_arena_label(n), later])
 			return [true, "Arena %s%s." % [_arena_label(n), later]]
 		"kick":
@@ -1978,6 +2041,7 @@ func _host_cmd(cmd: String, d: Dictionary) -> Array:
 		"power":
 			sim.powerups = int(d.get("n", 0)) != 0
 			seats_dirty = true
+			_save_lobby()
 			_say("🏰 [HOST] power-ups %s" % ("ON" if sim.powerups else "OFF"))
 			return [true, "Power-ups %s, from now." % ("ON" if sim.powerups else "OFF")]
 		"start":

@@ -138,11 +138,14 @@ def main():
     wins = Counter()
     for r in rounds:
         names = r.get("names", [])
-        for n in names:
-            if n and not n.startswith("BOT "):
+        bots = r.get("bots")     # p4.19: the bots' seats (a bot is GRAVY now, not BOT 3); older lines: by the name
+        def is_bot(i):
+            return i in bots if bots is not None else names[i].startswith("BOT ")
+        for i, n in enumerate(names):
+            if n and not is_bot(i):
                 people[n] += 1
         w = r.get("winner", 255)
-        if not r.get("draw") and isinstance(w, int) and w < len(names) and names[w] and not names[w].startswith("BOT "):
+        if not r.get("draw") and isinstance(w, int) and w < len(names) and names[w] and not is_bot(w):
             wins[names[w]] += 1
     if people:
         print("  people (rounds played, rounds won): " + ", ".join(f"{n} {c}/{wins[n]}" for n, c in people.most_common()))

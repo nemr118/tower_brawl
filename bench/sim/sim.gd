@@ -354,6 +354,7 @@ class Fighter:
 	var knife_cd: int = 0       # ticks until it can slash again
 	var knife_hit: bool = false # this slash landed already
 	var carry_t: int = 0        # p4.10: dead, still carried by the arrow that killed it
+	var taunt_at: int = -1000   # p4.19: the tick of its last taunt (TAUNT_EVERY)
 	var phew_at: int = -1000    # the tick of its last E_PHEW (the winner is safe: PHEW_EVERY)
 
 class Arrow:
@@ -913,12 +914,26 @@ func _kill(f: Fighter, killer: int, cause: int, hx: float = -1.0, hy: float = -1
 		_spawn_candy(f.x + HALF_W, f.y + MID_Y, rng.randf_range(-3.0, 3.0), -7.5, false)   # p4.13: a candy out of the body
 	_event(P.E_DEATH, f.x + HALF_W, f.y + MID_Y, f.id, cause)
 	_event(P.E_KILL, f.x + HALF_W, f.y + MID_Y, killer if killer >= 0 and killer < 255 else 255, f.id)   # p4.8: who did it
+	if killer >= 0 and killer < 255 and killer != f.id and (tick * 7 + killer * 13) % 5 < 2:   # p4.19: a bot gloats after 2 knockouts in 5
+		for k in fighters:
+			if k.id == killer and k.bot:
+				taunt(killer)
 
 # The seat was given up in the round (the person left on purpose, or the host took the
 # seat): its fighter goes out now, with a normal death (cause C_LEFT, no killer). Why
 # (the review's bug 3): the fighter of a freed seat played on as a bot and could win
 # the round: the banner then said " WINS THE ROUND" with no name, and the point went
 # to an empty seat (6 times in the two October nights).
+# p4.19 a taunt (the GOBBLE button; a bot now and then after a knockout): only a word in a
+# bubble and a sound on the pages, nothing in the rules. At most one every TAUNT_EVERY ticks.
+const TAUNT_EVERY := 75
+
+func taunt(id: int) -> void:
+	for f in fighters:
+		if f.id == id and f.state != P.F_DEAD and tick - f.taunt_at >= TAUNT_EVERY:
+			f.taunt_at = tick
+			_event(P.E_TAUNT, f.x + HALF_W, f.y, f.id, 0)
+
 func leave(id: int) -> void:
 	var f := fighter(id)
 	if f == null or f.state == P.F_DEAD:

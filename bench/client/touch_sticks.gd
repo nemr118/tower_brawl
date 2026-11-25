@@ -25,7 +25,11 @@
 # the top to the other side. Before, only dipping under JUMP_DEG jumped again.
 extends CanvasLayer
 
+signal taunt_pressed              # p4.19: the small taunt button (GOBBLE! in the Harvest season)
+
 const P = preload("res://sim/proto.gd")
+const Season = preload("res://client/season.gd")
+const TAUNT_R := 62.0             # p4.19: the taunt button, at the left edge above the move stick
 const Art = preload("res://client/lobby_art.gd")     # p4.19 (polish "sticks2"): the lobby's letters on the buttons
 const Polish = preload("res://client/polish.gd")
 const MOVE_RADIUS := 240.0
@@ -136,12 +140,22 @@ func _input(event: InputEvent) -> void:
 		if not visible:
 			return
 		get_viewport().set_input_as_handled()
+		if event.pressed and event.position.distance_to(_taunt_center()) <= (TAUNT_R + HIT_PAD) * k:   # p4.19: a tap on the taunt button
+			_taunt_ms = Time.get_ticks_msec()
+			taunt_pressed.emit()
+			gfx.queue_redraw()
+			return
 		_touch(event)
 	elif event is InputEventScreenDrag:
 		if not visible:
 			return
 		get_viewport().set_input_as_handled()
 		_drag(event)
+
+var _taunt_ms := -9999            # when the taunt button was last tapped (it flashes)
+
+func _taunt_center() -> Vector2:
+	return Vector2(118.0 * k, win.y - 690.0 * k)
 
 func _dodge_center() -> Vector2:
 	if buttons_mode:
@@ -560,6 +574,9 @@ func _paint2(n: Node2D) -> void:
 		for i in 33:
 			pts.append(dfc + Vector2.from_angle(-PI * 0.5 + TAU * dodge_wait * i / 32.0) * dr)
 		n.draw_colored_polygon(pts, Color(0.0, 0.0, 0.0, 0.5))
+	# p4.19 the taunt: a small yellow button at the left edge (the word by the season)
+	var word: String = {"harvest": "GOBBLE", "halloween": "BOO"}.get(Season.now, "HA HA")
+	_button2(n, _taunt_center(), TAUNT_R * k, Color(0.95, 0.75, 0.15), word, Time.get_ticks_msec() - _taunt_ms < 180, 22.0, 1.0)
 	if buttons_mode:   # JUMP, bottom right
 		var jc := _jump_center()
 		var jr := JUMP_R * k
