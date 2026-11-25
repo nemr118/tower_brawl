@@ -49,6 +49,7 @@ const SWITCHES := {
 	"howto2": true,            # HOW TO PLAY: the real fighters run, shoot, dodge and catch on a plank; the cards in the lobby's dress (client/lobby_howto.gd)
 	"settings": true,          # the lobby: one SETTINGS button and a panel where every choice shows (LOOK, CONTROLS, SOUND, SEASON), in place of a button in every corner (client/lobby_settings.gd)
 	"cheers": true,            # a silly line under a round's winner, by the season ("PASS THE GRAVY!"; client/hud.gd CHEERS)
+	"sticks2": true,           # a phone's sticks and buttons with depth: pads with a double rim, knobs with a shine, DODGE and JUMP as coloured buttons; the long hints go once learned (client/touch_sticks.gd)
 }
 
 static var _off := {}

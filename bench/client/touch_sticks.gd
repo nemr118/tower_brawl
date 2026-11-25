@@ -26,6 +26,8 @@
 extends CanvasLayer
 
 const P = preload("res://sim/proto.gd")
+const Art = preload("res://client/lobby_art.gd")     # p4.19 (polish "sticks2"): the lobby's letters on the buttons
+const Polish = preload("res://client/polish.gd")
 const MOVE_RADIUS := 240.0
 const AIM_RADIUS := 210.0       # how far the thumb's knob follows
 const ARM_RADIUS := 110.0       # p4.4: pull past this ring and the shot is armed
@@ -370,6 +372,9 @@ func _thumb(n: Node2D, p: Vector2, col: Color, alpha: float) -> void:
 	n.draw_arc(p, 48.0 * k, 0.0, TAU, 32, Color(0.0, 0.0, 0.0, 0.5 * alpha), 1.5 * k, true)
 
 func _paint(n: Node2D) -> void:
+	if Polish.on("sticks2"):
+		_paint2(n)
+		return
 	var font := ThemeDB.fallback_font
 	# left: move
 	var mlive := move_touch != -1
@@ -450,3 +455,115 @@ func _paint(n: Node2D) -> void:
 		n.draw_colored_polygon(PackedVector2Array([tip + Vector2(0.0, -14.0 * k), tip + Vector2(16.0 * k, 4.0 * k), tip + Vector2(-16.0 * k, 4.0 * k)]),
 			Color(1, 1, 1, 0.85))
 		n.draw_string(font, jc + Vector2(-jr, 12.0 * k), "JUMP", HORIZONTAL_ALIGNMENT_CENTER, jr * 2.0, int(34 * k), Color(1, 1, 1, 0.95))
+
+
+# ---- p4.19 (polish "sticks2"; the user: "It should look app store quality"): the same sticks and
+# buttons, drawn with depth: a pad with a double rim, a knob with a shadow and a shine, DODGE and
+# JUMP as coloured buttons with a lip that goes down when held, the lobby's letters. The long
+# hints go once the player has jumped and shot a few times (HOW TO PLAY teaches them now).
+
+func _base2(n: Node2D, c: Vector2, r: float, alpha: float) -> void:
+	n.draw_circle(c, r, Color(0.05, 0.05, 0.1, 0.3 * alpha))
+	n.draw_arc(c, r, 0.0, TAU, 64, Color(0, 0, 0, 0.35 * alpha), 6.0 * k, true)      # a dark edge under the rim
+	n.draw_arc(c, r, 0.0, TAU, 64, Color(1, 1, 1, 0.6 * alpha), 3.0 * k, true)
+	n.draw_arc(c, r * 0.5, 0.0, TAU, 40, Color(1, 1, 1, 0.1 * alpha), 2.0 * k, true)
+
+func _knob2(n: Node2D, p: Vector2, col: Color, alpha: float) -> void:
+	var r := 50.0 * k
+	n.draw_circle(p + Vector2(0, 6.0 * k), r, Color(0, 0, 0, 0.3 * alpha))            # its shadow
+	n.draw_circle(p, r, Color(col.darkened(0.3), col.a))
+	n.draw_circle(p - Vector2(0, 3.0 * k), r * 0.87, col)
+	n.draw_circle(p - Vector2(r * 0.28, r * 0.38), r * 0.2, Color(1, 1, 1, 0.4 * col.a))   # a shine
+	n.draw_arc(p, r, 0.0, TAU, 32, Color(0, 0, 0, 0.5 * alpha), 2.0 * k, true)
+
+# A round button: a dark lip, a coloured face that sits on it when held, a white rim, a word.
+func _button2(n: Node2D, c: Vector2, r: float, face: Color, word: String, held: bool, fsize: float, word_a: float) -> Vector2:
+	var lip := 8.0 * k
+	var fc := c + Vector2(0, lip if held else 0.0)
+	# see-through at rest (a fighter can stand under a button), solid under a thumb
+	n.draw_circle(c + Vector2(0, lip), r, Color(face.darkened(0.65), 0.9 if held else 0.55))
+	n.draw_circle(fc, r, Color(face.lightened(0.2) if held else face, 0.9 if held else 0.6))
+	n.draw_arc(fc, r * 0.82, PI * 1.15, PI * 1.85, 16, Color(1, 1, 1, 0.3), 4.0 * k, true)   # a shine along the top
+	n.draw_arc(fc, r, 0.0, TAU, 48, Color(1, 1, 1, 0.92), 3.0 * k, true)
+	var fs := maxi(8, int(fsize * k))
+	var at := fc + Vector2(-r, fs * 0.36)
+	n.draw_string_outline(Art.DISPLAY, at, word, HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, maxi(2, int(6 * k)), Color(0.08, 0.04, 0.02, 0.85 * word_a))
+	n.draw_string(Art.DISPLAY, at, word, HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, Color(1, 1, 1, word_a))
+	return fc
+
+func _hint2(n: Node2D, at: Vector2, w: float, words: String, size: float, col: Color, edge_a: float) -> void:
+	var fs := maxi(8, int(size * k))
+	if edge_a > 0.0:
+		n.draw_string_outline(Art.BODY, at, words, HORIZONTAL_ALIGNMENT_CENTER, w, fs, maxi(2, int(5 * k)), Color(0, 0, 0, edge_a))
+	n.draw_string(Art.BODY, at, words, HORIZONTAL_ALIGNMENT_CENTER, w, fs, col)
+
+func _paint2(n: Node2D) -> void:
+	# left: move
+	var mlive := move_touch != -1
+	var mc := move_center if mlive else Vector2(330.0 * k, win.y - 330.0 * k)
+	var mr := MOVE_RADIUS * k
+	var ma := 0.9 if mlive else 0.5
+	_base2(n, mc, mr, ma)
+	if not buttons_mode:   # the rim that dodges, and the arc that jumps (CLASSIC only)
+		n.draw_arc(mc, mr + RIM_PAD * k, 0.0, TAU, 64, Color(1.0, 1.0, 1.0, 0.2 * ma), 1.5 * k, true)
+		var j := deg_to_rad(JUMP_DEG)
+		n.draw_arc(mc, mr - 6.0 * k, -PI + j, -j, 24, Color(GOLD, (0.95 if in_jump else 0.55) * ma), 5.0 * k, true)
+	var d := deg_to_rad(DOWN_DEG)
+	n.draw_arc(mc, mr - 6.0 * k, PI * 0.5 - d, PI * 0.5 + d, 12, Color(BLUE, (0.95 if in_down else 0.55) * ma), 5.0 * k, true)
+	var mcol := Color(0.92, 0.94, 1.0, 0.85 * ma)
+	if in_jump:
+		mcol = Color(GOLD, 0.95)
+	elif in_down:
+		mcol = Color(BLUE, 0.95)
+	_knob2(n, mc + (move_offset if mlive else Vector2.ZERO), mcol, ma)
+	var learned := jumps + button_dodges + rim_dodges >= 6 and shots_armed >= 4   # they know the sticks: the long hints go
+	if not learned and not mlive:
+		_hint2(n, mc + Vector2(-mr * 1.3, -mr - 16.0 * k), mr * 2.6, "MOVE · down + JUMP drops" if buttons_mode else "MOVE · up jumps · the rim dodges",
+			22.0, Color(1, 1, 1, 0.5), 0.35)
+	# right: pull back to shoot. The ring is the arming line; armed, it turns gold (red with an
+	# empty quiver) and says what letting go will do.
+	var alive := aim_touch != -1
+	var rest := Vector2(win.x - 640.0 * k, win.y - 470.0 * k) if buttons_mode else Vector2(win.x - 420.0 * k, win.y - 375.0 * k)
+	var ac := aim_center if alive else rest
+	var ring := ARM_RADIUS * k
+	var aa := 0.9 if alive else 0.5
+	var armed := alive and aim_armed
+	var col := (RED if arrows_left <= 0 else GOLD) if armed else Color(1, 1, 1)
+	n.draw_circle(ac, ring, Color(col, 0.22) if armed else Color(0.05, 0.05, 0.1, 0.3 * aa))
+	n.draw_arc(ac, ring, 0.0, TAU, 64, Color(0, 0, 0, 0.35 * aa), (9.0 if armed else 6.0) * k, true)
+	n.draw_arc(ac, ring, 0.0, TAU, 64, Color(col, 0.95 if armed else 0.6 * aa), (6.0 if armed else 3.0) * k, true)
+	if alive and aim_set:
+		var tip := ac + aim_dir * (ring + 40.0 * k)
+		n.draw_line(ac, tip, Color(0, 0, 0, 0.35), (8.0 if armed else 5.0) * k, true)
+		n.draw_line(ac, tip, Color(col, 0.95 if armed else 0.45), (5.0 if armed else 2.5) * k, true)
+		if armed:
+			var side := aim_dir.orthogonal() * 16.0 * k
+			n.draw_colored_polygon(PackedVector2Array([tip + aim_dir * 26.0 * k, tip + side, tip - side]), Color(col, 0.98))
+	_knob2(n, ac + (aim_offset if alive else Vector2.ZERO), Color(col, 0.92) if alive else Color(0.92, 0.94, 1.0, 0.85 * aa), aa)
+	var say_at := ac + Vector2(-ring * 2.2, -ring - 20.0 * k)
+	if alive:
+		if not armed:
+			_hint2(n, say_at, ring * 4.4, "PULL PAST THE RING", 28.0, Color(1, 1, 1, 0.9), 0.8)
+		elif arrows_left <= 0:
+			_hint2(n, say_at, ring * 4.4, "NO ARROWS", 34.0, Color(RED, 1.0), 0.85)
+		else:
+			_hint2(n, say_at, ring * 4.4, "LET GO: ARROW!", 34.0, Color(GOLD, 1.0), 0.85)
+	elif not learned:
+		_hint2(n, say_at, ring * 4.4, "AIM · pull back past the ring, let go", 22.0, Color(1, 1, 1, 0.5), 0.35)
+	# the dodge button (BUTTONS: up and to the left of JUMP, its cooldown a dark sweep)
+	var dc := _dodge_center()
+	var dr := _dodge_r() * k
+	var cooling := buttons_mode and dodge_wait > 0.0
+	var dfc := _button2(n, dc, dr, Color(1.0, 0.5, 0.18), "DODGE", dodge_touch != -1, 30.0, 0.5 if cooling else 1.0)
+	if cooling:
+		var pts := PackedVector2Array([dfc])
+		for i in 33:
+			pts.append(dfc + Vector2.from_angle(-PI * 0.5 + TAU * dodge_wait * i / 32.0) * dr)
+		n.draw_colored_polygon(pts, Color(0.0, 0.0, 0.0, 0.5))
+	if buttons_mode:   # JUMP, bottom right
+		var jc := _jump_center()
+		var jr := JUMP_R * k
+		var jfc := _button2(n, jc + Vector2(0, 0), jr, Color(0.3, 0.72, 0.32), "JUMP", jump_touch != -1, 42.0, 1.0)
+		var tip2 := jfc + Vector2(0.0, -jr * 0.5)   # an up arrow over the word
+		n.draw_colored_polygon(PackedVector2Array([tip2 + Vector2(0.0, -16.0 * k), tip2 + Vector2(18.0 * k, 5.0 * k), tip2 + Vector2(-18.0 * k, 5.0 * k)]),
+			Color(1, 1, 1, 0.92))
