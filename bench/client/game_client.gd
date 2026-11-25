@@ -841,6 +841,7 @@ func _on_message(m: Dictionary) -> void:
 		Teams.read(m)              # TEAMS: the mode and each seat's team
 		if m.has("season") and str(m["season"]) != Season.now:   # p4.18: the server's season dresses the page
 			Season.now = str(m["season"])
+			Season.sleeps = int(m.get("sleeps", -1))     # p4.22
 			print("🎮 [Season] %s" % P.SEASON_LABEL.get(Season.now, "NONE"))
 			_on_season()
 		elif str(m.get("season_pick", "auto")) != lobby.season_pick:

@@ -610,6 +610,159 @@ def make_peck(rng):
         + 0.6 * svf(hiss(n, rng), 3500.0, 0.8, "bp") * np.exp(-t / 0.002)
 
 
+# ------------------------------------------------------------------ the Christmas season (p4.22)
+def jingles(rng, shakes, rate, seconds):
+    """Sleigh bells: small round bells shaken `rate` times a second. Each shake rings three
+    bells at once, each with its own high pitch and a quick ring; every other shake is softer."""
+    out = np.zeros(N(seconds))
+    pitches = (2637.0, 3136.0, 3520.0, 4186.0, 4699.0, 5274.0)
+    for s in range(shakes):
+        at = max(0.0, s / rate + rng.uniform(-0.006, 0.006))
+        loud = 1.0 if s % 2 == 0 else 0.7
+        for hz in rng.choice(pitches, 3, replace=False):
+            m = N(0.11)
+            t = T(m)
+            ping = (np.sin(TAU * hz * t) + 0.5 * np.sin(TAU * hz * 1.51 * t)) * np.exp(-t / 0.028) * np.minimum(t / 0.0006, 1.0)
+            out = mix(out, ping, at + rng.uniform(0.0, 0.012), loud * rng.uniform(0.5, 1.0))
+        m = N(0.02)
+        out = mix(out, svf(hiss(m, rng), 6000.0, 0.8, "hp") * np.exp(-T(m) / 0.004), at, 0.5 * loud)
+    return out
+
+
+def make_sleigh_bells(rng):
+    """The reindeer comes, the sleigh flies over: sleigh bells, a second of them."""
+    return jingles(rng, 9, 10.0, 1.0)
+
+
+def make_jingle(rng):
+    """Up on the reindeer: one short shake of the bells."""
+    return jingles(rng, 3, 12.0, 0.4)
+
+
+def make_unwrap(rng):
+    """A present is opened: the paper tears, then two bells: 'ta-da'."""
+    n = N(0.2)
+    u = np.linspace(0.0, 1.0, n)
+    crackle = np.repeat(rng.random(n // 70 + 1) > 0.3, 70)[:n]          # the tear comes in little jerks
+    rip = svf(hiss(n, rng), 1800.0 + 4200.0 * u, 1.2, "bp") * (0.35 + 0.65 * crackle) * hold(n, 0.004, 0.03)
+    out = mix(rip * 1.3, bell(1568.0, N(0.3), 0.1), 0.17, 0.7)
+    return mix(out, bell(2093.0, N(0.4), 0.14), 0.27, 0.8)
+
+
+def make_snow_poof(rng):
+    """A snowball bursts: a soft thump and a puff of powder."""
+    n = N(0.28)
+    t = T(n)
+    thump = tone(bend(t, 420.0, 180.0, 0.03)) * np.exp(-t / 0.045)
+    puff = svf(hiss(n, rng), bend(t, 2800.0, 900.0, 0.08), 0.8, "lp") * pluck(t, 0.006, 0.07)
+    return thump * 0.8 + puff * 1.5
+
+
+def make_snowed(rng):
+    """Packed into a snowman: snow crunches three times, then a soft 'boop'."""
+    out = np.zeros(N(0.45))
+    for i in range(3):
+        m = N(0.07)
+        t = T(m)
+        crunch = svf(hiss(m, rng), 1500.0 + 500.0 * i, 2.5, "bp") * (np.sin(TAU * 55.0 * t) ** 2) * hold(m, 0.006, 0.02)
+        out = mix(out, crunch, 0.08 * i, 1.4)
+    m = N(0.16)
+    t = T(m)
+    return mix(out, tone(bend(t, 700.0, 340.0, 0.05)) * np.exp(-t / 0.06) * np.minimum(t / 0.004, 1.0), 0.26, 0.8)
+
+
+def make_glass(rng):
+    """A glass ornament breaks: a bright crash, then splinters tinkling."""
+    n = N(0.6)
+    t = T(n)
+    out = svf(hiss(n, rng), 5200.0, 0.7, "hp") * np.exp(-t / 0.012) * 1.6
+    for _ in range(26):
+        hz = rng.uniform(2200.0, 9000.0)
+        m = N(rng.uniform(0.05, 0.16))
+        tm = T(m)
+        ping = np.sin(TAU * hz * tm) * np.exp(-tm / rng.uniform(0.012, 0.04)) * np.minimum(tm / 0.0005, 1.0)
+        at = min(abs(rng.normal(0.0, 0.14)), 0.42)
+        out = mix(out, ping, at, rng.uniform(0.25, 0.8) * math.exp(-at / 0.2))
+    return out[:n]
+
+
+def make_krampus(rng):
+    """KRAMPUS comes: a low growl, his chain rattling, one cracked bell."""
+    n = N(0.9)
+    t = T(n)
+    f = (95.0 + 30.0 * np.sin(np.pi * t / 0.9)) * (1.0 + 0.03 * drift(n, rng, 40.0))
+    v = voice(f, lambda fk, k: (1.0 / k ** 0.5) * (0.2 + peak_at(fk, 600.0, 400.0) + 0.6 * peak_at(fk, 1100.0, 500.0)), 60)
+    rough = 0.6 + 0.4 * np.sign(np.sin(TAU * np.cumsum(f * 0.5) / SR))     # every other wave louder: a growl
+    out = tame(squash(v * rough, 2.8), 3500.0) * hold(n, 0.08, 0.25)
+    for i in range(14):                                                    # the chain: dull links knocking
+        m = N(0.03)
+        tm = T(m)
+        hz = rng.uniform(1700.0, 3200.0)
+        link = (np.sin(TAU * hz * tm) + 0.6 * np.sin(TAU * hz * 1.83 * tm)) * np.exp(-tm / 0.006)
+        out = mix(out, link, 0.1 + i * 0.05 + rng.uniform(-0.012, 0.012), rng.uniform(0.15, 0.35))
+    return mix(out, bell(1245.0, N(0.4), 0.13), 0.42, 0.35)
+
+
+def make_sticks(rng):
+    """KRAMPUS swings his bundle of sticks: a whippy swish, and a crack."""
+    n = N(0.16)
+    u = np.linspace(0.0, 1.0, n)
+    swish = svf(hiss(n, rng), 900.0 + 5200.0 * u ** 2, 2.2, "bp") * np.sin(np.pi * np.minimum(u / 0.8, 1.0)) ** 2
+    m = N(0.03)
+    crack = svf(hiss(m, rng), 2600.0, 0.8, "hp") * np.exp(-T(m) / 0.004)
+    return mix(swish * 1.3, crack, 0.115, 1.6)
+
+
+def make_thud(rng):
+    """The giant present lands: a heavy thump, a toy's squeak, a jingle."""
+    n = N(0.5)
+    t = T(n)
+    out = tone(bend(t, 150.0, 55.0, 0.04)) * np.exp(-t / 0.11) * 1.4 + tone(bend(t, 420.0, 210.0, 0.03)) * np.exp(-t / 0.05) * 0.7
+    out += svf(hiss(n, rng), 900.0, 0.8, "lp") * np.exp(-t / 0.02) * 1.2
+    out = mix(out, squeak(0.8, 0.14), 0.1, 0.45)
+    return mix(out, jingles(rng, 2, 11.0, 0.3), 0.16, 0.5)
+
+
+def make_hohoho(rng):
+    """The season's taunt: 'ho ho ho', three deep notes stepping down (the page plays it at 8 pitches, one a seat)."""
+    out = np.zeros(1)
+    for at, hz in ((0.0, 196.0), (0.2, 174.6), (0.4, 146.8)):
+        n = N(0.16)
+        t = T(n)
+        f = hz * (1.04 - 0.1 * (t / 0.16)) * (1.0 + 0.01 * drift(n, rng, 30.0))
+        v = voice(f, lambda fk, k: (1.0 / k ** 0.7) * (0.15 + peak_at(fk, 480.0, 260.0) + 0.7 * peak_at(fk, 850.0, 300.0)), 40)
+        breath = svf(hiss(n, rng), 1400.0, 0.8, "bp") * np.exp(-t / 0.02) * 0.5      # the 'h'
+        out = mix(out, (tame(squash(v, 1.8), 4200.0) + breath) * hold(n, 0.02, 0.07), at)
+    return out
+
+
+def make_train_whistle(rng):
+    """The toy train's whistle: 'toot toooot', two notes at once."""
+    out = np.zeros(1)
+    for at, dur in ((0.0, 0.2), (0.28, 0.5)):
+        n = N(dur)
+        up = 1.0 - 0.04 * np.exp(-T(n) / 0.03)           # each toot starts a little flat
+        w = whistle(880.0 * up, rng) + 0.8 * whistle(1108.7 * up, rng)
+        out = mix(out, w * hold(n, 0.02, 0.08), at)
+    return out
+
+
+def make_chug(rng):
+    """The toy train runs: 'chuff chuff chuff', getting quicker, the wheels clicking."""
+    out = np.zeros(N(1.6))
+    at, gap, i = 0.0, 0.2, 0
+    while at < 1.45:
+        m = N(0.09)
+        chuff = svf(hiss(m, rng), 1100.0 if i % 2 == 0 else 900.0, 1.4, "bp") * pluck(T(m), 0.004, 0.025)
+        out = mix(out, chuff, at, 1.0 if i % 4 == 0 else 0.75)
+        k = N(0.012)
+        out = mix(out, np.sin(TAU * 2400.0 * T(k)) * np.exp(-T(k) / 0.003), at + gap * 0.5, 0.25)
+        at += gap
+        gap = max(0.1, gap * 0.93)
+        i += 1
+    return out[:N(1.6)]
+
+
 # ------------------------------------------------------------------ Halloween and the boiler room
 def make_meow(rng):
     """The black cat: 'me-ow'. The pitch goes up then down, the mouth opens then closes."""
@@ -714,6 +867,18 @@ SOUNDS = [
     ("steam", make_steam, -23.0, "a pipe vents steam"),
     ("click", make_click, -28.0, "a lobby button (a soft click)"),
     ("join", make_join, -23.0, "a player joins (a blip)"),
+    ("sleigh_bells", make_sleigh_bells, -21.0, "the reindeer comes, the sleigh flies over"),
+    ("jingle", make_jingle, -22.0, "up on the reindeer (one shake of the bells)"),
+    ("unwrap", make_unwrap, -20.0, "a present opens (a tear and a ta-da)"),
+    ("snow_poof", make_snow_poof, -20.0, "a snowball bursts"),
+    ("snowed", make_snowed, -21.0, "packed into a snowman"),
+    ("glass", make_glass, -21.0, "a glass ornament breaks"),
+    ("krampus", make_krampus, -19.0, "KRAMPUS comes"),
+    ("sticks", make_sticks, -22.0, "KRAMPUS swings his sticks"),
+    ("thud", make_thud, -18.0, "the giant present lands"),
+    ("hohoho", make_hohoho, -20.0, "the Christmas taunt (8 pitches)"),
+    ("train_whistle", make_train_whistle, -20.0, "the toy train's whistle"),
+    ("chug", make_chug, -23.0, "the toy train runs"),
 ]
 
 

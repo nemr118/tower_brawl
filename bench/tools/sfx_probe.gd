@@ -75,7 +75,7 @@ func _init() -> void:
 		if str(c).begins_with("E_"):
 			kinds[int(consts[c])] = str(c)
 	kinds[Sfx.E_PHEW] = "E_PHEW"
-	for season in ["", "halloween", "harvest"]:
+	for season in ["", "halloween", "harvest", "christmas"]:
 		Season.now = season
 		var lines := {}
 		for type in range(1, 61):

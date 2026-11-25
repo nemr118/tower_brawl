@@ -130,6 +130,7 @@ cp bench/web/pwa/icon-180.png "$OUT/index.apple-touch-icon.png"
 cp bench/assets/fonts/lobby_display.ttf bench/assets/fonts/lobby_body.ttf "$OUT/"
 cp bench/web/page/splash_castle.png "$OUT/"   # 2026-10-26: the loading picture outside the Halloween season (bench/web/shell.html)
 cp bench/web/page/splash_harvest.png "$OUT/"  # p4.18: the Harvest season's
+cp bench/web/page/splash_christmas.png "$OUT/"  # p4.22: the Christmas season's
 
 ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
 ip=${ip:-127.0.0.1}

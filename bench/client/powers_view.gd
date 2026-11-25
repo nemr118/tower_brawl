@@ -18,6 +18,7 @@ const GhostfaceScript = preload("res://client/ghostface.gd")
 const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")   # p4.18: the season's names and pictures
 const HV = preload("res://client/harvest_view.gd") # p4.18: the Harvest season's pictures
+const XV = preload("res://client/christmas_view.gd")   # p4.22: the Christmas season's pictures
 const ICONS2 := preload("res://assets/pu_icons.png")   # p4.13 polish "icons2": ComfyUI's power-up pictures (64 px a cell, kind - 1)
 const TRICKS2 := preload("res://assets/trick_icons.png")   # 2026-10-26 polish "trick_art": the candy tricks' badges (64 px a cell)
 const TRICK_ICON := 100           # the tricks' icon kinds (the page's own, never sent): + 0 PUMPKIN HEAD, + 1 BACKWARDS, + 2 TINY; GHOSTFACE is P.PU_MASK
@@ -27,7 +28,7 @@ const COLORS := {P.PU_FIRE: Color(1.0, 0.55, 0.15), P.PU_BOMB: Color(1.0, 0.32, 
 	P.PU_RAIN: Color(0.45, 0.65, 1.0), P.PU_INVIS: Color(0.85, 0.85, 1.0), P.PU_FREEZE: Color(0.6, 0.9, 1.0),
 	P.PU_SPIKES: Color(1.0, 0.72, 0.3), P.PU_SPEED: Color(1.0, 0.95, 0.35),
 	P.PU_TRICK: Color(0.85, 0.5, 1.0), P.PU_PUMPKIN: Color(1.0, 0.55, 0.1), P.PU_BATS: Color(0.62, 0.45, 0.85),
-	P.PU_MASK: Color(0.96, 0.96, 1.0), P.PU_PIE: Color(1.0, 0.9, 0.72)}
+	P.PU_MASK: Color(0.96, 0.96, 1.0), P.PU_PIE: Color(1.0, 0.9, 0.72), P.PU_SNOWBALL: Color(0.78, 0.92, 1.0)}
 const GOLD := Color(1.0, 0.82, 0.25)
 const BOLT_COL := Color(0.62, 0.78, 1.0)
 const ZAP_S := 1.8                 # the electricity runs through a body this long
@@ -66,7 +67,15 @@ const PHEW_S := 1.7
 var leader := -1                   # p4.20 (polish "juice"): the seat alone in the lead of the match (-1: nobody): a small crown over it
 var taunts := {}                   # p4.19 the GOBBLE button: seat -> when (t) it last taunted
 const TAUNT_S := 1.3
-const TAUNT_WORDS := {"harvest": ["GOBBLE!", "GOBBLE GOBBLE!", "YUM!"], "halloween": ["BOO!", "MUAHAHA!", "EEK!"], "": ["HA HA!", "NYAH NYAH!", "TOO SLOW!"]}
+const TAUNT_WORDS := {"christmas": ["HO HO HO!", "BAH HUMBUG!", "SNOW WAY!", "NAUGHTY LIST!"], "harvest": ["GOBBLE!", "GOBBLE GOBBLE!", "YUM!"], "halloween": ["BOO!", "MUAHAHA!", "EEK!"], "": ["HA HA!", "NYAH NYAH!", "TOO SLOW!"]}
+# p4.22 the Christmas season (client/christmas_view.gd draws them)
+var ride_offs: Array = []          # [from, dir, t0]: a reindeer flying off after a ride
+var knifed := {}                   # seat -> where its body was when the costume's swing knocked it out (this tick: its E_KILL follows)
+var sacked := {}                   # KRAMPUS's seat -> the colours of those in his sack this round
+var sack_fly: Array = []           # {from, by, col, t0}: one on its way into the sack
+var gifts: Array = []              # {spot, floor, t0}: the giant present that just landed
+var sleigh_outs: Array = []        # {x, t0}: the sleigh flying on after its drop
+var squashed := {}                 # seat -> when (t) the present landed on it
 var test_phew := false             # a test knob (the page's ?phew): a PHEW on your own fighter every 3 s (pictures)
 var _phew_next := 2.0
 var test_cream := false            # a test knob (the page's ?cream): the cream on your own screen, again and again (pictures)
@@ -121,6 +130,11 @@ func show_view(s: Dictionary, delta: float, my_seat: int) -> void:
 		p[3] -= delta
 	pops = pops.filter(func(p): return p[3] > 0.0)
 	phews = phews.filter(func(ph): return t - float(ph["t0"]) < PHEW_S)
+	ride_offs = ride_offs.filter(func(r): return t - float(r[2]) < 0.8)
+	sack_fly = sack_fly.filter(func(q): return t - float(q["t0"]) < 0.7)
+	gifts = gifts.filter(func(q): return t - float(q["t0"]) < 0.54)
+	sleigh_outs = sleigh_outs.filter(func(q): return t - float(q["t0"]) < 4.0)
+	knifed.clear()
 	if test_phew and t > _phew_next and fighters.has(me):
 		_phew_next = t + 3.0
 		on_event([P.E_PHEW, float(fighters[me]["x"]) + 40.0, float(fighters[me]["y"]) + 20.0, me, int(t / 3.0) % 3])
@@ -203,7 +217,18 @@ func _bolt_points(to: Vector2, big: bool) -> PackedVector2Array:
 func on_event(e: Array) -> void:
 	var pos := Vector2(e[1], e[2])
 	var type: int = e[0]
-	if type == P.E_STRIKE:
+	if type == P.E_STRIKE and Season.christmas():
+		# p4.22: no lightning in the season: the sleigh's giant present lands here (the same rule)
+		gifts.append({"spot": pos, "floor": pos.y + SimScript.ORB_UP, "t0": t})
+		sleigh_outs.append({"x": XV.sleigh_x(1.0, pos.x), "v": (pos.x + 330.0) / (XV.DROP_AT * SimScript.PU_WARN / 60.0), "t0": t})
+		rings.append([pos + Vector2(0, SimScript.ORB_UP), SimScript.STRIKE_R * 2.0, Color(1, 1, 1, 0.9), 0.4, 0.4])
+		world.fx.flash(pos, 5.0, Color(1.0, 0.95, 0.8), 0.25, true)
+		world.fx.shake = maxf(world.fx.shake, 13.0 if e[4] == 1 else 9.0)
+		for i in 18:
+			var ang := TAU * i / 18.0 + randf() * 0.3
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(200.0, 460.0) + Vector2(0, -220.0), XV.RIBBONS[i % XV.RIBBONS.size()],
+				randf_range(0.8, 1.3), randf() * TAU])
+	elif type == P.E_STRIKE:
 		var big: bool = e[4] == 1
 		bolts.append([pos, bolt_s, big, _bolt_points(pos, big)])
 		flash = 1.0
@@ -213,8 +238,40 @@ func on_event(e: Array) -> void:
 		world.fx.light_burst(pos, Color(0.7, 0.8, 1.0), 3.5, 5.0, 0.4)
 		world.fx.shake = maxf(world.fx.shake, 14.0 if big else 10.0)
 		world.fx.aberration = 1.0
+	elif type == P.E_DEATH and e[4] == 7 and Season.christmas():
+		squashed[int(e[3])] = t          # p4.22: flat under the present, stars over it
+		_pop(pos + Vector2(0, -40), "SQUASH!", Color(1.0, 0.9, 0.5), 1.2, true)
 	elif type == P.E_DEATH and e[4] == 7:
 		zaps[int(e[3])] = ZAP_S
+	elif type == P.E_DEATH and e[4] == 11:
+		knifed[int(e[3])] = pos           # (its E_KILL, in the same tick, says who swung)
+	elif type == P.E_KILL and Season.christmas() and knifed.has(int(e[4])) and int(e[3]) != 255:
+		# p4.22: knocked out by KRAMPUS: into his sack
+		var who := int(e[4])
+		var by := int(e[3])
+		var col: Color = team[who % team.size()] if team.size() > 0 else Color.WHITE
+		sack_fly.append({"from": knifed[who], "by": by, "col": col, "t0": t, "seat": who})
+		if not sacked.has(by):
+			sacked[by] = []
+		sacked[by].append(col)
+	elif type == P.E_SPAWN:               # a new round's fighter: nothing of the last round sticks to its seat
+		sacked.erase(int(e[3]))
+		squashed.erase(int(e[3]))
+	elif type == P.E_SNOW:                # p4.22 a snowball bursts: its reach as a white ring, powder flying
+		var sr: float = SimScript.SNOW_R * (SimScript.BIG_FX if e[4] == 1 else 1.0)
+		rings.append([pos, sr, Color(0.92, 0.97, 1.0, 0.9), 0.45, 0.45])
+		rings.append([pos, sr * 0.5, Color(1, 1, 1, 0.9), 0.3, 0.3])
+		world.fx.flash(pos, 3.5, Color(0.85, 0.93, 1.0), 0.18, true)
+		for i in 16:
+			var ang := TAU * i / 16.0 + randf() * 0.4
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(160.0, 440.0) + Vector2(0, -140.0), Color(0.95, 0.98, 1.0),
+				randf_range(0.5, 0.9), randf() * TAU])
+	elif type == P.E_SNOWED:              # packed into a snowman (_draw_kit draws it while it is frozen)
+		_pop(pos + Vector2(0, -56), "BRRR!", Color(0.8, 0.93, 1.0), 1.1, true)
+		rings.append([pos, 64.0, Color(1, 1, 1, 0.9), 0.3, 0.3])
+	elif type == P.E_RIDE_END:            # the reindeer flies off
+		var rf: Dictionary = fighters.get(int(e[3]), {})
+		ride_offs.append([pos, 1.0 if rf.is_empty() or (int(rf["flags"]) & 1) != 0 else -1.0, t])
 	elif type == P.E_PU_GET:
 		var k: int = e[4]
 		var col: Color = COLORS.get(k, Color.WHITE)
@@ -264,16 +321,28 @@ func on_event(e: Array) -> void:
 		rings.append([pos, 120.0, COLORS[P.PU_TRICK], 0.45, 0.45])
 		rings.append([pos, 70.0, Color(1.0, 0.6, 0.15), 0.3, 0.3])
 		world.fx.flash(pos, 5.0, Color(0.9, 0.6, 1.0), 0.3, true)
+		var wrap: Array = XV.RIBBONS if Season.christmas() else CANDY_COLS      # p4.22: a present's ribbons
 		for i in 16:
 			var ang := TAU * i / 16.0 + randf() * 0.3
 			confetti.append([pos, Vector2.from_angle(ang) * randf_range(180.0, 420.0) + Vector2(0, -160.0),
-				CANDY_COLS[i % CANDY_COLS.size()], randf_range(0.7, 1.1), randf() * TAU])
+				wrap[i % wrap.size()], randf_range(0.7, 1.1), randf() * TAU])
 	elif type == P.E_CAT_COME:   # the black cat shows up (its own PET ME tag says the rest)
-		if e[3] == 1:            # p4.18: the turkey
+		if e[3] == 2:            # p4.22: the reindeer
+			rings.append([pos + Vector2(0, -30), 90.0, Color(1.0, 0.88, 0.45), 0.5, 0.5])
+			_pop(pos + Vector2(0, -110), "JINGLE JINGLE", Color(1.0, 0.9, 0.5), 1.4, true)
+		elif e[3] == 1:            # p4.18: the turkey
 			rings.append([pos + Vector2(0, -20), 80.0, Color(1.0, 0.7, 0.25), 0.5, 0.5])
 			_pop(pos + Vector2(0, -60), "GOBBLE GOBBLE", Color(1.0, 0.85, 0.4), 1.4, true)
 		else:
 			rings.append([pos + Vector2(0, -14), 60.0, Color(0.75, 0.6, 1.0), 0.4, 0.4])
+	elif type == P.E_PET and e[4] == 2:   # p4.22: someone gets on the reindeer: sparkles
+		_pop(pos + Vector2(0, -70), "GIDDY UP!", Color(1.0, 0.9, 0.5), 1.2, true)
+		rings.append([pos, 110.0, Color(1.0, 0.88, 0.45), 0.45, 0.45])
+		world.fx.flash(pos, 4.0, Color(1.0, 0.9, 0.5), 0.25, true)
+		for i in 14:
+			var ang := TAU * i / 14.0 + randf() * 0.3
+			confetti.append([pos, Vector2.from_angle(ang) * randf_range(140.0, 340.0) + Vector2(0, -200.0), Color(1.0, 0.92, 0.5),
+				randf_range(0.6, 1.0), randf() * TAU])
 	elif type == P.E_PET and e[4] == 1:   # p4.18: someone caught the turkey: feathers fly (its power-up's own pop follows)
 		_pop(pos + Vector2(0, -44), "GOT IT!", Color(1.0, 0.85, 0.4), 1.2, true)
 		rings.append([pos, 110.0, Color(1.0, 0.7, 0.25), 0.45, 0.45])
@@ -335,7 +404,10 @@ func on_event(e: Array) -> void:
 
 # ------------------------------------------------------------------ the main layer (never darkened)
 func _draw() -> void:
-	if raining():
+	var xmas := Season.christmas()
+	if raining() and xmas:
+		XV.blizzard(self, drops, t)      # p4.22: RAIN is a BLIZZARD
+	elif raining():
 		draw_rect(Rect2(0, 0, 1920, 1080), Color(0.12, 0.16, 0.3, 0.18))
 		for d in drops:
 			draw_line(d, d + Vector2(-4.0, 22.0), Color(0.7, 0.8, 1.0, 0.45), 2.0)
@@ -344,6 +416,8 @@ func _draw() -> void:
 			_draw_warning(o)
 		else:
 			_draw_orb(o)
+	for q in gifts:                      # p4.22: the giant present that just landed bursts open over its orb
+		XV.landed_gift(self, q["spot"], float(q["floor"]), t - float(q["t0"]))
 	for cd in view.get("candies", []):
 		_draw_candy(cd)
 	for seat in fighters:   # p4.12 GHOSTFACE, in place of its archer (dead ones too: it lies there)
@@ -356,6 +430,8 @@ func _draw() -> void:
 		var gtc: Color = team[seat % team.size()] if team.size() > 0 else Color.WHITE
 		if Season.harvest():      # p4.18: THE BIG TURKEY
 			HV.big_turkey(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0))
+		elif xmas:                # p4.22: KRAMPUS
+			XV.krampus(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0), sacked.get(seat, []))
 		else:
 			GhostfaceScript.draw(self, gf, powers[seat], 0.35 if hid else 1.0, t, gtc, knife_at.get(seat, -9.0), down_at.get(seat, -9.0), up_at.get(seat, -9.0))
 		if (int(powers[seat]["mask"]) & 2) != 0 and gf["state"] != P.F_DEAD:   # down: a ring counts its 2 seconds
@@ -377,7 +453,32 @@ func _draw() -> void:
 			_draw_circling_bats(f, seat)   # BAT SWARM: its bats show where it hides
 		if seat != me and ((bits & (P.PW_INVIS | P.PW_BATS)) != 0 or blind):
 			continue
+		if (int(powers[seat].get("mask", 0)) & P.PX_RIDE) != 0:   # p4.22: on the reindeer
+			XV.mount(self, f, 0.35 if (bits & (P.PW_INVIS | P.PW_BATS)) != 0 else 1.0, t)
 		_draw_kit(f, powers[seat], 0.35 if (bits & (P.PW_INVIS | P.PW_BATS)) != 0 else 1.0)
+	for r in ride_offs:                  # p4.22: a reindeer flying off after its ride
+		XV.fly_off(self, r[0], float(r[1]), t - float(r[2]))
+	for q in sack_fly:                   # one on its way into KRAMPUS's sack
+		var kf: Dictionary = fighters.get(int(q["by"]), {})
+		if not kf.is_empty():
+			var kd := 1.0 if (int(kf["flags"]) & 1) != 0 else -1.0
+			XV.into_sack(self, q["from"], Vector2(float(kf["x"]) + 18.0 - kd * 34.0, float(kf["y"]) + 63.0 - XV.KRAMPUS_H * 0.6), q["col"], t - float(q["t0"]))
+	for seat in squashed:                # flat under the present: stars over the body
+		var sf: Dictionary = fighters.get(seat, {})
+		var sage: float = t - float(squashed[seat])
+		if not sf.is_empty() and sf["state"] == P.F_DEAD and sage < 2.2:
+			XV.stars(self, Vector2(float(sf["x"]) + 18.0, float(sf["y"]) + 50.0), t, clampf((2.2 - sage) * 2.0, 0.0, 1.0))
+	if xmas and world != null and world.level != null and (world.level.theme == "" or world.level.theme == "rooftops"):
+		for seat in fighters:            # out in the cold: a breath now and then from whoever stands still
+			var bf: Dictionary = fighters[seat]
+			var bp: Dictionary = powers.get(seat, {})
+			if bf["state"] == P.F_DEAD or (int(bf["flags"]) & 2) == 0 or absf(float(bf.get("vx", 0.0))) > 0.5:
+				continue
+			if (int(bp.get("mask", 0)) & 1) != 0 or (int(bp.get("bits", 0)) & (P.PW_INVIS | P.PW_BATS | P.PW_PUMPKIN | P.PW_FROZEN)) != 0 or (seat != me and blind):
+				continue
+			var ph := fposmod(t * 0.42 + seat * 0.37, 1.0)
+			if ph < 0.4:
+				XV.breath(self, Vector2(float(bf["x"]) + 18.0, float(bf["y"]) + 12.0), 1.0 if (int(bf["flags"]) & 1) != 0 else -1.0, ph / 0.4)
 	for c in view.get("cats", []):
 		_draw_cat(c)
 	for g in view.get("ghosts", []):
@@ -429,6 +530,14 @@ func _draw() -> void:
 				Rect2(5 * 128, 0, 128, 128))
 	for ph in phews:
 		_draw_phew(ph)
+	if xmas:                             # p4.22: the sleigh, over everything in the arena: flying in over a drop, flying on after it
+		for o in view.get("orbs", []):
+			if int(o["state"]) == P.ORB_WARN:
+				XV.sleigh(self, XV.sleigh_x(float(o["prog"]), float(o["x"])), t, 1.0)
+		for q in sleigh_outs:
+			var sx: float = float(q["x"]) + float(q["v"]) * (t - float(q["t0"]))
+			if sx < 2300.0:
+				XV.sleigh(self, sx, t, 1.0)
 	for seat in taunts:
 		var tage: float = t - float(taunts[seat])
 		var tf: Dictionary = fighters.get(seat, {})
@@ -459,6 +568,9 @@ func _draw() -> void:
 func _draw_candy(cd: Dictionary) -> void:
 	if Season.harvest():      # p4.18: a covered dish
 		HV.dish(self, cd, t)
+		return
+	if Season.christmas():    # p4.22: a wrapped present
+		XV.present(self, cd, t)
 		return
 	var rest: bool = (int(cd["flags"]) & 1) != 0
 	var a := 1.0
@@ -518,13 +630,16 @@ func _draw_candy_pop(cp: Dictionary) -> void:
 	var at: Vector2 = cp["pos"] + Vector2(0, -60.0 * (1.0 - k))
 	var r := 24.0 * (1.0 + 0.4 * clampf((k - 0.85) / 0.15, 0.0, 1.0))
 	draw_circle(at, r + 6.0, Color(0.03, 0.03, 0.07, 0.8 * a))
-	for i in 8:   # the striped ring
+	var xmas := Season.christmas()
+	for i in 8:   # the striped ring (p4.22: red and green, a present's ribbon)
 		var a0 := t * 2.0 + i * TAU / 8.0
-		draw_arc(at, r + 3.0, a0, a0 + TAU / 8.0, 6, Color(CANDY_COLS[i % 2], a), 5.0)
+		draw_arc(at, r + 3.0, a0, a0 + TAU / 8.0, 6, Color(XV.RIBBONS[i % 2] if xmas else CANDY_COLS[i % 2], a), 5.0)
 	var icon: int = cp["icon"]
 	draw_circle(at, r, Color(disc(COLORS.get(P.PU_TRICK if icon >= TRICK_ICON else icon, Color.WHITE)), a))
 	draw_icon(self, at, icon, r * 0.62, Color(0.08, 0.06, 0.12, a), t)
 	var top := "TRICK!" if cp["trick"] else (("GOBBLE!" if Season.harvest() else "BOO!") if icon == P.PU_MASK else "TREAT!")
+	if xmas:
+		top = "COAL!" if cp["trick"] else ("GRRR!" if icon == P.PU_MASK else "A GIFT!")
 	_text_c(at + Vector2(0, -r - 12.0), top, 16, Color(1.0, 0.75, 0.3, a))
 	if str(cp["word"]) != "":
 		_text_c(at + Vector2(0, r + 24.0), str(cp["word"]), 20, Color(1.0, 0.95, 0.85, a))
@@ -542,6 +657,8 @@ func _draw_warning(o: Dictionary) -> void:
 	var col: Color = COLORS.get(int(o["kind"]), Color.WHITE)
 	var big: bool = o["big"]
 	var R: float = SimScript.STRIKE_R
+	if Season.christmas() and prog > XV.DROP_AT:      # p4.22: the sleigh let the giant present go: it falls to the spot
+		XV.drop_gift(self, c, feet.y, (prog - XV.DROP_AT) / (1.0 - XV.DROP_AT), t)
 	# the danger: a pale disc where the bolt kills, and a ring closing in on it
 	draw_circle(c, R, Color(0.6, 0.8, 1.0, 0.06 + 0.12 * prog))
 	draw_arc(c, R, 0.0, TAU, 40, Color(0.75, 0.88, 1.0, 0.5 + 0.4 * prog), 3.0)
@@ -650,6 +767,8 @@ static func arrow_power(kind: int) -> int:
 		return P.PU_PUMPKIN
 	if kind == P.A_PIE:
 		return P.PU_PIE
+	if kind == P.A_SNOWBALL:
+		return P.PU_SNOWBALL
 	return 0
 
 static func disc(col: Color) -> Color:
@@ -659,6 +778,10 @@ static func draw_icon(ci: CanvasItem, c: Vector2, kind: int, s: float, col: Colo
 	var hc := HV.icon_cell(kind, TRICK_ICON, Season.harvest())   # p4.18: PIE's badge, and the Harvest season's own
 	if hc >= 0:
 		HV.icon(ci, c, hc, s, col.a, tt)
+		return
+	var xc := XV.icon_cell(kind, TRICK_ICON, Season.christmas())   # p4.22: SNOWBALLS' badge, and the Christmas season's own
+	if xc >= 0:
+		XV.icon(ci, c, xc, s, col.a, tt)
 		return
 	if kind >= TRICK_ICON or kind == P.PU_MASK:   # 2026-10-26: a candy trick's badge (and GHOSTFACE's), bobbing like the others
 		if Polish.on("trick_art"):
@@ -788,7 +911,9 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 			draw_colored_polygon(PackedVector2Array([base, tip, base + Vector2(side * 30.0, 4.0 + flap * 14.0), base + Vector2(side * 12.0, 14.0)]),
 				Color(1, 1, 1, 0.85 * a))
 			draw_polyline(PackedVector2Array([base, tip, base + Vector2(side * 30.0, 4.0 + flap * 14.0)]), Color(0.6, 0.7, 0.9, a), 2.0)
-	if (bits & P.PW_FROZEN) != 0:
+	if (bits & P.PW_FROZEN) != 0 and Season.christmas():   # p4.22: packed into a snowman (world.gd hides the body)
+		XV.snowed(self, f, tc, a, t)
+	elif (bits & P.PW_FROZEN) != 0:
 		var r := Rect2(f["x"] - 9.0, f["y"] - 9.0, 54.0, 81.0)
 		draw_rect(r, Color(0.7, 0.9, 1.0, 0.42 * a))
 		draw_rect(r, Color(0.92, 0.98, 1.0, 0.9 * a), false, 3.0)
@@ -829,6 +954,8 @@ func _draw_kit(f: Dictionary, pw: Dictionary, a: float) -> void:
 			draw_circle(p, 4.0, Color(0.55, 0.75, 1.0, (1.0 - k) * a))
 	if (bits & P.PW_PUMPKIN) != 0 and Season.harvest():   # p4.18 TURKEY TIME: a hopping turkey instead of the body
 		HV.trick_turkey(self, f, tc, a, t)
+	elif (bits & P.PW_PUMPKIN) != 0 and Season.christmas():   # p4.22 SNOWMAN: a hopping snowman instead of the body
+		XV.trick_snowman(self, f, tc, a, t)
 	elif (bits & P.PW_PUMPKIN) != 0:      # p4.12 the pumpkin trick: a hopping jack-o'-lantern instead of the body
 		var pc := c + Vector2(0, 6)
 		draw_circle(pc, 30.0, Color(0.6, 0.28, 0.05, a))
@@ -865,6 +992,9 @@ func _draw_pet(pd: Dictionary) -> void:
 	if int(pd.get("kind", 0)) == 1:     # p4.18: the turkey (it is off the floor when its feet are not on a cell's line)
 		var off := fposmod(float(pd["y"]), 30.0)
 		HV.pet(self, pd, t, off > 1.0 and off < 29.0, font)
+		return
+	if int(pd.get("kind", 0)) == 2:     # p4.22: the reindeer
+		XV.pet(self, pd, t, font)
 		return
 	var feet := Vector2(pd["x"], pd["y"])
 	var dir := float(pd["dir"])
@@ -964,6 +1094,8 @@ func _draw_circling_bats(f: Dictionary, seat: int) -> void:
 		var p := c + Vector2(cos(ang) * (50.0 + 8.0 * sin(t * 4.0 + i)), sin(ang) * 40.0)
 		if Season.harvest():      # p4.18: CROWS
 			HV.crow(self, p, 1.0, t * 18.0 + i, 0.97)
+		elif Season.christmas():  # p4.22: SNOW FLURRY
+			XV.flake(self, p, 1.0 + 0.25 * (i % 3), t * 18.0 + i, 0.97)
 		else:
 			_bat(p, 1.05, t * 18.0 + i, Color(0.04, 0.02, 0.07, 0.95))
 
@@ -1053,6 +1185,9 @@ func _paint_glow(g: Node2D) -> void:
 		var col: Color = COLORS.get(int(o["kind"]), Color.WHITE)
 		if int(o["state"]) == P.ORB_WARN:
 			var prog: float = o["prog"]
+			if Season.christmas():       # p4.22: no lightning: a warm light on the spot where the present will land
+				g.draw_circle(c, 30.0 + 22.0 * prog, Color(1.0, 0.85, 0.5, 0.14 + 0.22 * prog))
+				continue
 			# a column of light from the sky, brighter as the bolt comes
 			for i in 3:
 				var w := 46.0 - i * 14.0
@@ -1100,7 +1235,9 @@ func _draw_phew(ph: Dictionary) -> void:
 	# the prop: up and away, then down, spinning
 	var pp := at + Vector2(dir * 260.0 * age, -420.0 * age + 620.0 * age * age)
 	draw_set_transform(pp, age * 9.0 * dir, Vector2.ONE * 1.5)
-	if Season.harvest():
+	if Season.christmas():       # p4.22: a snowball bounces off
+		XV.snowball(self, Vector2.ZERO, 12.0, fade)
+	elif Season.harvest():
 		draw_line(Vector2(6, 0), Vector2(26, 0), Color(0.16, 0.08, 0.03, fade), 9.0)          # the bone, with its edge
 		draw_line(Vector2(6, 0), Vector2(26, 0), Color(1.0, 0.97, 0.9, fade), 5.0)
 		for side in [-1.0, 1.0]:

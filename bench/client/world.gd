@@ -24,6 +24,8 @@ const BG_FAR_CASTLE := preload("res://assets/bg_castle_far.png")   # polish "cas
 const BG_MID_CASTLE := preload("res://assets/bg_castle_mid.png")
 const BG_FAR_AUTUMN := preload("res://assets/bg_autumn_far.png")   # p4.18: the castle arenas' far backdrop in the Harvest season (ComfyUI)
 const LeavesView = preload("res://client/leaves_view.gd")
+const BG_FAR_WINTER := preload("res://assets/bg_winter_far.png")   # p4.22: the castle arenas' far backdrop in the Christmas season (ComfyUI)
+const SnowView = preload("res://client/snow_view.gd")    # p4.22: snow caps, icicles, wreaths and lights on the castle arenas
 const TeamsView = preload("res://client/teams_view.gd")   # TEAMS: a team flag over each fighter (all of its look is in that file)
 const ARROWS2 := preload("res://assets/fx_arrows2.png")           # polish "arrows2"
 const SH_SHAFT2 := preload("res://shaders/shaft2.gdshader")       # polish "shaft_motes": the shafts with dust in them
@@ -142,7 +144,8 @@ var aim_pointer := Line2D.new()
 var aim_head := Polygon2D.new()  # p4.4: the arrowhead on your aim line while the shot is armed
 var pview                        # p4.9: the power-ups (client/powers_view.gd), every look
 var theme_view                   # p4.9: an arena's holiday look (client/theme_view.gd: THE HAUNTED HOUSE)
-var leaves                       # p4.18: autumn leaves on the castle arenas in the Harvest season (client/leaves_view.gd)
+var leaves                       # p4.18: autumn leaves on the castle arenas in the Harvest season (client/leaves_view.gd); p4.22: falling snow
+var snow                         # p4.22: the castle arenas' winter dress in the Christmas season (client/snow_view.gd)
 var replaying := false           # p4.9: the deathcam's montage plays (nobody is blinded by smoke in a replay)
 var edges                        # p4.11: the arena's shapes stand out (client/edges_view.gd: halo behind, light on top)
 var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd), theme "nightmare"
@@ -528,8 +531,15 @@ func _apply_theme() -> void:
 	if autumn:
 		bg_far.texture = BG_FAR_AUTUMN
 		dark_base = Color(0.46, 0.38, 0.46)
+	# p4.22: in the Christmas season they stand in the snow: a winter night, snow falling,
+	# snow on every floor and ledge, wreaths and lights (client/snow_view.gd)
+	var winter: bool = castle and Season.christmas()
+	if winter:
+		bg_far.texture = BG_FAR_WINTER
+		dark_base = Color(0.42, 0.45, 0.6)
 	if leaves != null:
-		leaves.set_count(([8, 22, 36][clampi(tier, 1, 3) - 1]) if autumn else 0)
+		leaves.snow = winter
+		leaves.set_count(([8, 22, 36][clampi(tier, 1, 3) - 1]) if autumn else (([16, 40, 64][clampi(tier, 1, 3) - 1]) if winter else 0))
 	dark.color = dark_base
 	# p4.11: the backdrop a step dimmer and cooler, the blocks a step brighter: the play
 	# space stands out from what is only scenery (the user: too little contrast)
@@ -538,6 +548,9 @@ func _apply_theme() -> void:
 	if autumn:
 		bg_far.modulate = Color(1.0, 0.94, 0.9)
 		bg_mid.modulate = Color(0.74, 0.56, 0.5, 0.9)
+	if winter:
+		bg_far.modulate = Color(0.92, 0.98, 1.06)
+		bg_mid.modulate = Color(0.6, 0.7, 0.9, 0.9)
 	for layer in [tiles_plain, tiles_lit]:
 		layer.modulate = Color(0.98, 0.9, 1.1) if hw else Color(1.12, 1.12, 1.16)
 	var fx_on: bool = parts.get("particles", false)
@@ -556,6 +569,12 @@ func _apply_theme() -> void:
 			move_child(dress, boiler.front.get_index() + 1)
 		else:
 			move_child(dress, tiles_lit.get_index() + 1)
+	if snow == null and winter:
+		snow = SnowView.new()         # made the first time a castle arena is shown in the season
+		add_child(snow)
+	if snow != null:
+		snow.build(level if winter else null, level.torches)
+		move_child(snow, (dress.get_index() if dress != null else tiles_lit.get_index()) + 1)
 	if table != null:
 		table.leave()                 # before the other looks: the table puts back what it hid
 	if boiler != null:
@@ -768,10 +787,14 @@ func render(s: Dictionary, delta: float) -> void:
 		tint.a = 0.35 if (bits & (P.PW_INVIS | P.PW_BATS)) != 0 else 1.0
 		if (bits & P.PW_PUMPKIN) != 0 and f["state"] != P.F_DEAD:
 			tint.a = 0.0     # p4.12 the pumpkin trick: powers_view draws a pumpkin there instead
+		if (bits & P.PW_FROZEN) != 0 and f["state"] != P.F_DEAD and Season.christmas():
+			tint.a = 0.0     # p4.22: packed in snow: powers_view draws a snowman there instead
 		if (int(pw.get(i, {}).get("mask", 0)) & 1) != 0:
 			tint.a = 0.0     # p4.12 GHOSTFACE: powers_view draws it (client/ghostface.gd), dead or alive
 		spr.modulate = tint
 		spr.scale = Vector2.ONE * (0.55 if (bits & P.PW_TINY) != 0 else 1.0)   # the tiny trick
+		if f["state"] == P.F_DEAD and pview.squashed.has(i):
+			spr.scale = Vector2(1.3, 0.34)   # p4.22: flat under the giant present
 		spr.flip_h = (f["flags"] & 1) == 0
 		var frame := _frame(f, slot, i)
 		spr.region_rect = Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128)
@@ -1005,10 +1028,20 @@ func _render_arrows(al: Dictionary) -> void:
 		if e.is_empty():
 			var spr := Sprite2D.new()
 			var kind := int(a["kind"])
-			spr.texture = (ARROWS2 if Polish.on("arrows2") else ARROWS) if kind != P.A_SEED else null   # polish "arrows2"
+			spr.texture = (ARROWS2 if Polish.on("arrows2") else ARROWS) if kind != P.A_SEED and kind != P.A_SNOWBALL else null   # polish "arrows2"
 			spr.region_enabled = true
 			spr.region_rect = Rect2(0, (P.A_BOMB if kind == P.A_PUMPKIN else (P.A_NORMAL if kind == P.A_PIE else kind)) * 8, 32, 8)
 			spr.offset = Vector2(-12, 0)
+			if kind == P.A_SNOWBALL:        # p4.22: no arrow at all: a snowball, a pale shade under a white top
+				for part in [[10.0, Color(0.62, 0.78, 1.0)], [8.0, Color(1, 1, 1)]]:
+					var ball := Polygon2D.new()
+					var bp := PackedVector2Array()
+					for q in 12:
+						bp.append(Vector2(cos(TAU * q / 12.0), sin(TAU * q / 12.0)) * float(part[0]))
+					ball.polygon = bp
+					ball.color = part[1]
+					ball.position = Vector2(0, 0) if float(part[0]) > 9.0 else Vector2(-1.5, -1.5)
+					spr.add_child(ball)
 			if kind == P.A_PUMPKIN or kind == P.A_SEED or kind == P.A_PIE:   # p4.12: a pumpkin on the tip, or a glowing seed
 				# p4.18: in the Harvest season the pumpkin is a corn cob and its seeds are popcorn; PIE: a cream pie on the tip
 				var corn: bool = Season.harvest() and kind != P.A_PIE
@@ -1023,10 +1056,22 @@ func _render_arrows(al: Dictionary) -> void:
 					head.color = Color(0.82, 0.56, 0.26)       # the crust
 				elif corn:
 					head.color = Color(1.0, 0.86, 0.2) if kind == P.A_PUMPKIN else Color(1.0, 0.98, 0.9)
+				elif Season.christmas():   # p4.22: a red glass ornament, its shards gold glitter
+					head.color = Color(0.92, 0.12, 0.14) if kind == P.A_PUMPKIN else Color(1.0, 0.9, 0.45)
 				else:
 					head.color = Color(1.0, 0.55, 0.1) if kind == P.A_PUMPKIN else Color(1.0, 0.85, 0.35)
 				head.position = Vector2(6, 0) if kind != P.A_SEED else Vector2.ZERO
 				spr.add_child(head)
+				if kind == P.A_PUMPKIN and Season.christmas():   # the ornament's shine and its gold cap
+					for part in [[Vector2(4.0, -2.5), 2.4, Color(1, 0.8, 0.8)], [Vector2(-2.5, 0.0), 3.0, Color(1.0, 0.82, 0.25)]]:
+						var bit := Polygon2D.new()
+						var bq := PackedVector2Array()
+						for q in 8:
+							bq.append(Vector2(cos(TAU * q / 8.0), sin(TAU * q / 8.0)) * float(part[1]))
+						bit.polygon = bq
+						bit.color = part[2]
+						bit.position = Vector2(6, 0) + part[0]
+						spr.add_child(bit)
 				if kind == P.A_PIE:                           # the cream on top
 					var cream := Polygon2D.new()
 					var cp := PackedVector2Array()

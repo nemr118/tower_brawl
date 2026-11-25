@@ -32,6 +32,10 @@ SONGS = {
     "lobby": dict(bpm=104, bars=28, lufs=-20.0, fade=1.2),
     "match": dict(bpm=152, bars=40, lufs=-20.0, fade=1.2),
     "winner": dict(bpm=126, bars=0, lufs=-18.0, fade=0.8),
+    # p4.22 the Christmas season's (run_music.py lobby_xmas match_xmas winner_xmas); left out while their takes are not there
+    "lobby_xmas": dict(bpm=100, bars=28, lufs=-20.0, fade=1.2),
+    "match_xmas": dict(bpm=150, bars=40, lufs=-20.0, fade=1.2),
+    "winner_xmas": dict(bpm=126, bars=0, lufs=-18.0, fade=0.8),
 }
 
 
@@ -103,6 +107,9 @@ def main():
             p[k] = int(v)
     json.dump(p, open(PICKS_FILE, "w"), indent=1, sort_keys=True)
     for name in SONGS:
+        if name.endswith("_xmas") and not os.path.exists(os.path.join(TAKES, f"{name}_s{p[name]}.flac")):
+            print(f"skip  {name}: no take yet (a card job: run_music.py {name})")
+            continue
         cut(name, p[name])
 
 

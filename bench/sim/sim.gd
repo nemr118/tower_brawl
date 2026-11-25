@@ -240,6 +240,7 @@ const CANDY_G := 0.45
 const CANDY_BOUNCE := 0.35
 const CANDY_LIFE := 600
 const CANDY_R := 14.0
+const CHUTE_FALL := 3.4             # p4.22: a present from the sky falls this fast at most (px a tick), in the Christmas season
 # p4.18 the turkey (the Harvest season's pet, in the black cat's place): it comes TURKEY_AT ticks
 # into a round (TURKEY_CHANCE of rounds, TURKEY_CHANCE_BARN on THE HARVEST BARN), walks its
 # floor, and runs from the nearest living fighter within TURKEY_SEE: off a floor's end (it
@@ -2128,7 +2129,8 @@ func _update_candies() -> void:
 			candies.remove_at(i)
 			continue
 		if not c["rest"]:
-			c["vy"] = minf(c["vy"] + CANDY_G, 10.0)
+			# p4.22: in the Christmas season a present from the sky floats down on its parachute
+			c["vy"] = minf(c["vy"] + CANDY_G, CHUTE_FALL if season == "christmas" and c["sky"] else 10.0)
 			var nx: float = c["x"] + c["vx"]
 			if c["vx"] != 0.0 and level.cell_at(fposmod(nx + signf(c["vx"]) * 8.0, W), c["y"]) == 1:
 				c["vx"] = -c["vx"] * 0.5      # a wall: back off it
@@ -2710,6 +2712,38 @@ func hw_gallery() -> void:
 	var f0 := fighter(0)
 	if f0 != null:   # and one right on seat 0 (the page's player), opened at once: the candy burst
 		_spawn_candy(f0.x + HALF_W, f0.y + MID_Y, 0.0, 0.0, false)
+
+# p4.22 a test knob (the server's --xmas-gallery, with --season christmas): every Christmas
+# look on screen at FIGHT, for pictures: KRAMPUS standing (seat 1) and knocked down (2), the
+# SNOWMAN trick (3), one packed in snow (4), one on the reindeer (5), SNOW FLURRY (6),
+# ELF-SIZED with SNOWBALLS (7), the reindeer on its floor, and presents (one on its parachute).
+func xmas_gallery() -> void:
+	for f in fighters:
+		if f.id == 1:
+			f.mask = true
+		elif f.id == 2:
+			f.mask = true
+			_collapse(f)
+			f.down_t = 250
+			f.dodge_t = 250
+		elif f.id == 3:
+			f.trick = 1
+			f.trick_t = 3000
+		elif f.id == 4:
+			f.freeze_t = 3000
+		elif f.id == 5:
+			f.ride_t = 3000
+		elif f.id == 6:
+			f.bats_t = 3000
+		elif f.id == 7:
+			f.trick = 3
+			f.trick_t = 3000
+			_give(f, P.PU_SNOWBALL)
+	pet_at = play_t
+	_ensure_spots()
+	for i in 3:
+		var sp: Vector2 = spots[(i * 5 + 2) % spots.size()]
+		_spawn_candy(sp.x, sp.y - (260.0 if i == 0 else 120.0), 0.0, 0.0, i == 0)
 
 # A test knob (the server's --pin-demo): seat 7 is shot into the nearest wall to its
 # left (pinned there), seat 6 is shot in the open (the arrow carries it), for pictures.

@@ -15,6 +15,7 @@
 # --pu-gallery: a test knob: every round starts with every power-up's look (sim.gallery).
 # --pin-demo: a test knob: at FIGHT seat 7 is pinned to a wall, seat 6 carried (sim.pin_demo).
 # --hw-gallery: a test knob: at FIGHT the Halloween looks (GHOSTFACE, the tricks, the cat, bats; sim.hw_gallery).
+# --xmas-gallery: p4.22 a test knob: at FIGHT the Christmas looks (KRAMPUS, the snowmen, a rider, the reindeer, presents; sim.xmas_gallery).
 # --candy-trick N: a test knob: every candy gives N (0 a treat, 1 PUMPKIN HEAD, 2 BACKWARDS, 3 TINY, 4 GHOSTFACE).
 # --goal N: points to win, instead of the rule by player count (a test knob).
 # --walls-s N: the purple walls come N s after FIGHT (default 25, TowerFall's; 0: never).
@@ -336,6 +337,7 @@ var last_cause := {}             # seat -> its last death's cause (a kill's kind
 var last_awards: Array = []      # the last match's awards (match_end, and the lobby's seats message)
 var pin_demo := false            # --pin-demo (a test knob: sim.pin_demo at each FIGHT)
 var hw_gallery := false          # --hw-gallery (a test knob: sim.hw_gallery at each FIGHT)
+var xmas_gallery := false        # --xmas-gallery (p4.22 a test knob: sim.xmas_gallery at each FIGHT)
 var last_rec := {}               # the last report line (the host page shows its tick numbers)
 # TEAMS (the rules: the "TEAMS" part below, and sim.gd friends / decided / safe_team)
 var mode_teams := false          # the lobby's MODE: false FREE FOR ALL, true TEAMS
@@ -372,6 +374,7 @@ func _ready() -> void:
 	pu_gallery = o.has("pu-gallery")
 	pin_demo = o.has("pin-demo")
 	hw_gallery = o.has("hw-gallery")
+	xmas_gallery = o.has("xmas-gallery")
 	sim.candy_trick = int(o.get("candy-trick", -1))
 	sim.pet_always = o.has("pet-always")
 	start_power = int(o.get("start-power", 0))
@@ -1187,6 +1190,8 @@ func _match_tick() -> void:
 				sim.pin_demo()
 			if hw_gallery:
 				sim.hw_gallery()
+			if xmas_gallery:
+				sim.xmas_gallery()
 			_say("🏰 [ROUND] %d FIGHT" % round_no)
 	elif phase == P.PH_PLAY:
 		phase_t += 1
@@ -1332,6 +1337,12 @@ func _next_arena() -> int:
 		var play: Array = SimScript.LevelScript.mix_for(_season())
 		return play[mix_i % play.size()]
 	return arena_pick
+
+# p4.22 the nights left to Christmas Day by this computer's date: 24 on 1 December, 0 on the
+# 25th; -1 any other day. The lobby counts them down in the Christmas season.
+func _sleeps() -> int:
+	var d := Time.get_date_dict_from_system()
+	return 25 - int(d["day"]) if int(d["month"]) == 12 and int(d["day"]) <= 25 else -1
 
 # p4.18 the season now: the pick, or by this computer's date (proto.gd season_for).
 func _season() -> String:
@@ -1620,6 +1631,7 @@ func _send_seats(target: int) -> void:
 		"awards": last_awards,
 		"people": _people(), "arena": arena_pick, "arena_now": sim.level.id,
 		"season": _season(), "season_pick": season_pick,
+		"sleeps": _sleeps(),      # p4.22: nights to Christmas by this computer's date (-1: not 1 to 25 December)
 		"silly": silly if phase >= P.PH_ROUND_START else 0,     # p4.20: this round's surprise (the ROUND banner says it)
 		"champs": _champs(),      # p4.20 TONIGHT'S CHAMPIONS (client/lobby_champs.gd)
 		"names": _names_list(),

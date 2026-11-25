@@ -58,6 +58,38 @@ TRACKS = {
                "You won the brawl today!\n\n"
                "[Outro - kazoo fanfare, big finish]\n"
                "Gobble gobble!\n"),
+    # p4.22 the Christmas season's three (bench/client/music.gd plays <name>_xmas in that season). Tunes of
+    # their own: no carol is named, so none is copied.
+    "lobby_xmas": dict(
+        seconds=76.0, bpm=100, key="F major",
+        tags="Cozy, playful Christmas toy workshop music, instrumental, no vocals. Sleigh bells jingle on every beat "
+             "while a glockenspiel and a celesta play a catchy, bouncy melody over pizzicato strings, a plucked "
+             "acoustic guitar, a warm clarinet, a light bouncy upright bass and soft brushed drums. 100 BPM, F major. "
+             "Warm, silly and welcoming, like a cartoon on Christmas Eve or a family game night by the tree. "
+             "Background music for a party game's lobby: steady, even energy from the first bar to the last, no long "
+             "intro, no big build, no drop, no singing.",
+        lyrics="[Instrumental]"),
+    "match_xmas": dict(
+        seconds=76.0, bpm=150, key="D major",
+        tags="Fast, silly Christmas chase music, instrumental, no vocals. Galloping sleigh bells, quick xylophone and "
+             "glockenspiel runs, pizzicato strings, punchy brass stabs, a tuba oom-pah bass, a snare drum and timpani "
+             "rolls, a slide whistle now and then. 150 BPM, D major. Wild, funny and full of energy, like a cartoon "
+             "snowball fight or a runaway sleigh ride. Battle music for a family party game: constant drive from the "
+             "first beat, no long intro, no breakdown, no singing.",
+        lyrics="[Instrumental]"),
+    "winner_xmas": dict(
+        seconds=24.0, bpm=126, key="C major",
+        tags="A short, silly, triumphant victory jingle for a kids' Christmas party game. A happy children's choir "
+             "shouts and sings together with a jolly, goofy cartoon lead voice. Sleigh bells, glockenspiel, kazoos, "
+             "tuba oom-pah bass, hand claps, a big brass and drum finish. 126 BPM, C major. Joyful, funny, proud, "
+             "very catchy. The singing starts right away.",
+        lyrics="[Chorus - a happy kids' choir shouts and sings, starts at once]\n"
+               "Ho ho ho, you won the brawl!\n"
+               "Jingle, jingle, hey!\n"
+               "Snowballs flying, presents too,\n"
+               "You're on the nice list today!\n\n"
+               "[Outro - sleigh bells, big brass finish]\n"
+               "Ho ho ho!\n"),
 }
 
 

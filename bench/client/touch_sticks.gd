@@ -622,7 +622,7 @@ func _paint2(n: Node2D) -> void:
 	for j in 3:
 		n.draw_line(mn + Vector2(-16.0 * k, (j - 1) * 11.0 * k), mn + Vector2(16.0 * k, (j - 1) * 11.0 * k), Color(1, 1, 1, 0.85), 4.0 * k, true)
 	# p4.19 the taunt: a small yellow button at the left edge (the word by the season)
-	var word: String = {"harvest": "GOBBLE", "halloween": "BOO"}.get(Season.now, "HA HA")
+	var word: String = {"harvest": "GOBBLE", "halloween": "BOO", "christmas": "HO HO"}.get(Season.now, "HA HA")
 	_button2(n, _taunt_center(), TAUNT_R * k, Color(0.95, 0.75, 0.15), word, Time.get_ticks_msec() - _taunt_ms < 180, 22.0, 1.0)
 	if buttons_mode:   # JUMP, bottom right
 		var jc := _jump_center()

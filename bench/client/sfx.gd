@@ -52,7 +52,10 @@ const E_PHEW := 45           # proto.gd's E_PHEW (the round's winner would have 
 const NAMES := ["shoot", "thunk", "ko", "stomp", "dodge", "catch", "grab", "dry", "tink", "powerup", "shield_pop",
 	"pop", "boom", "zap", "poof", "freeze", "count", "fight", "round_win", "draw", "fanfare", "phew", "taunt",
 	"gobble", "gobble_startled", "splat", "wahwah", "lid", "crows", "gust", "peck", "meow", "bats", "furnace",
-	"steam", "click", "join"]
+	"steam", "click", "join",
+	"sleigh_bells", "jingle", "unwrap", "snow_poof", "snowed", "glass", "krampus", "sticks", "thud", "hohoho", "train_whistle", "chug"]   # p4.22 Christmas
+const E_TRAIN_WARN := 47     # proto.gd's (SANTA'S WORKSHOP's toy train: its whistle, then it comes out)
+const E_TRAIN := 48
 
 var on := false
 var unlocked := false        # the browser lets the page play now
@@ -129,7 +132,7 @@ func set_on(v: bool, keep := true) -> void:
 func play(name: String, own := false, x := -1.0, seat := -1) -> void:
 	if not on:
 		return
-	_play(name, own, x, SEAT_PITCH[seat % SEAT_PITCH.size()] if seat >= 0 and name == "taunt" else 1.0)
+	_play(name, own, x, SEAT_PITCH[seat % SEAT_PITCH.size()] if seat >= 0 and (name == "taunt" or name == "hohoho") else 1.0)
 
 func _play(name: String, own := false, x := -1.0, pitch := 1.0, db := 0.0) -> void:
 	if trace != null:
@@ -196,6 +199,7 @@ func on_event(e: Array, me: int) -> void:
 	var x: float = e[1]
 	var own := a == me
 	var harvest: bool = Season.now == "harvest"
+	var xmas: bool = Season.now == "christmas"     # p4.22
 	match int(e[0]):
 		P.E_SHOOT:
 			_play("shoot", own, x)
@@ -224,6 +228,8 @@ func on_event(e: Array, me: int) -> void:
 		P.E_EXPLODE:                  # b: 8 a pie, 4 a seed or a popcorn kernel, 1 a BIG arrow's
 			if (b & 8) != 0:
 				_play("splat", own, x)
+			elif (b & 2) != 0 and xmas:   # a glass ornament
+				_play("glass", own, x)
 			elif (b & 4) != 0:
 				_play("pop", false, x, 1.15)
 			else:
@@ -233,13 +239,28 @@ func on_event(e: Array, me: int) -> void:
 				_play("wahwah", own, x)
 		P.E_PU_GET:
 			if b == P.PU_BATS:
-				_play("crows" if harvest else "bats", own, x)
+				_play("crows" if harvest else ("gust" if xmas else "bats"), own, x)
+			elif b == P.PU_MASK and xmas:    # KRAMPUS comes
+				_play("krampus", own, x)
 			else:
 				_play("powerup", own, x)
 		P.E_SHIELD_POP:
 			_play("shield_pop", own, x)
-		P.E_STRIKE:
-			_play("zap", false, x)
+		P.E_STRIKE:                   # the lightning; in the Christmas season the giant present lands
+			_play("thud" if xmas else "zap", false, x)
+		P.E_PU_WARN:                  # the sleigh is on its way
+			if xmas:
+				_play("sleigh_bells", false, x, 1.0, -3.0)
+		P.E_SNOW:
+			_play("snow_poof", own, x)
+		P.E_SNOWED:
+			_play("snowed", own, x)
+		P.E_RIDE_END:
+			_play("jingle", own, x, 0.85)
+		E_TRAIN_WARN:
+			_play("train_whistle", false, x)
+		E_TRAIN:
+			_play("chug", false, x)
 		P.E_FREEZE:
 			_play("freeze", own, x)
 		P.E_MIASMA, P.E_SMOKE:
@@ -248,22 +269,23 @@ func on_event(e: Array, me: int) -> void:
 			_play("poof", false, x, 1.3)
 		P.E_GHOST_POP:
 			_play("pop", false, x)
-		P.E_CAT_COME:                 # a = 1: the turkey, else the black cat
-			_play("gobble" if a == 1 else "meow", false, x)
-		P.E_PET:                      # b = 1: the turkey is caught, else the cat is petted
-			_play("gobble_startled" if b == 1 else "meow", own, x, 1.0 if b == 1 else 1.25)
-		P.E_CANDY_GET:                # a dish's lid in the Harvest season, a candy's wrapper otherwise
-			_play("lid" if harvest else "powerup", own, x, 1.0 if harvest else 1.3)
+		P.E_CAT_COME:                 # a = 1: the turkey, 2: the reindeer, else the black cat
+			_play(["meow", "gobble", "sleigh_bells"][clampi(a, 0, 2)], false, x)
+		P.E_PET:                      # b = 1: the turkey is caught, 2: up on the reindeer, else the cat is petted
+			_play(["meow", "gobble_startled", "jingle"][clampi(b, 0, 2)], own, x, 1.25 if b == 0 else 1.0)
+		P.E_CANDY_GET:                # a dish's lid in the Harvest season, a present's paper at Christmas, a candy's wrapper otherwise
+			_play("lid" if harvest else ("unwrap" if xmas else "powerup"), own, x, 1.0 if harvest or xmas else 1.3)
 		P.E_TRICK:                    # b 1..3: a silly trick (0 and 4 are treats: their power-up's sparkle follows)
 			if b >= 1 and b <= 3 and (own or me < 0):
 				_play("wahwah", own, x, 1.12)
 		P.E_BATS:                     # a sweep comes: a gust of leaves on the barn, else crows or bats
-			var barn: bool = client != null and client.world != null and client.world.level != null and client.world.level.theme == "barn"
+			var barn: bool = client != null and client.world != null and client.world.level != null \
+				and (client.world.level.theme == "barn" or client.world.level.theme == "rooftops")   # (p4.22: THE ROOFTOPS' gust of snow)
 			_play("gust" if barn else ("crows" if harvest else "bats"), false, x)
 		P.E_KNIFE:                    # THE BIG TURKEY pecks; GHOSTFACE's knife swishes
-			_play("peck" if harvest else "dodge", own, x, 1.0 if harvest else 1.5)
+			_play("peck" if harvest else ("sticks" if xmas else "dodge"), own, x, 1.0 if harvest or xmas else 1.5)
 		P.E_MASK_DOWN:                # the costume is knocked down
-			_play("gobble_startled" if harvest else "thunk", own, x, 0.85 if harvest else 0.7)
+			_play("gobble_startled" if harvest else ("krampus" if xmas else "thunk"), own, x, 0.85 if harvest else (1.4 if xmas else 0.7))
 		P.E_FURNACE:
 			_play("furnace", false, x)
 		P.E_STEAM:
@@ -271,7 +293,7 @@ func on_event(e: Array, me: int) -> void:
 		E_PHEW:
 			_play("phew", own, x)
 		P.E_TAUNT:      # the GOBBLE button, or a bot gloating: each seat at its own pitch
-			play("taunt", own, x, a)
+			play("hohoho" if xmas else "taunt", own, x, a)
 
 # The phase changed (sim/proto.gd PH_*). s: the newest snapshot (its "left": the
 # phase's ticks left, 60 a second).

@@ -138,7 +138,96 @@ def harvest():
     print("ok harvest")
 
 
+# ---- p4.22 the Christmas season (run_christmas.py; the picks of 2026-11-25)
+XMAS = {"splash": 3, "winner": 0, "rooftops": 1, "workshop": 1, "workshop_crop": (59, 34, 969, 546), "sky": 1, "wreath": 0, "sleigh": 3}
+# the season's badges, 128 px a cell, in client/christmas_view.gd's IC_* order; the try of each
+XMAS_ICONS = [("present", 0), ("snowball", 1), ("ornament", 0), ("flurry", 1), ("blizzard", 0), ("snowman", 0), ("brain_freeze", 0),
+              ("elf", 1), ("krampus", 0), ("reindeer", 1), ("coal", 1)]
+# the season's award pictures, 80 px a cell, in client/award_art.gd's CHRISTMAS order (the last three: KRAMPUS's)
+XMAS_AWARDS = [("naughty", 0), ("nice", 1), ("snowball_champ", 3), ("lump_of_coal", 3), ("sleigh_ride", 3), ("unwrapped", 1), ("fruitcake", 0),
+               ("krampus", 0), ("krampus_swing", 2), ("krampus_down", 2)]
+# the sprites, 256 px a cell, the feet on its line 250 (client/christmas_view.gd S_*); name: the try
+XMAS_SPRITES = [("krampus_stand", 2), ("krampus_swing", 2), ("krampus_down", 2), ("deer_trot", 3), ("deer_fly", 3), ("snowman_stand", 3),
+                ("snowman_hop", 3), ("gift_big", 0), ("gift_open", 3), ("gift_chute", 3)]
+
+
+def _fit(im, box, foot=None):
+    """A cut-out cropped to what is in it and fitted into box x box (a little margin); foot: its lowest
+    row sits on that line of the cell (a creature's feet), else it sits in the middle."""
+    im = im.crop(im.getchannel("A").point(lambda v: 255 if v > 40 else 0).getbbox())
+    k = (box - 12.0) / max(im.size)
+    im = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+    cell = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+    cell.alpha_composite(im, ((box - im.width) // 2, (foot - im.height) if foot else (box - im.height) // 2))
+    return cell
+
+
+def _no_shadow(im):
+    """A creature's ground shadow that stayed dark purple (the model shades the magenta under its feet, and
+    _no_pink only takes the bright part): in the lowest sixth of the picture every purple pixel turns clear."""
+    a = np.asarray(im.convert("RGBA")).copy()
+    h = a.shape[0]
+    r, g, b = a[..., 0].astype(int), a[..., 1].astype(int), a[..., 2].astype(int)
+    low = np.zeros(a.shape[:2], bool)
+    low[h * 5 // 6:, :] = True
+    a[low & (r - g > 18) & (b - g > 12), 3] = 0
+    return Image.fromarray(a, "RGBA")
+
+
+def christmas():
+    """The loading picture (bench/web/page/splash_christmas.png), the winner's backdrop, the winter sky,
+    the arena cards (a second row: THE ROOFTOPS, SANTA'S WORKSHOP and the season's MIX), the badges, the
+    awards, the sprites, the sleigh, and the wreath for the lobby title's O (its hole see-through)."""
+    lg_im = Image.open(f"{OUT}/splash/christmas_{XMAS['splash']}.png").convert("RGBA")
+    lg, pad = P.logo(lg_im.width)
+    lg_im.alpha_composite(lg, ((lg_im.width - lg.width) // 2, max(0, int(lg_im.height * 0.035) - pad)))
+    lg_im.convert("RGB").quantize(colors=255, method=Image.Quantize.MEDIANCUT).save(f"{REPO}/bench/web/page/splash_christmas.png", optimize=True)
+    Image.open(f"{OUT}/winner/christmas_{XMAS['winner']}.png").convert("RGB").save(f"{ASSETS}/winner_christmas.png", optimize=True)
+    sky = Image.open(f"{OUT}/backdrops/winter_k{XMAS['sky']}.png").convert("RGB").resize((480, 270), Image.BOX)
+    sky.quantize(colors=40, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).convert("RGBA").save(f"{ASSETS}/bg_winter_far.png", optimize=True)
+    # the cards: the first row stays (8 cells: MIX, the six arenas, the Harvest's MIX); a second row
+    # (a sheet wider than 4096 px is too wide for some phones): THE ROOFTOPS, SANTA'S WORKSHOP, Christmas's MIX
+    old = Image.open(f"{ASSETS}/arena_cards.png").convert("RGB")
+    sheet = Image.new("RGB", (3200, 450), (10, 8, 16))
+    sheet.paste(old.crop((0, 0, 3200, 225)), (0, 0))
+    roof = Image.open(f"{OUT}/cards/rooftops_{XMAS['rooftops']}.png").convert("RGB").resize((400, 225), Image.LANCZOS)
+    shop = Image.open(f"{OUT}/cards/workshop_{XMAS['workshop']}.png").convert("RGB")
+    cw, ch = shop.size
+    shop = shop.crop(XMAS.get("workshop_crop", (0, 0, cw, ch))).resize((400, 225), Image.LANCZOS)
+    sheet.paste(roof, (0, 225))
+    sheet.paste(shop, (400, 225))
+    mix = Image.new("RGB", (400, 225), (10, 8, 16))
+    for i, q in enumerate([old.crop((400, 0, 800, 225)), old.crop((800, 0, 1200, 225)), roof, shop]):
+        mix.paste(q.resize((198, 111), Image.LANCZOS), ((i % 2) * 202, (i // 2) * 114))
+    sheet.paste(mix, (800, 225))
+    sheet.save(f"{ASSETS}/arena_cards.png", optimize=True)
+    for names, cell, dst in ((XMAS_ICONS, 128, "christmas_icons.png"), (XMAS_AWARDS, 80, "award_art_christmas.png")):
+        out = Image.new("RGBA", (cell * len(names), cell), (0, 0, 0, 0))
+        for i, (k, n) in enumerate(names):
+            out.alpha_composite(_fit(_no_pink(P.cut(f"{OUT}/christmas/{k}_{n}.png", 512)), cell), (i * cell, 0))
+        out.save(f"{ASSETS}/{dst}", optimize=True)
+    sprites = Image.new("RGBA", (256 * len(XMAS_SPRITES), 256), (0, 0, 0, 0))
+    for i, (k, n) in enumerate(XMAS_SPRITES):
+        sprites.alpha_composite(_fit(_no_shadow(_no_pink(P.cut(f"{OUT}/christmas/{k}_{n}.png", 512))), 256, 250), (i * 256, 0))
+    sprites.save(f"{ASSETS}/christmas_sprites.png", optimize=True)
+    # the sleigh: wide, a picture of its own (512 x 256, in the middle)
+    sl = _no_pink(P.cut(f"{OUT}/christmas/sleigh_{XMAS['sleigh']}.png", 768))
+    sl = sl.crop(sl.getchannel("A").point(lambda v: 255 if v > 40 else 0).getbbox())
+    k = min(500.0 / sl.width, 244.0 / sl.height)
+    sl = sl.resize((max(1, round(sl.width * k)), max(1, round(sl.height * k))), Image.LANCZOS)
+    wide = Image.new("RGBA", (512, 256), (0, 0, 0, 0))
+    wide.alpha_composite(sl, ((512 - sl.width) // 2, (256 - sl.height) // 2))
+    wide.save(f"{ASSETS}/christmas_sleigh.png", optimize=True)
+    # the wreath: the cut leaves its hole's background in; a fill from the middle takes it out
+    wr = _fit(_no_pink(P.cut(f"{OUT}/christmas/wreath_{XMAS['wreath']}.png", 512)), 256)
+    a = np.asarray(wr).copy()
+    r, g, b = a[..., 0].astype(int), a[..., 1].astype(int), a[..., 2].astype(int)
+    a[(r - g > 45) & (b - g > 35), 3] = 0          # any magenta left in the hole
+    Image.fromarray(a, "RGBA").save(f"{ASSETS}/christmas_wreath.png", optimize=True)
+    print("ok christmas")
+
+
 if __name__ == "__main__":
-    jobs = {f.__name__: f for f in (backdrops, heroes, icons, ribbon, harvest)}
+    jobs = {f.__name__: f for f in (backdrops, heroes, icons, ribbon, harvest, christmas)}
     for job in ([jobs[a] for a in sys.argv[1:]] if sys.argv[1:] else jobs.values()):
         job()

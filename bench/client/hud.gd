@@ -30,12 +30,14 @@ const HEAD_SRC := Rect2(47, 27, 38, 38)   # p4.19: the hooded head in a fighter 
 # p4.19: a silly line under a round's winner, by the season (the user: "a fun, balanced, silly game").
 # Every screen shows the same one: it is picked from the round's number and the winner's seat.
 const CHEERS := {
+	"christmas": ["HO HO HO!", "ON THE NICE LIST!", "SLEIGH-ED IT!", "SNOW PROBLEM!", "MERRY AND BRIGHT!", "YULE BE BACK!", "UNWRAPPED!",
+		"COOL AS ICE!", "JINGLE ALL THE WAY!", "NO COAL FOR YOU!"],
 	"harvest": ["GOBBLE GOBBLE!", "PASS THE GRAVY!", "SECOND HELPINGS!", "SAVE ROOM FOR PIE!", "WHO WANTS LEFTOVERS?", "STUFFED!",
 		"THAT'S THE WISHBONE!", "TOP OF THE PECKING ORDER!", "MORE MASHED POTATOES!", "NO NAP FOR YOU!"],
 	"halloween": ["SPOOKY!", "TRICK... AND TREAT!", "BOO-YAH!", "WHAT A SCREAM!", "FANG-TASTIC!", "NO BONES ABOUT IT!"],
 	"": ["BULLSEYE!", "NOT A SCRATCH!", "WHO'S NEXT?", "TOO EASY!", "WHAT A SHOT!", "STILL STANDING!"],
 }
-const DRAW_LINES := {"harvest": "EVERYBODY NAPS AFTER DINNER", "halloween": "NOBODY GETS THE CANDY", "": "NOBODY LEFT STANDING"}
+const DRAW_LINES := {"christmas": "COAL FOR EVERYONE", "harvest": "EVERYBODY NAPS AFTER DINNER", "halloween": "NOBODY GETS THE CANDY", "": "NOBODY LEFT STANDING"}
 var CROWN := PackedVector2Array([Vector2(0, 16), Vector2(0, 3), Vector2(6, 9), Vector2(12, 0), Vector2(18, 9), Vector2(24, 3), Vector2(24, 16)])
 
 var seats: Array = []

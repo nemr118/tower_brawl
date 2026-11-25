@@ -8,6 +8,7 @@ const BOOST := 2.3               # the night darkens this layer (world.gd's Canv
 const HZ := 30.0
 
 var n := 0
+var snow := false                # p4.22: the Christmas season: snowflakes fall, not leaves
 var t := 0.0
 var acc := 0.0
 
@@ -26,6 +27,13 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 func _draw() -> void:
+	if snow:        # p4.22: flakes of three sizes, drifting down slowly, swaying
+		for i in n:
+			var fall := 26.0 + (i % 5) * 9.0
+			var fx := fposmod(i * 263.0 + sin(t * 0.6 + i * 1.7) * 36.0 + t * (4.0 + i % 3 * 3.0), 2000.0) - 40.0
+			var fy := fposmod(i * 149.0 + t * fall, 1160.0) - 40.0
+			draw_circle(Vector2(fx, fy), 2.0 + (i % 3) * 1.2, Color(BOOST, BOOST, BOOST, 0.55 + 0.1 * (i % 4)))
+		return
 	for i in n:
 		var sp := 34.0 + (i % 5) * 12.0
 		var x := fposmod(i * 263.0 + sin(t * 0.7 + i * 1.7) * 50.0 + t * (8.0 + i % 3 * 5.0), 2000.0) - 40.0

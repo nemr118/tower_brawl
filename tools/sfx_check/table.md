@@ -41,7 +41,19 @@ Mono, 16 bit, 32000 Hz. peak: the biggest sample (0 dB is the most a file holds;
 | steam | a pipe vents steam | 0.60 | -13.0 | -30.3 | -23.0 | -23 | 0.0000 | 0 | 0/0 | 38444 |
 | click | a lobby button (a soft click) | 0.04 | -7.5 | -21.4 | -28.0 | -28 | -0.0000 | 0 | 0/0 | 2924 |
 | join | a player joins (a blip) | 0.22 | -13.8 | -23.3 | -23.0 | -23 | 0.0000 | 0 | 0/0 | 14124 |
+| sleigh_bells | the reindeer comes, the sleigh flies over | 0.93 | -7.5 | -24.9 | -21.0 | -21 | 0.0000 | 0 | 0/0 | 59532 |
+| jingle | up on the reindeer (one shake of the bells) | 0.30 | -9.4 | -26.7 | -22.0 | -22 | 0.0000 | 0 | 0/0 | 19044 |
+| unwrap | a present opens (a tear and a ta-da) | 0.67 | -12.1 | -26.2 | -20.0 | -20 | 0.0000 | 0 | 0/0 | 42924 |
+| snow_poof | a snowball bursts | 0.28 | -6.4 | -20.8 | -20.0 | -20 | 0.0000 | 0 | 0/0 | 17964 |
+| snowed | packed into a snowman | 0.43 | -9.6 | -23.5 | -21.0 | -21 | 0.0000 | 0 | 0/0 | 27644 |
+| glass | a glass ornament breaks | 0.37 | -9.0 | -26.6 | -21.0 | -21 | 0.0000 | 0 | 0/0 | 23836 |
+| krampus | KRAMPUS comes | 0.90 | -6.7 | -18.8 | -19.0 | -19 | 0.0000 | 0 | 0/0 | 57586 |
+| sticks | KRAMPUS swings his sticks | 0.15 | -6.6 | -23.5 | -22.0 | -22 | 0.0001 | 0 | 0/0 | 9768 |
+| thud | the giant present lands | 0.50 | -6.5 | -18.4 | -18.0 | -18 | -0.0001 | 0 | 0/0 | 32044 |
+| hohoho | the Christmas taunt (8 pitches) | 0.56 | -10.6 | -19.2 | -20.0 | -20 | 0.0000 | 0 | 0/0 | 35884 |
+| train_whistle | the toy train's whistle | 0.78 | -14.2 | -21.3 | -20.0 | -20 | 0.0000 | 0 | 0/0 | 49964 |
+| chug | the toy train runs | 1.47 | -6.7 | -26.9 | -23.0 | -23 | 0.0000 | 0 | 0/0 | 94132 |
 
-37 sounds, 19.0 s and 1214846 bytes in all (1.16 MB as .wav files; the game's pack holds them smaller, see the patch page).
+49 sounds, 26.3 s and 1685168 bytes in all (1.61 MB as .wav files; the game's pack holds them smaller, see the patch page).
 
 Problems: none

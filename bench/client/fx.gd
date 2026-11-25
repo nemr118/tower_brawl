@@ -15,7 +15,8 @@ const ONE_SHOT := {"dust_jump": 8, "dust_land": 8, "wall_dust": 4, "dodge_ring":
 	"miasma_burst": 4, "catch_star": 4, "pickup": 6, "death_burst": 6, "soul": 6, "spawn_beam": 6,
 	"smoke_burst": 4, "hurt_spark": 6, "ledge_dust": 4}
 const KIND_COLOR := [Color(0.85, 0.95, 1.0), Color(1.0, 0.6, 0.15), Color(1.0, 0.35, 0.25), Color(0.75, 0.35, 1.0), Color(0.78, 0.8, 0.84),
-	Color(1.0, 0.55, 0.1), Color(1.0, 0.82, 0.3)]   # p4.12: 5 a pumpkin, 6 its seed
+	Color(1.0, 0.55, 0.1), Color(1.0, 0.82, 0.3),   # p4.12: 5 a pumpkin, 6 its seed
+	Color(1.0, 0.95, 0.85), Color(0.8, 0.92, 1.0)]  # p4.18: 7 a pie; p4.22: 8 a snowball
 
 var cpu := false
 var mult := 1.0

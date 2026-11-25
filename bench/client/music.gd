@@ -26,6 +26,7 @@ var client                   # game_client.gd: its options and its saved values
 var player: AudioStreamPlayer
 var want := ""               # the song that should play: "lobby", "match", "winner" or "" (none)
 var now := ""                # the one in the player
+var now_file := ""           # and its file (p4.22: a season can have its own take)
 var done := false            # a play-once song has played
 var fade := 0.0              # seconds of fade-out left
 var unlocked := false
@@ -59,13 +60,21 @@ func set_on(v: bool, keep := true) -> void:
 			player.queue_free()      # a freed player stops, and its song leaves memory
 		player = null
 		now = ""
+		now_file = ""
 		done = false
 		fade = 0.0
 	print("🎵 [Music] %s" % ("ON" if on else "OFF"))
 
 # Is there a song for the winner now? (The sound effects' fanfare stays quiet then.)
 func has_winner() -> bool:
-	return on and Season.now == "harvest" and ResourceLoader.exists(DIR + "winner.wav")
+	return on and ((Season.now == "harvest" and ResourceLoader.exists(DIR + "winner.wav")) \
+		or (Season.now == "christmas" and ResourceLoader.exists(DIR + "winner_xmas.wav")))
+
+# A song's file: in the Christmas season its own take (<name>_xmas.wav) when there is one (p4.22).
+func _file(name: String) -> String:
+	if Season.now == "christmas" and ResourceLoader.exists(DIR + name + "_xmas.wav"):
+		return DIR + name + "_xmas.wav"
+	return DIR + name + ".wav"
 
 # What is on the screen: the page calls this every frame.
 func set_scene(lobby_shown: bool, phase: int, match_end_phase: int) -> void:
@@ -89,7 +98,8 @@ func _process(delta: float) -> void:
 			unlocked = tapped if (st == null or str(st) == "") else str(st) == "running"
 	if not unlocked or player == null:
 		return
-	if want != now:
+	var want_file := _file(want) if want != "" else ""      # (the season's own take: a change of season changes the song)
+	if want_file != now_file:
 		if now != "" and player.playing and fade <= 0.0:
 			fade = FADE_S                 # the old song goes out first
 		if fade > 0.0:
@@ -100,10 +110,11 @@ func _process(delta: float) -> void:
 		player.stop()
 		player.stream = null
 		now = want
+		now_file = want_file
 		done = false
 		fade = 0.0
 		if now != "":
-			var path := DIR + now + ".wav"
+			var path := now_file
 			var st: AudioStream = load(path) if ResourceLoader.exists(path) else null
 			if st == null:
 				done = true               # no file: nothing to play, and no asking again
