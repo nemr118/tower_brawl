@@ -19,6 +19,7 @@ const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")   # p4.18: the season's names and pictures
 const HV = preload("res://client/harvest_view.gd") # p4.18: the Harvest season's pictures
 const XV = preload("res://client/christmas_view.gd")   # p4.22: the Christmas season's pictures
+const RooftopsView = preload("res://client/rooftops_view.gd")   # p4.22: THE ROOFTOPS' gust of snow
 const ICONS2 := preload("res://assets/pu_icons.png")   # p4.13 polish "icons2": ComfyUI's power-up pictures (64 px a cell, kind - 1)
 const TRICKS2 := preload("res://assets/trick_icons.png")   # 2026-10-26 polish "trick_art": the candy tricks' badges (64 px a cell)
 const TRICK_ICON := 100           # the tricks' icon kinds (the page's own, never sent): + 0 PUMPKIN HEAD, + 1 BACKWARDS, + 2 TINY; GHOSTFACE is P.PU_MASK
@@ -410,6 +411,8 @@ func on_event(e: Array) -> void:
 		var at := Vector2(clampf(pos.x, 120.0, 1800.0), pos.y)
 		if world != null and world.level != null and world.level.theme == "barn":   # p4.18: the barn's gust of leaves
 			_pop(at, "WIND!", Color(1.0, 0.85, 0.5), 1.3, true)
+		elif world != null and world.level != null and world.level.theme == "rooftops":   # p4.22: the rooftops' gust of snow
+			_pop(at, "BRRR!", Color(0.82, 0.93, 1.0), 1.3, true)
 		else:
 			_pop(at, "", Color(0.8, 0.65, 1.0), 1.3, true, P.PU_BATS)
 	elif type == P.E_GHOST:      # p4.11: a ghost rises from its body
@@ -1096,6 +1099,9 @@ func _draw_swarm(bd: Dictionary) -> void:
 	var h: float = SimScript.BATS_H
 	if world != null and world.level != null and world.level.theme == "barn":   # p4.18: a gust of leaves
 		HV.gust(self, int(bd["phase"]), float(bd.get("x", 0.0)), y, dir, SimScript.BATS_W, h, t)
+		return
+	if world != null and world.level != null and world.level.theme == "rooftops":   # p4.22: a gust of snow
+		RooftopsView.gust(self, int(bd["phase"]), float(bd.get("x", 0.0)), y, dir, SimScript.BATS_W, h, t)
 		return
 	if int(bd["phase"]) == 0:
 		var ex := 40.0 if dir > 0 else 1880.0

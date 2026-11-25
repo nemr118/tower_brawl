@@ -278,9 +278,9 @@ func on_event(e: Array, me: int) -> void:
 		P.E_TRICK:                    # b 1..3: a silly trick (0 and 4 are treats: their power-up's sparkle follows)
 			if b >= 1 and b <= 3 and (own or me < 0):
 				_play("wahwah", own, x, 1.12)
-		P.E_BATS:                     # a sweep comes: a gust of leaves on the barn, else crows or bats
+		P.E_BATS:                     # a sweep comes: a gust of leaves on the barn (of snow on the rooftops), else crows or bats
 			var barn: bool = client != null and client.world != null and client.world.level != null \
-				and (client.world.level.theme == "barn" or client.world.level.theme == "rooftops")   # (p4.22: THE ROOFTOPS' gust of snow)
+				and (client.world.level.theme == "barn" or client.world.level.theme == "rooftops")
 			_play("gust" if barn else ("crows" if harvest else "bats"), false, x)
 		P.E_KNIFE:                    # THE BIG TURKEY pecks; GHOSTFACE's knife swishes
 			_play("peck" if harvest else ("sticks" if xmas else "dodge"), own, x, 1.0 if harvest or xmas else 1.5)

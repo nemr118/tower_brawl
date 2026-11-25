@@ -283,6 +283,12 @@ static func _play(sim, f, m: Mind) -> int:
 		m.player = null
 		m.plan_t = 0
 		m.drawing = false
+		if absi(flee) >= 2:
+			# p4.22 SANTA'S WORKSHOP's toy train (sim/workshop.gd flee): 2 and -2 that way with
+			# jump held, 3 jump on the spot, 4 stand still. A jump needs a fresh press: on the
+			# ground with jump still down from the last tick, it lets go for this one.
+			var jb := 0 if flee == 4 or (f.on_ground and (m.prev & P.B_JUMP) != 0) else P.B_JUMP
+			return jb | (P.B_RIGHT if flee == 2 else (P.B_LEFT if flee == -2 else 0))
 		var fb := P.B_RIGHT if flee > 0 else P.B_LEFT
 		if f.on_ground and (m.prev & P.B_JUMP) == 0 and sim.box_hits_solid(f.x + flee * 12, f.y, SimScript.BODY_W, SimScript.BODY_H):
 			fb |= P.B_JUMP

@@ -43,6 +43,7 @@ const P = preload("res://sim/proto.gd")
 const LevelScript = preload("res://sim/level.gd")
 const BrainScript = preload("res://sim/brain.gd")
 const BoilerScript = preload("res://sim/boiler.gd")
+const WorkshopScript = preload("res://sim/workshop.gd")   # p4.22 SANTA'S WORKSHOP's toy train
 
 const S := 4.5
 const RUN_MAX := 1.5 * S            # Player.cs MAX_RUN
@@ -209,7 +210,8 @@ const BATS_W := 520.0
 const BATS_H := 170.0
 const BAT_SWARM_TICKS := 480
 # p4.18 on THE HARVEST BARN (theme "barn") the sweep is a gust of leaves: the same rule,
-# sooner and more often (a round is over in about 11 s).
+# sooner and more often (a round is over in about 11 s). p4.22: on THE ROOFTOPS (theme
+# "rooftops") it is a gust of snow, with the barn's numbers.
 const GUST_FIRST := 420
 const GUST_EVERY := [660, 960]
 const BAT_SWARM_R := 85.0
@@ -462,7 +464,8 @@ var safe := -1                  # the seat nothing can kill: the round's winner,
 var teams := {}                 # TEAMS: seat -> its team (0 or 1), set by the server before each round. Empty: FREE FOR ALL
 var safe_team := -1             # TEAMS: the team nothing can kill: the round's winners, for the same time as `safe` (-1: no team)
 var ghosts := true              # p4.11: a person's ghost rises after its death (the game; the benchmark has no people)
-var hazards = null              # THE BOILER ROOM's moving parts (sim/boiler.gd) on an arena whose theme is "nightmare"
+var hazards = null              # THE BOILER ROOM's moving parts (sim/boiler.gd) on an arena whose theme is "nightmare";
+                                # p4.22 SANTA'S WORKSHOP's toy train (sim/workshop.gd) on one whose theme is "workshop"
 var pet := {}                   # p4.12 the black cat: {x, y (its feet), dir, t, gone (ticks running off)}
 var pet_at := -1                # the play tick it shows up this round (-1: not this round)
 var bats := {}                  # a bat swarm: {phase (0 screeching, 1 sweeping), t, x (its middle), y, dir}
@@ -531,6 +534,8 @@ func set_arena(n: int) -> void:
 	if level.id != n:
 		level = LevelScript.new(n)
 		hazards = BoilerScript.new(level) if level.theme == "nightmare" else null
+		if level.theme == "workshop":
+			hazards = WorkshopScript.new(level)
 
 static func wrap_d(a: float, b: float, size: float) -> float:
 	var d := b - a
@@ -658,7 +663,7 @@ func _reset_powers_round() -> void:
 	if pet_always:
 		pet_at = 60
 	bats = {}
-	bats_at = BATS_FIRST if level.theme == "halloween" else (GUST_FIRST if level.theme == "barn" else -1)
+	bats_at = BATS_FIRST if level.theme == "halloween" else (GUST_FIRST if (level.theme == "barn" or level.theme == "rooftops") else -1)
 	candies.clear()
 	candy_t = rng.randi_range(CANDY_EVERY[0], CANDY_EVERY[1])
 	orbs.clear()
@@ -2441,7 +2446,7 @@ func _update_bats() -> void:
 			f.batted = 30
 	if (bats["dir"] > 0 and x0 > W) or (bats["dir"] < 0 and x0 + BATS_W < 0.0):
 		bats = {}
-		var every: Array = GUST_EVERY if level.theme == "barn" else BATS_EVERY
+		var every: Array = GUST_EVERY if (level.theme == "barn" or level.theme == "rooftops") else BATS_EVERY
 		bats_at = play_t + rng.randi_range(every[0], every[1])
 
 # Out of sight for the others (and the bots): INVISIBLE now, or hidden in bats.
@@ -3041,7 +3046,8 @@ func write_snapshot(buf: StreamPeerBuffer, evs: Array, head: Dictionary = {}) ->
 		buf.put_16(int(c["y"]))
 		buf.put_u8(mini(255, (CANDY_LIFE - int(c["t"])) / 4))
 		buf.put_u8((1 if c["rest"] else 0) | (2 if c["sky"] else 0))
-	buf.put_u8(1 if hazards != null else 0)   # THE BOILER ROOM's state (sim/boiler.gd write)
+	# the arena's moving parts: 1 THE BOILER ROOM's state follows (sim/boiler.gd write), 2 SANTA'S WORKSHOP's (sim/workshop.gd)
+	buf.put_u8(0 if hazards == null else (WorkshopScript.KIND if hazards is WorkshopScript else 1))
 	if hazards != null:
 		hazards.write(buf)
 

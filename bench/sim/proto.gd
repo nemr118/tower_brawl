@@ -17,7 +17,8 @@
 #             s8 dir, u8 leaving (p4.12: each power-up row has one more byte: 1 GHOSTFACE, 2 down,
 #             4 swinging, 8 the knife up); u8 a bat swarm's phase (p4.13: then u8 candies, each s16 x,
 #             s16 y, u8 life left / 4 ticks, u8 1 resting, 2 from the sky) (255: none; 0 screeching, 1 sweeping),
-#             then s16 x, s16 y, s8 dir; then u8 1 with THE BOILER ROOM's state (sim/boiler.gd)
+#             then s16 x, s16 y, s8 dir; then u8 the arena's moving parts: 0 none, 1 THE BOILER ROOM's state
+#             follows (sim/boiler.gd), 2 SANTA'S WORKSHOP's (sim/workshop.gd)
 #   fighter   u8 seat, u8 state, s16 x, s16 y, s8 vx, s8 vy, u8 flags, u8 aim (256 steps),
 #             u8 arrows, u8 state ticks, u8 points, u8 flags2
 #   arrow     u16 id, u8 kind | state << 4 | 0x40 a BIG arrow (p4.9), then stuck or in a body (p4.10): s16 x, s16 y, u8 angle (256 steps);
@@ -181,7 +182,7 @@ const E_STICK := 5       # a = kind, b = 1 floor / 0 wall
 const E_EXPLODE := 6     # a = owner
 const E_IGNITE := 7      # a = 1 floor / 0 wall
 const E_MIASMA := 8
-const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls, 7 lightning, 8 a ghost cat, 9 spikes, 10 a furnace, 11 a knife, 12 its seat was given up: CAUSES)
+const E_DEATH := 9       # a = fighter, b = cause (1 arrow, 2 blast, 3 stomp, 4 fire, 5 miasma, 6 the walls, 7 lightning, 8 a ghost cat, 9 spikes, 10 a furnace, 11 a knife, 12 its seat was given up, 13 a toy train: CAUSES)
 const E_CATCH := 10      # a = fighter, b = kind
 const E_PICKUP := 11     # a = fighter, b = kind
 const E_SPAWN := 12      # a = fighter
@@ -225,7 +226,9 @@ const E_PIED := 43       # a fighter is covered in cream (it sees nobody for sim
 const E_CATCH_UP := 44   # a person far behind starts the round with a SHIELD (sim.gd catch_up): a = fighter
 const E_PHEW := 45       # p4.19 the round's winner would have died after the round was called: x, y where the hit landed; a = the fighter (the winner); b = what hit: 0 an arrow, 1 a blast, 2 anything else
 const E_TAUNT := 46      # p4.19 a fighter taunts (the GOBBLE button; a bot after a knockout): x, y its head; a = fighter
-# (47 to 49 are SANTA'S WORKSHOP's: the toy train, sim/workshop.gd)
+const E_TRAIN_WARN := 47 # p4.22 SANTA'S WORKSHOP (sim/workshop.gd): the toy train's whistle, 2 s before it comes: x, y the tunnel mouth it will come out of; a = 1 it will run right, 0 left
+const E_TRAIN := 48      # the train comes out of its tunnel: x, y the mouth; a = 1 it runs right, 0 left
+const E_TRAIN_HIT := 49  # the train hits someone (knocked out, or a costume knocked down): x, y the fighter's middle; a = fighter; b = 1 the train runs right
 const E_SNOW := 50       # p4.22 a snowball bursts: x, y; a = the shooter; b = 1 BIG
 const E_SNOWED := 51     # a fighter is packed into a snowman (frozen for sim.gd's SNOWED_TICKS): a = fighter
 const E_RIDE_END := 52   # a reindeer ride is over (the reindeer flies off from x, y): a = fighter
@@ -249,7 +252,7 @@ const F2_TEAM_B := 16     # with F2_TEAMS: it is on the second team (TEAM_NAMES[
 
 # the death causes, for the log lines
 const CAUSES := {1: "arrow", 2: "blast", 3: "stomp", 4: "fire", 5: "miasma", 6: "the walls", 7: "lightning",
-	8: "a ghost cat", 9: "spikes", 10: "a furnace", 11: "a knife", 12: "left the game"}
+	8: "a ghost cat", 9: "spikes", 10: "a furnace", 11: "a knife", 12: "left the game", 13: "a toy train"}
 const C_LEFT := 12        # the cause when a fighter's seat is given up in the round (sim.gd leave): the person left, or the host took the seat
 const WALLS_DEADLY_BIT := 0x8000
 

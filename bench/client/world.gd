@@ -17,6 +17,8 @@ const EdgesView = preload("res://client/edges_view.gd")
 const BoilerView = preload("res://client/boiler_view.gd")
 const TableView = preload("res://client/table_view.gd")   # p4.18 THE BIG TABLE (a helper's)
 const BarnView = preload("res://client/barn_view.gd")    # p4.18 THE HARVEST BARN (a helper's)
+const RooftopsView = preload("res://client/rooftops_view.gd")   # p4.22 THE ROOFTOPS (a helper's)
+const WorkshopView = preload("res://client/workshop_view.gd")   # p4.22 SANTA'S WORKSHOP (a helper's)
 const Polish = preload("res://client/polish.gd")         # the polish of 2026-10-25: a switch for each new look piece
 const Season = preload("res://client/season.gd")   # p4.18
 const DressView = preload("res://client/dress_view.gd")  # polish: the castle arenas' dressing (castle_depth, _moss, _ledges, _sconces)
@@ -151,6 +153,8 @@ var edges                        # p4.11: the arena's shapes stand out (client/e
 var boiler                       # THE BOILER ROOM's look (client/boiler_view.gd), theme "nightmare"
 var barn                         # THE HARVEST BARN's look (client/barn_view.gd), theme "barn"
 var table                        # THE BIG TABLE's look (client/table_view.gd), theme "table"
+var rooftops                     # THE ROOFTOPS' look (client/rooftops_view.gd), theme "rooftops"
+var workshop                     # SANTA'S WORKSHOP's look and its toy train (client/workshop_view.gd), theme "workshop"
 var dress                        # polish: the castle arenas' dressing, over the tiles (client/dress_view.gd)
 var team_marks = TeamsView.Marks.new()   # TEAMS: the flags over the fighters (nothing is drawn in FREE FOR ALL)
 var walls_l := Sprite2D.new()   # the purple walls, left and right (a 4 px square scaled to the width)
@@ -415,6 +419,14 @@ func setup(render_size: Vector2i, cpu: bool, amount_boost: float = 1.0) -> void:
 	add_child(barn)
 	move_child(barn, edges.get_index())    # behind the tiles, like the boiler's
 	barn.setup(self)
+	rooftops = RooftopsView.new()
+	add_child(rooftops)
+	move_child(rooftops, edges.get_index())    # behind the tiles, like the barn's
+	rooftops.setup(self)
+	workshop = WorkshopView.new()
+	add_child(workshop)
+	move_child(workshop, edges.get_index())   # behind the tiles, as the table's
+	workshop.setup(self)
 	dress = DressView.new()          # polish: right over the tiles, in the lit layer (the night darkens it, the torches light it)
 	add_child(dress)
 	move_child(dress, tiles_lit.get_index() + 1)
@@ -462,6 +474,7 @@ func on_event(e: Array) -> void:
 	boiler.on_event(e)
 	if snow != null and e[0] == P.E_DEATH:
 		snow.flash()       # p4.22: a knockout: the strings of lights all flash
+	workshop.on_event(e)
 
 # p4.8 (the deathcam): the camera's zoom (1: the whole arena) and where it looks.
 func set_view_zoom(z: float, at: Vector2) -> void:
@@ -580,12 +593,20 @@ func _apply_theme() -> void:
 		move_child(snow, (dress.get_index() if dress != null else tiles_lit.get_index()) + 1)
 	if table != null:
 		table.leave()                 # before the other looks: the table puts back what it hid
+	if rooftops != null:
+		rooftops.leave()              # the same for THE ROOFTOPS
+	if workshop != null:
+		workshop.leave()              # and so does the workshop
 	if boiler != null:
 		boiler.set_theme(level)
 	if barn != null:
 		barn.set_theme(level)     # after the boiler's: each puts back what it hid
 	if table != null:
 		table.set_theme(level)        # after them: on THE BIG TABLE it hides the castle's parts
+	if rooftops != null:
+		rooftops.set_theme(level)     # and on THE ROOFTOPS
+	if workshop != null:
+		workshop.set_theme(level)     # and on SANTA'S WORKSHOP the workshop does
 
 # p4.18: the season changed (the lobby's SEASON button, or the first seats message): the
 # arena takes its look again.
@@ -740,6 +761,7 @@ func render(s: Dictionary, delta: float) -> void:
 		f3d.update(fl)
 	pview.show_view(s, delta, me)
 	boiler.show_view(s, delta)
+	workshop.show_view(s, delta)
 	if replaying:
 		pview.blind = false
 	var pw: Dictionary = s.get("powers", {})

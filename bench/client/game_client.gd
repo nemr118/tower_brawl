@@ -37,6 +37,7 @@ const Lobby = preload("res://client/lobby.gd")
 const Sticks = preload("res://client/touch_sticks.gd")
 const Predict = preload("res://client/predict.gd")
 const Present = preload("res://client/present.gd")
+const WorkshopScript = preload("res://sim/workshop.gd")   # p4.22 SANTA'S WORKSHOP's toy train (drawn on your own tick)
 const PV = preload("res://client/powers_view.gd")
 const Season = preload("res://client/season.gd")   # p4.18
 const Polish = preload("res://client/polish.gd")   # p4.20: the look's switches
@@ -362,6 +363,11 @@ func _process(delta: float) -> void:
 	var view: Dictionary = net.sample(rt, -1, own)
 	if predicting and not view.is_empty():
 		view["arrows"] = present.arrows_at(s, pred.tick, pred.me, my_seat, view["fighters"], pred.sim.arrows, delta)
+		# p4.22 SANTA'S WORKSHOP: the toy train too is drawn where it is on your own tick (the
+		# newest state, rolled on: sim/workshop.gd on_tick), so the train you jump is the one that hits
+		var hz: Dictionary = s.get("hazards", {})
+		if int(hz.get("k", 0)) == WorkshopScript.KIND:
+			view["hazards"] = WorkshopScript.on_tick(hz, pred.tick)
 	if deathcam.playing:
 		# p4.8: the montage draws its recorded frames; the live ones wait
 		var shot: Array = deathcam.step(delta)

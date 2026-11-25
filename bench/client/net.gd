@@ -13,6 +13,7 @@ extends RefCounted
 
 const P = preload("res://sim/proto.gd")
 const BoilerScript = preload("res://sim/boiler.gd")
+const WorkshopScript = preload("res://sim/workshop.gd")   # p4.22 SANTA'S WORKSHOP's toy train
 const DELAY_TICKS := 3.0       # the draw delay's floor: 50 ms (a steady phone)
 const DELAY_MAX := 8.0         # its ceiling: 133 ms (the benchmark's Pixel needed about 100)
 const GAP_KEEP := 150          # the snapshot gaps the draw delay looks at: the last 5 s
@@ -563,8 +564,12 @@ func _read_powers(b: StreamPeerBuffer, s: Dictionary) -> void:
 			for i in b.get_u8():
 				candies.append({"x": float(b.get_16()), "y": float(b.get_16()), "life": b.get_u8() * 4, "flags": b.get_u8()})
 		s["candies"] = candies
-		if b.get_available_bytes() > 0 and b.get_u8() == 1:   # THE BOILER ROOM's state
-			s["hazards"] = BoilerScript.read(b)
+		if b.get_available_bytes() > 0:   # the arena's moving parts: 1 THE BOILER ROOM's state follows, 2 SANTA'S WORKSHOP's
+			var hk := b.get_u8()
+			if hk == 1:
+				s["hazards"] = BoilerScript.read(b)
+			elif hk == WorkshopScript.KIND:
+				s["hazards"] = WorkshopScript.read(b)
 	s["powers"] = powers
 	s["ghosts"] = ghosts
 	s["orbs"] = orbs
