@@ -486,10 +486,11 @@ var self_harm := false
 # the spots: two could start side by side, and a 2-fighter round lasted 4.4 s (bots).
 var far_starts := true
 var knife_lunge := KNIFE_LUNGE  # the costume's lunge, px a tick (the probe tries others)
-# p4.22 the costume's strength (tools/balance_probe.gd --mask-once, --mask-down=N): among bots its wearer won 45% of
-# 8-fighter rounds. mask_once: a costume gets up from ONE knock-down; the next hit ends it, standing or down
-# ("two hits to end", as the game always said). Off: it gets up every time (before p4.22).
-var mask_once := true
+# p4.22 the costume's strength, measured (tools/balance_probe.gd --mask-once=1, --mask-down=N; 300 rounds a line, bots):
+# its wearer wins 47% of 8-fighter rounds as it is, 43% when it gets up from one knock-down only, 41% when it
+# lies 3 s. Neither knob explains it (anyone who takes a power-up wins 30%), so both stay as they were: OFF.
+# mask_once: a costume gets up from ONE knock-down; the next hit ends it, standing or down.
+var mask_once := false
 var mask_down := MASK_DOWN      # how long a knocked-down costume lies there, ticks
 # Two knobs for the classes study (tools/ammo_probe.gd, docs/reference/classes-scope.md); the game leaves both alone:
 var start_quiver := START_QUIVER   # the arrows a fighter starts a round with
