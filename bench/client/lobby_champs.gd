@@ -69,7 +69,9 @@ func _draw() -> void:
 # Static: THE BIG SCREEN's lobby draws it too.
 # t (p4.21): seconds since the board opened: the rows slide in one after another and their
 # numbers count up (99: everything in place, as THE BIG SCREEN shows it).
-static func rows(c: CanvasItem, champs: Array, box: Rect2, p: Dictionary, most: int, t: float = 99.0) -> void:
+# bxf (p4.22): the draw transform the caller is under (THE BIG SCREEN shrinks the board): a long name is
+# squeezed under it and it is put back after.
+static func rows(c: CanvasItem, champs: Array, box: Rect2, p: Dictionary, most: int, t: float = 99.0, bxf: Transform2D = Transform2D.IDENTITY) -> void:
 	var txt: Color = p["text"]
 	var dim: Color = p["dim"]
 	var x := box.position.x
@@ -108,8 +110,17 @@ static func rows(c: CanvasItem, champs: Array, box: Rect2, p: Dictionary, most: 
 					Rect2(5 * 128, 0, 128, 128), Color(1, 1, 1, clampf(ck * 2.0, 0.0, 1.0)))
 		var name := str(row[0]) + ("  (a bot)" if row.size() > 4 and bool(row[4]) else "")
 		var name_col: Color = Color(p["accent_hi"]) if top else txt
-		Art.text(c, Art.DISPLAY, Vector2(x + 112.0, base), name, 40, Color(name_col, ra), 5, Color(0.03, 0.01, 0.05),
-			HORIZONTAL_ALIGNMENT_LEFT, cols[0] - 220.0, false)
+		# p4.22: a name too long for its room is squeezed sideways (the same letters, never a new size), not cut:
+		# FRUITCAKE, CORNBREAD and CRANBERRY with "(a bot)" lost their ends
+		var room: float = cols[0] - 220.0
+		var tw := Art.DISPLAY.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 40).x + 10.0
+		var at := Vector2(x + 112.0, base)
+		if tw > room:
+			var k := room / tw
+			c.draw_set_transform_matrix(bxf * Transform2D(0.0, Vector2(k, 1.0), 0.0, Vector2(at.x * (1.0 - k), 0.0)))
+		Art.text(c, Art.DISPLAY, at, name, 40, Color(name_col, ra), 5, Color(0.03, 0.01, 0.05), HORIZONTAL_ALIGNMENT_LEFT, -1.0, false)
+		if tw > room:
+			c.draw_set_transform_matrix(bxf)
 		for k in 3:
 			var num_col: Color = Color(p["accent_hi"]) if k == 0 else Color(txt, 0.9)
 			c.draw_string(Art.DISPLAY, Vector2(x + cols[k] - 90.0, base), str(int(roundf(int(row[1 + k]) * up))), HORIZONTAL_ALIGNMENT_CENTER, 180.0, 40,

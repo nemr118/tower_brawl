@@ -1,5 +1,8 @@
 {
  "lobby": 1,
+ "lobby_xmas": 2,
  "match": 1,
- "winner": 1
+ "match_xmas": 0,
+ "winner": 1,
+ "winner_xmas": 0
 }

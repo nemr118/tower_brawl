@@ -492,7 +492,8 @@ func _paint_tv(c: Control, txt: Color) -> void:
 		Art.panel(c, cb, Color(pal["panel"], 0.9), Color(pal["panel_edge"], 0.9), 20, Color(0, 0, 0, 0.4), 10)
 		Art.text(c, Art.DISPLAY, Vector2(cb.position.x, cb.position.y + 44.0), "TONIGHT'S CHAMPIONS", 34, gold, 5, Color(0.03, 0.01, 0.05), HORIZONTAL_ALIGNMENT_CENTER, cb.size.x)
 		c.draw_set_transform(Vector2(cb.position.x + 20.0, cb.position.y + 56.0), 0.0, Vector2(0.58, 0.58))
-		Champs.rows(c, champs, Rect2(0, 0, (cb.size.x - 40.0) / 0.58, (cb.size.y - 70.0) / 0.58), pal, 5)
+		Champs.rows(c, champs, Rect2(0, 0, (cb.size.x - 40.0) / 0.58, (cb.size.y - 70.0) / 0.58), pal, 5, 99.0,
+			Transform2D(0.0, Vector2(0.58, 0.58), 0.0, Vector2(cb.position.x + 20.0, cb.position.y + 56.0)))
 		c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 var tv_line := ""                 # the settings in words (a TV has no buttons)

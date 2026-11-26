@@ -77,7 +77,7 @@ const RUN_GAIN := [1.0, -0.9, -0.6, 0.0, -1.0, -0.8]
 const FALL_GAIN := [0.8, -0.6, 0.0, 0.0, 0.0, 0.0]
 const LIMIT := [0.8, 0.75, 0.2, 0.0, 0.7, 0.22]                  # the farthest a tail turns from rest (radians)
 const LIFT := [15.0, 27.0, 28.0, 3.0, 22.0, 16.0]                # how far each hat stands over a bare hood (the marks over a head go up by this)
-const FOOT := [13.0, 13.0, 16.0, 28.0, 13.0, 12.5]               # each hat's lowest edge under its origin: a hat on the floor rests on it (the earmuffs' muff hangs low)
+const FOOT := [13.0, 13.0, 16.0, 31.0, 13.0, 12.5]               # each hat's lowest edge under its origin: a hat on the floor rests on it (the earmuffs' muff hangs low)
 
 # ------------------------------------------------------------------ what the page knows
 static var seat_hat: Array = []     # each seat's hat as the server's newest seats message said (-1: none)
@@ -179,18 +179,23 @@ static func body(ci: CanvasItem, kind: int, col: Color, tint: Color = Color.WHIT
 				Vector2(4.1, 13), Vector2(0, 8.5), Vector2(-4.1, 13), Vector2(-8.25, 8.5), Vector2(-12.4, 13), Vector2(-16.5, 8.5)]), CREAM, ow, tint)
 		ANTLERS:
 			_band(ci, _over(), 4.4, CREAM, ow, tint)
-		MUFFS:      # a band in the seat's colour, a fluffy cream muff over the ear
+		MUFFS:      # p4.22 (they were the weakest hat on a phone): a dark band that shows on any hood, and a big
+			# fluffy muff in the seat's colour with a soft shine (it was a cream puff on a band in a lighter shade)
+			var band_col := col.darkened(0.5)
+			var muff_col := col.lightened(0.12)
 			if front:
 				_band(ci, PackedVector2Array([Vector2(-20, 20), Vector2(-18, 9), Vector2(-11, 0), Vector2(0, -3), Vector2(11, 0), Vector2(18, 9),
-					Vector2(20, 20)]), 5.5, col.lightened(0.3), ow, tint)
+					Vector2(20, 20)]), 6.5, band_col, ow, tint)
 				for sx in [-1.0, 1.0]:
-					_shape(ci, _fluff(Vector2(sx * 20.5, 25.0), 9.5), CREAM, ow, tint)
+					_shape(ci, _fluff(Vector2(sx * 20.5, 25.0), 11.0), muff_col, ow, tint)
+					ci.draw_circle(Vector2(sx * 20.5 - 3.5, 21.0), 3.6, Color(1, 1, 1, 0.55) * tint)
 			else:
 				_band(ci, PackedVector2Array([Vector2(-12.5, 11.0), Vector2(-10.5, 5.5), Vector2(-5.5, 1.0), Vector2(0.5, -1.5),
-					Vector2(6.5, -0.5), Vector2(11.5, 3.0), Vector2(13.5, 6.5)]), 5.0, col.lightened(0.3), ow, tint)
-				_shape(ci, _fluff(Vector2(-9.0, 18.0), 9.5), CREAM, ow, tint)
+					Vector2(6.5, -0.5), Vector2(11.5, 3.0), Vector2(13.5, 6.5)]), 6.0, band_col, ow, tint)
+				_shape(ci, _fluff(Vector2(-9.0, 18.0), 11.0), muff_col, ow, tint)
+				ci.draw_circle(Vector2(-12.0, 14.5), 3.4, Color(1, 1, 1, 0.55) * tint)      # the shine
 				if detail:
-					ci.draw_arc(Vector2(-9.0, 18.0), 4.6, PI * 0.15, PI * 0.75, 6, Color(RIM, 0.2) * tint, 1.6, true)
+					ci.draw_arc(Vector2(-9.0, 18.0), 5.5, PI * 0.15, PI * 0.75, 6, Color(RIM, 0.25) * tint, 1.6, true)
 		BEANIE:
 			var dome := PackedVector2Array()
 			for k in 13:

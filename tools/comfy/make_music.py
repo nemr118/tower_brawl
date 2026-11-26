@@ -3,7 +3,7 @@
 No card: ffmpeg only.
 
     python3 tools/comfy/make_music.py                  every song, from the picks below
-    python3 tools/comfy/make_music.py --pick match=2   another take of one song (seed 2), then cut all
+    python3 tools/comfy/make_music.py --pick match=2   another take of one song (seed 2), then cut all (=0: none)
     python3 tools/comfy/make_music.py --check          numbers for every take and every cut file
 
 What it does to a take:
@@ -107,6 +107,13 @@ def main():
             p[k] = int(v)
     json.dump(p, open(PICKS_FILE, "w"), indent=1, sort_keys=True)
     for name in SONGS:
+        if int(p[name]) == 0:      # p4.22: take 0 = none (the user turned every take down): no file, the game plays its fallback
+            f = os.path.join(OUT, name + ".wav")
+            for g in (f, f + ".import"):
+                if os.path.exists(g):
+                    os.remove(g)
+            print(f"none  {name}: no take picked (the game falls back: the year-round song, or the fanfare)")
+            continue
         if name.endswith("_xmas") and not os.path.exists(os.path.join(TAKES, f"{name}_s{p[name]}.flac")):
             print(f"skip  {name}: no take yet (a card job: run_music.py {name})")
             continue
