@@ -6,6 +6,9 @@
 # closes it. The pick has a glowing gold frame. Drawn on the lobby's 1920 x 1080 frame.
 # p4.21 (polish "motion"): it fades in; the cards rise in one after another; the card
 # under the finger squeezes; the pick breathes.
+# p4.22: eight arenas and MIX: nine cards, five on top and four under them. The sheet has
+# a second row (THE ROOFTOPS, SANTA'S WORKSHOP, Christmas's MIX). In the Christmas dress
+# lights twinkle across the top and the snow drifts behind the cards (client/lobby_xmas.gd).
 extends Control
 
 signal picked(n: int)
@@ -15,9 +18,15 @@ const LevelScript = preload("res://sim/level.gd")
 const Art = preload("res://client/lobby_art.gd")
 const Season = preload("res://client/season.gd")
 const Motion = preload("res://client/motion.gd")
-const SHEET := preload("res://assets/arena_cards.png")   # 400 x 225 a card: MIX, then LevelScript.PLAY's order
+const Xmas = preload("res://client/lobby_xmas.gd")
+# 400 x 225 a card, 8 a row. The first row: MIX, THE KEEP, THE BRIDGES, THE HAUNTED HOUSE, THE BOILER ROOM,
+# THE HARVEST BARN, THE BIG TABLE, the Harvest's MIX. The second (p4.22): THE ROOFTOPS, SANTA'S WORKSHOP, Christmas's MIX.
+const SHEET := preload("res://assets/arena_cards.png")
 const CW := 400.0
 const CH := 225.0
+const PER_ROW := 8
+const CELL_OF := {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 8, 8: 9}    # an arena's cell in the sheet (LevelScript.LAYOUTS' numbers)
+const MIX_CELL := {"harvest": 7, "christmas": 10}                    # a season's own MIX (else the first cell)
 const CARD := Vector2(480, 270)
 const GAP := 40.0
 const GOLD := Color(1.0, 0.82, 0.25)
@@ -37,12 +46,12 @@ func _init() -> void:
 static func order() -> Array:
 	return LevelScript.PLAY + [P.ARENA_MIX]
 
-# Arena n's card in the sheet (MIX is its first cell).
+# Arena n's card in the sheet. MIX is the first cell, or the season's own MIX (p4.18 the
+# Harvest's: the keep, the bridges, the barn, the table; p4.22 Christmas's: the keep, the
+# bridges, the rooftops, the workshop). An arena with no card yet shows MIX's.
 static func src(n: int) -> Rect2:
-	var i := 0 if n == P.ARENA_MIX else LevelScript.PLAY.find(n) + 1
-	if n == P.ARENA_MIX and Season.harvest():
-		i = LevelScript.PLAY.size() + 1     # p4.18: the Harvest season's MIX (the keep, the bridges, the barn, the table), the sheet's last cell
-	return Rect2(maxi(i, 0) * CW, 0, CW, CH)
+	var cell := int(MIX_CELL.get(Season.now, 0)) if n == P.ARENA_MIX else int(CELL_OF.get(n, 0))
+	return Rect2((cell % PER_ROW) * CW, (cell / PER_ROW) * CH, CW, CH)
 
 func open(pick: int) -> void:
 	current = pick
@@ -54,16 +63,18 @@ func open(pick: int) -> void:
 func close() -> void:
 	pane.close()
 
-# Card i's place: five cards or fewer in rows of 3, more (p4.18: seven) in rows of 4, a little smaller.
+# Card i's place: five cards or fewer in rows of 3, more (p4.18: seven) in rows of 4, a little smaller;
+# p4.22: nine in rows of 5 (five on top, four under them), smaller again and a little lower.
 func _rect(i: int) -> Rect2:
 	var n := order().size()
-	var per := 3 if n <= 5 else 4
-	var card := CARD if n <= 5 else Vector2(416, 234)
+	var per := 3 if n <= 5 else (4 if n <= 8 else 5)
+	var card := CARD if n <= 5 else (Vector2(416, 234) if n <= 8 else Vector2(340, 191))
+	var gap := GAP if n <= 8 else 28.0
 	var row := i / per
 	var in_row := mini(per, n - row * per)
-	var row_w := in_row * card.x + (in_row - 1) * GAP
-	var x := (1920.0 - row_w) * 0.5 + (i - row * per) * (card.x + GAP)
-	return Rect2(Vector2(x, 200.0 + row * (card.y + 110.0)), card)
+	var row_w := in_row * card.x + (in_row - 1) * gap
+	var x := (1920.0 - row_w) * 0.5 + (i - row * per) * (card.x + gap)
+	return Rect2(Vector2(x, (200.0 if n <= 8 else 262.0) + row * (card.y + (110.0 if n <= 8 else 136.0))), card)
 
 func _process(delta: float) -> void:
 	if visible:
@@ -101,8 +112,11 @@ func _draw() -> void:
 	if pane.live:
 		a = 1.0                    # (p4.21: the whole picker fades by itself)
 	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.05, 0.88 * a))   # (wider than the frame: it grows in)
-	_text(Vector2(960, 150), "PICK AN ARENA", 66, Color(GOLD, a))
 	var ord := order()
+	if Art.xmas():             # p4.22: the snow drifts behind the cards, lights twinkle across the top
+		Xmas.behind_panel(self, t, a)
+		Xmas.top_lights(self, t, -420.0, 2340.0, 0.0, a)
+	_text(Vector2(960, 150.0 if ord.size() <= 8 else 178.0), "PICK AN ARENA", 66, Color(GOLD, a))
 	var a0 := a
 	for i in ord.size():
 		var n: int = ord[i]
@@ -120,7 +134,8 @@ func _draw() -> void:
 		if pane.live:
 			cs = 0.96 if _press == i else (1.0 + 0.012 * sin(t * 5.0) if on else 1.0)
 		var cmid := r.get_center() + Vector2(0, 40)
-		draw_set_transform(cmid * (1.0 - cs) + Vector2(0, (1.0 - ck) * 110.0), 0.0, Vector2.ONE * cs)
+		var xf := Transform2D(0.0, Vector2.ONE * cs, 0.0, cmid * (1.0 - cs) + Vector2(0, (1.0 - ck) * 110.0))
+		draw_set_transform_matrix(xf)
 		draw_rect(r.grow(9.0), Color(0, 0, 0, 0.6 * a))
 		draw_texture_rect_region(SHEET, r, src(n), Color(1, 1, 1, a))
 		if on:
@@ -128,7 +143,15 @@ func _draw() -> void:
 		else:
 			draw_rect(r.grow(3.0), Color(0.9, 0.9, 1.0, 0.35 * a), false, 3.0)
 		var name := "MIX" if n == P.ARENA_MIX else LevelScript.name_of(n)
-		_text(Vector2(r.get_center().x, r.end.y + 54.0), name, 42, Color(GOLD, a) if on else Color(1, 1, 1, a))
+		# p4.22: nine cards are narrower: every name a little smaller, and one still wider than its card is
+		# squeezed to fit. The same letters at another scale: a size change only, never a new sheet of letters
+		var at := Vector2(r.get_center().x, r.end.y + 54.0)
+		var nk := minf(1.0 if ord.size() <= 8 else 0.86, (r.size.x + 8.0) / maxf(1.0, Art.DISPLAY.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 42).x))
+		if nk < 1.0:
+			draw_set_transform_matrix(xf * Transform2D(0.0, Vector2.ONE * nk, 0.0, (at + Vector2(0, -14)) * (1.0 - nk)))
+		_text(at, name, 42, Color(GOLD, a) if on else Color(1, 1, 1, a))
+		if nk < 1.0:
+			draw_set_transform_matrix(xf)
 		if n == P.ARENA_MIX:
 			_text(Vector2(r.get_center().x, r.end.y + 92.0), "a new one every round", 26, Color(0.85, 0.85, 0.95, 0.85 * a))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

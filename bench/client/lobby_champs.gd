@@ -11,6 +11,7 @@ extends Control
 
 const Art = preload("res://client/lobby_art.gd")
 const Motion = preload("res://client/motion.gd")
+const Xmas = preload("res://client/lobby_xmas.gd")   # p4.22: the Christmas dress: lights along the board's top, snow behind it
 const UI_ICONS := preload("res://assets/ui_icons.png")   # cell 5: the painted crown
 const CARD := Rect2(420, 110, 1080, 860)
 
@@ -38,7 +39,7 @@ func _process(delta: float) -> void:
 	if not visible:
 		return
 	var moving := pane.step(delta)
-	if moving or t < 0.3 or (pane.live and t < 2.0):     # (the rows and their numbers take a moment longer)
+	if moving or t < 0.3 or (pane.live and t < 2.0) or Art.xmas():     # (the rows and their numbers take a moment longer; p4.22: the lights twinkle)
 		t += delta
 		queue_redraw()
 
@@ -54,7 +55,11 @@ func _draw() -> void:
 		a = 1.0
 	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.04, 0.86 * a))
 	var accent: Color = pal["accent"]
+	if Art.xmas():
+		Xmas.behind_panel(self, t, a)
 	Art.panel(self, CARD, Color(pal["panel"], 0.985), accent, 30, Color(accent.r, accent.g, accent.b, 0.3), 28)
+	if Art.xmas():
+		Xmas.card_lights(self, t, CARD, a)
 	Art.text(self, Art.DISPLAY, Vector2(CARD.position.x, CARD.position.y + 92.0), "TONIGHT'S CHAMPIONS", 72, pal["accent_hi"], 8, Color(0.03, 0.01, 0.05),
 		HORIZONTAL_ALIGNMENT_CENTER, CARD.size.x)
 	rows(self, list, Rect2(CARD.position.x + 60.0, CARD.position.y + 150.0, CARD.size.x - 120.0, CARD.size.y - 250.0), pal, 8, t if pane.live else 99.0)

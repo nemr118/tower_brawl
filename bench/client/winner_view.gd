@@ -11,6 +11,8 @@
 # archer in their colour, rises up behind the podium in place of the fighter (polish
 # "winner_portrait"); a painted crown on the podium (polish "ui_icons"). The pictures load
 # when first needed and only the winner's hero is kept (the iPhones' memory).
+# p4.22 the Christmas dress: the backdrop is a castle hall with a tree and a fire
+# (assets/winner_christmas.png); snow and gold sparkles fall in place of the confetti.
 extends RefCounted
 
 const Art = preload("res://client/lobby_art.gd")
@@ -20,6 +22,8 @@ const Season = preload("res://client/season.gd")   # p4.18
 const AwardArt = preload("res://client/award_art.gd")   # p4.13 polish "award_art": a picture on each award card
 const Teams = preload("res://client/teams_view.gd")     # TEAMS: the winning team's members under its name
 const Hats = preload("res://client/hats.gd")            # p4.22: the winner's winter hat
+const Xmas = preload("res://client/lobby_xmas.gd")      # p4.22: the falling snow
+const XV = preload("res://client/christmas_view.gd")    # the sparkle
 const HALO := preload("res://assets/fx_halo.png")
 const MID := Vector2(420, 830)    # the winner's feet
 const FIGHTER := 3.0              # the fighter: 3 x its 128 px frame
@@ -47,10 +51,11 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 	var a := clampf(t / 0.35, 0.0, 1.0)
 	var hero := Polish.on("winner_portrait")
 	var words_y := 230.0 if hero else 280.0   # p4.17: the words a little higher, over the hero's hood
+	var dress := Art.dress_for(Season.now)
 	# the arena dims (p4.17: or the painted backdrop comes in over it)
 	if Polish.on("winner_backdrop"):
-		# p4.18: the season's backdrop (the Harvest: a feast on the terrace)
-		var bn: String = {"halloween": "spooky", "harvest": "harvest"}.get(Art.dress_for(Season.now), "castle")
+		# p4.18: the season's backdrop (the Harvest: a feast on the terrace; p4.22 Christmas: a hall with a tree and a fire)
+		var bn: String = {"halloween": "spooky", "harvest": "harvest", "christmas": "christmas"}.get(dress, "castle")
 		if _backdrop == null or bn != _backdrop_name:
 			_backdrop_name = bn
 			_backdrop = load("res://assets/winner_%s.png" % bn)
@@ -101,8 +106,15 @@ static func paint(c: Control, t: float, seat: int, who: String, awards: Array, l
 		c.draw_colored_polygon(ell, Color(0, 0, 0, 0.5 * a))
 		c.draw_texture_rect_region(World.FIGHTER_TEX[posmod(seat, 8)], dst, Rect2((frame % 16) * 128, (frame / 16) * 128, 128, 128))
 		Hats.on_podium(c, seat, Vector2(MID.x, dst.position.y + 122.0 * FIGHTER), FIGHTER, frame, t, col)   # p4.22
-	# confetti
-	for k in 70:
+	# confetti (p4.22 the Christmas dress: snow, and gold sparkles that drift down and twinkle)
+	if dress == "christmas":
+		Xmas.snow(c, t, view, 108, a)
+		for k in 18:
+			var sx := view.position.x + fposmod(k * 211.7 + sin(t * 0.9 + k) * 30.0, view.size.x)
+			var sy := fposmod(k * 97.0 + t * (46.0 + (k % 5) * 12.0), 1160.0) - 40.0
+			var tw := 0.35 + 0.65 * absf(sin(t * 2.3 + k * 1.3))
+			XV.sparkle(c, Vector2(sx, sy), (11.0 + (k % 3) * 5.0) * tw, Color(1.0, 0.88, 0.4, 0.95 * a * tw))
+	for k in (0 if dress == "christmas" else 70):
 		var sp := 90.0 + (k % 7) * 26.0
 		var x := fposmod(k * 137.5 + sin(t * 1.3 + k) * 40.0, 1920.0)
 		var y := fposmod(k * 53.0 + t * sp, 1180.0) - 80.0

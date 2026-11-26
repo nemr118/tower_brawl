@@ -164,6 +164,7 @@ func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	t += delta
+	_snow(delta)
 	for i in N:
 		var c: Dictionary = cards[i]
 		c["pop"] += delta
@@ -221,6 +222,28 @@ func _xf(i: int) -> Array:
 	if c["me"]:
 		cy -= 10.0
 	return [Vector2(cx, cy), s]
+
+# p4.22 the Christmas dress (the user: "snow ... slowly piling on the seat cards"): snow
+# piles up along each card's top edge over a minute, and falls off in a puff when the card
+# reacts (a person joins or leaves, a bot's seat comes or goes, a tap on your own card).
+# All of it is client/lobby_xmas.gd Piles: eight small nodes that ride on the cards, under
+# the fighters and the words (so names and flags stay clear). Any other dress: no snow.
+const Xmas = preload("res://client/lobby_xmas.gd")
+var snow: Xmas.Piles = null
+
+func _snow(delta: float) -> void:
+	if not Art.xmas():
+		if snow != null:
+			snow.show(false)
+		return
+	if snow == null:
+		snow = Xmas.Piles.new(self, N, W)
+		snow.fill_s = maxf(1.0, Art.knob("pile_s", Xmas.PILE_S))   # (a test knob for pictures: ?pile_s=5)
+	snow.show(true)
+	snow.step(delta, cards)
+	for i in N:
+		var xf := _xf(i)
+		snow.place(i, xf[0], xf[1], H * 0.5)
 
 func _frame(i: int) -> int:
 	var c: Dictionary = cards[i]

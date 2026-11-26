@@ -9,6 +9,9 @@
 # Drawn on the lobby's 1920 x 1080 frame.
 # p4.21 (polish "motion"): the panel grows in and shrinks away (client/motion.gd); its
 # rows slide in one after another; the choice you pick jumps.
+# p4.22: SEASON has a fifth choice, CHRISTMAS (five buttons in a row: each as wide as its
+# word). In the Christmas dress a string of lights twinkles along the card's top and the
+# snow drifts behind it (client/lobby_xmas.gd).
 extends Control
 
 signal look_picked(pick: String)
@@ -21,6 +24,7 @@ signal mode_picked(pick: String)     # TEAMS: the MODE row, "ffa" or "teams"
 
 const Art = preload("res://client/lobby_art.gd")
 const Motion = preload("res://client/motion.gd")
+const Xmas = preload("res://client/lobby_xmas.gd")   # p4.22
 const CARD := Rect2(330, 70, 1260, 940)    # tall enough for four rows and DONE (a phone has CONTROLS too)
 const ROW_H := 116.0
 const SEG_X := 760.0              # where a row's choices start
@@ -46,7 +50,7 @@ func _init() -> void:
 	_row("controls", "CONTROLS", "How you jump and dodge.", [["classic", "CLASSIC"], ["buttons", "BUTTONS"]])
 	_row("sound", "SOUND", "Silly sounds, on this device.", [["off", "OFF"], ["on", "ON"]])
 	_row("music", "MUSIC", "Songs, on this device.", [["off", "OFF"], ["on", "ON"]])   # p4.20
-	_row("season", "SEASON", "The game's holiday.", [["auto", "AUTO"], ["off", "OFF"], ["halloween", "HALLOWEEN"], ["harvest", "HARVEST"]])
+	_row("season", "SEASON", "The game's holiday.", [["auto", "AUTO"], ["off", "OFF"], ["halloween", "HALLOWEEN"], ["harvest", "HARVEST"], ["christmas", "CHRISTMAS"]])
 	_row("mode", "MODE", "Everyone alone, or two teams.", [["ffa", "FREE FOR ALL"], ["teams", "TEAMS"]])   # TEAMS: for everyone, like SEASON
 	add_child(done)
 	done.pressed.connect(close)
@@ -116,19 +120,36 @@ func _layout() -> void:
 		r["y"] = y
 		var n := live.size()
 		var w := (SEG_W - (n - 1) * 12.0) / n
+		# p4.22: five choices in a row (SEASON, with CHRISTMAS): each button as wide as its own word
+		# needs, and every word at one size this panel draws already (26: HALLOWEEN's was), so no
+		# word shrinks to a size too small to read and no new sheet of letters is made
+		var fs := 38
+		var widths: Array = []
+		if n >= 5:
+			fs = 26
+			var words_w := 0.0
+			for k in n:
+				widths.append(Art.DISPLAY.get_string_size(str(r["choices"][live[k]][1]), HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+				words_w += float(widths[k])
+			var pad := (SEG_W - (n - 1) * 12.0 - words_w) / n
+			for k in n:
+				widths[k] = float(widths[k]) + pad
+		var bx := SEG_X
 		for k in n:
 			var b = btns[live[k]]
+			var bw: float = w if widths.is_empty() else float(widths[k])
 			var picked: bool = str(r["choices"][live[k]][0]) == r["value"]
 			if picked:
-				b.setup(pal["accent"], Color(0.13, 0.05, 0.0), 38)
+				b.setup(pal["accent"], Color(0.13, 0.05, 0.0), fs)
 				if visible and r.has("lit") and str(r["lit"]) != str(r["value"]):
 					b.pop()            # p4.21: the choice that was just picked jumps
 			else:
-				b.setup(Color(pal["button"]).darkened(0.25), Color(pal["text"], 0.9), 38)
+				b.setup(Color(pal["button"]).darkened(0.25), Color(pal["text"], 0.9), fs)
 			b.say("", str(r["choices"][live[k]][1]))
-			b.position = Vector2(SEG_X + k * (w + 12.0), y)
+			b.position = Vector2(bx, y)
 			b.set_meta("x0", b.position.x)
-			b.size = Vector2(w, btn_h)
+			b.size = Vector2(bw, btn_h)
+			bx += bw + 12.0
 			b.disabled = (r["key"] == "season" or r["key"] == "mode") and not season_ok and not picked   # (MODE: as SEASON, a seat in the lobby)
 		r["lit"] = r["value"]
 		y += row_h
@@ -235,6 +256,9 @@ func _process(delta: float) -> void:
 		t += delta
 		_place()
 		queue_redraw()
+	elif Art.xmas():           # p4.22: the lights twinkle and the snow drifts while it is open
+		t += delta
+		queue_redraw()
 
 func _gui_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
@@ -248,7 +272,11 @@ func _draw() -> void:
 		a = 1.0                    # (p4.21: the whole panel fades by itself)
 	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.04, 0.86 * a))   # (wider than the frame: a long phone's sides too)
 	var accent: Color = pal["accent"]
+	if Art.xmas():             # p4.22: the snow still drifts behind the card
+		Xmas.behind_panel(self, t, a)
 	Art.panel(self, CARD, Color(pal["panel"], 0.985), accent, 30, Color(accent.r, accent.g, accent.b, 0.3), 28)
+	if Art.xmas():             # and a string of lights twinkles along its top
+		Xmas.card_lights(self, t, CARD, a)
 	if in_match:
 		draw_string(Art.BODY, Vector2(CARD.position.x, CARD.end.y - 150.0), "The match goes on while this is open.", HORIZONTAL_ALIGNMENT_CENTER, CARD.size.x, 26,
 			Color(pal["dim"], 0.95))

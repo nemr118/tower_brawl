@@ -6,12 +6,19 @@
 # It covers the whole window (lobby.gd sets its rect from fit()).
 # p4.18 the Harvest dress: no bats or lightning; autumn leaves fall and turn
 # (LOW 6, NORMAL 16, HIGH 26).
+# p4.22 the Christmas dress (client/lobby_xmas.gd): no bats, lightning, leaves or embers.
+# Snow falls in three depths (LOW 36 flakes, NORMAL 90, HIGH 132), strings of coloured
+# lights hang across the top and twinkle (their soft light is added on the glow layer),
+# and every 26 s the sleigh crosses the sky behind the title.
 extends Control
+
+const Xmas = preload("res://client/lobby_xmas.gd")
 
 var pal: Dictionary = {}
 var tier := 2                    # 1 LOW, 2 NORMAL, 3 HIGH (the page's look)
 var halloween := false
 var harvest := false             # p4.18: the Harvest dress: falling leaves
+var christmas := false           # p4.22: the Christmas dress: snow, lights, the sleigh
 var t := 0.0
 var fade := 1.0                  # 0..1: the lobby fading in (lobby.gd)
 var flash := 0.0
@@ -50,11 +57,14 @@ func _init() -> void:
 func set_dress(p: Dictionary, hw: bool) -> void:
 	pal = p
 	halloween = hw
+	set_tier(tier)       # (p4.22: the Christmas dress has no embers)
 	queue_redraw()
 
 func set_tier(n: int) -> void:
 	tier = n
 	var want: int = [8, 34, 56][clampi(n, 1, 3) - 1]
+	if christmas:
+		want = 0
 	while embers.size() > want:
 		embers.pop_back()
 	while embers.size() < want:
@@ -78,6 +88,8 @@ func _process(delta: float) -> void:
 			flash = 1.0
 			_make_bolt()
 	flash = maxf(0.0, flash - delta * 2.6)
+	if christmas and glow.size != size:
+		glow.size = size     # p4.22: the lights' glow layer covers the window (with no size it is taken for off the screen on a wide phone, and not drawn)
 	queue_redraw()
 	glow.queue_redraw()
 
@@ -123,6 +135,10 @@ func _draw() -> void:
 		_mist(w, 470.0, 150.0, 0.45, 9.0, 0.7, Color(mist, mist.a * 0.6 * a))
 	if harvest:
 		_leaves(w, h)
+	if christmas:        # p4.22: the sleigh far off, the snow before it, the lights across the top
+		Xmas.sleigh(self, t, w, 150.0, 0.8, 0.95 * a)
+		Xmas.snow(self, t, Rect2(0, 0, w, h), 36 if tier <= 1 else (90 if tier == 2 else 132), a)
+		Xmas.top_lights(self, t, 0.0, w, 0.0, a, Xmas.STRING)
 	if halloween:
 		var n := 2 if tier <= 1 else (5 if tier == 2 else 7)
 		for i in n:
@@ -189,6 +205,8 @@ func _paint_glow(c: Control) -> void:
 	if pal.is_empty():
 		return
 	var w := size.x
+	if christmas:        # p4.22: the soft light round each bulb of the strings
+		Xmas.top_lights(c, t, 0.0, w, 0.0, fade, Xmas.GLOW)
 	var e1: Color = pal["ember"]
 	var e2: Color = pal["ember2"]
 	for e in embers:

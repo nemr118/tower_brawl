@@ -13,6 +13,7 @@ signal someone_new
 
 const Art = preload("res://client/lobby_art.gd")
 const Motion = preload("res://client/motion.gd")
+const Xmas = preload("res://client/lobby_xmas.gd")   # p4.22: the Christmas dress: lights across the top, snow behind the names
 const GOLD := Color(1.0, 0.82, 0.25)
 const COLS := 4
 const BTN := Vector2(400, 124)
@@ -95,6 +96,9 @@ func _draw() -> void:
 	if pane.live:
 		a = 1.0                    # (p4.21: the whole picker fades by itself)
 	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.05, 0.92 * a))   # (wider than the frame: it grows in)
+	if Art.xmas():
+		Xmas.behind_panel(self, t, a)
+		Xmas.top_lights(self, t, -420.0, 2340.0, 0.0, a)
 	_size_at(Vector2(960, 150), 0.7 + 0.3 * Motion.rise(t, 0.0, 0.3))
 	_text(Vector2(960, 170), "WHO ARE YOU?", 80, Color(GOLD, a))
 	for i in names.size():

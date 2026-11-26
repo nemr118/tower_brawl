@@ -13,6 +13,10 @@
 # the tap on your own lobby card that changes sides (Tap), and the names under the match's
 # winner (winner_names, called by client/winner_view.gd).
 # A restyle only needs this file: change COLORS, flag(), or where each caller puts it.
+# p4.22 Christmas: TEAM NAUGHTY and TEAM NICE both start with N, so a letter cannot tell
+# them apart. In that season each flag has a mark drawn in code in place of its letter:
+# NAUGHTY two red horns on top and a cross, NICE a gold halo over it and a tick (xmas_top,
+# xmas_mark). The horns and the halo change the flag's outline, which reads at a phone's size.
 extends RefCounted
 
 const P = preload("res://sim/proto.gd")
@@ -99,6 +103,9 @@ static func flag(c: CanvasItem, top: Vector2, t: int, w: float, alpha: float = 1
 	var pts := PackedVector2Array()
 	for v in shape:
 		pts.append(top + Vector2(v.x * w, v.y * h))
+	var xmas := Season.christmas()
+	if xmas:                     # p4.22: NAUGHTY's horns stand behind the flag's top edge
+		xmas_top(c, top, t, w, alpha, false)
 	# the dark rim: the same shape, drawn as a thick closed line under the fill
 	var loop := pts.duplicate()
 	loop.append(pts[0])
@@ -110,6 +117,10 @@ static func flag(c: CanvasItem, top: Vector2, t: int, w: float, alpha: float = 1
 		c.draw_colored_polygon(PackedVector2Array([top, pts[1], pts[2], pts[3]]), Color(col, alpha))
 	# a lighter band along the top, like cloth catching the light
 	c.draw_rect(Rect2(top.x - w * 0.5, top.y, w, maxf(2.0, h * 0.14)), Color(col.lightened(0.45), alpha))
+	if xmas:                     # p4.22: NICE's halo over the flag, and each team's mark in place of a letter
+		xmas_top(c, top, t, w, alpha, true)
+		xmas_mark(c, top + Vector2(0, h * (0.44 if t == 0 else 0.52)), t, w, alpha)
+		return
 	# the team's letter, in white, a little above the middle (the pointed flag narrows below)
 	var list: Array = LETTERS.get(Season.now, LETTERS[""])
 	var k := w * 0.6 / LETTER_SIZE
@@ -117,6 +128,45 @@ static func flag(c: CanvasItem, top: Vector2, t: int, w: float, alpha: float = 1
 	c.draw_set_transform_matrix(base * Transform2D(0.0, Vector2(k, k), 0.0, mid))
 	c.draw_string(Art.DISPLAY, Vector2(-40, 0), str(list[clampi(t, 0, 1)]), HORIZONTAL_ALIGNMENT_CENTER, 80, LETTER_SIZE, Color(1, 1, 1, alpha))
 	c.draw_set_transform_matrix(base)
+
+# p4.22 what stands on a Christmas flag's top edge. TEAM NAUGHTY (t 0): two red horns that
+# lean outwards (front false: they go behind the flag's rim). TEAM NICE (t 1): a gold halo
+# floating over it (front true). Plain triangles and lines only: they cost a phone nothing.
+static func xmas_top(c: CanvasItem, top: Vector2, t: int, w: float, alpha: float, front: bool) -> void:
+	var rim := Color(RIM, alpha)
+	if t == 0 and not front:
+		var r := maxf(1.5, w * 0.07)
+		for side in [-1.0, 1.0]:
+			var a := top + Vector2(side * w * 0.52, 0.0)
+			var b := top + Vector2(side * w * 0.16, 0.0)
+			var tip := top + Vector2(side * w * 0.60, -w * 0.36)
+			c.draw_primitive(PackedVector2Array([a + Vector2(side * r, r), b + Vector2(-side * r * 1.4, r), tip + Vector2(side * r * 0.9, -r * 1.7)]),
+				PackedColorArray([rim, rim, rim]), PackedVector2Array())
+			var red := Color(0.93, 0.13, 0.12, alpha)
+			c.draw_primitive(PackedVector2Array([a, b, tip]), PackedColorArray([red.darkened(0.25), red, red.lightened(0.25)]), PackedVector2Array())
+	elif t == 1 and front:
+		var mid := top + Vector2(0, -w * 0.27)
+		var gold := Color(1.0, 0.86, 0.3, alpha)
+		var thick := maxf(2.0, w * 0.085)
+		for pass_i in 2:         # the dark ring under the gold one
+			for k in 10:
+				var a0 := TAU * k / 10.0
+				var a1 := TAU * (k + 1.25) / 10.0
+				var p0 := mid + Vector2(cos(a0) * w * 0.34, sin(a0) * w * 0.115)
+				var p1 := mid + Vector2(cos(a1) * w * 0.34, sin(a1) * w * 0.115)
+				c.draw_line(p0, p1, rim if pass_i == 0 else gold, thick + (maxf(2.0, w * 0.09) if pass_i == 0 else 0.0))
+
+# p4.22 the mark on a Christmas flag, its middle at mid: a white cross (NAUGHTY) or a white
+# tick (NICE), each with a dark line under it.
+static func xmas_mark(c: CanvasItem, mid: Vector2, t: int, w: float, alpha: float) -> void:
+	var thick := maxf(2.0, w * 0.13)
+	var u := w * 0.17
+	var segs: Array = [[Vector2(-u, -u), Vector2(u, u)], [Vector2(-u, u), Vector2(u, -u)]] if t == 0 \
+		else [[Vector2(-u * 1.25, 0.0), Vector2(-u * 0.3, u * 0.95)], [Vector2(-u * 0.45, u * 0.95), Vector2(u * 1.3, -u * 0.95)]]
+	for pass_i in 2:
+		for sg in segs:
+			var d: Vector2 = (sg[1] - sg[0]).normalized() * (thick * 0.3 if pass_i == 0 else 0.0)
+			c.draw_line(mid + sg[0] - d, mid + sg[1] + d, Color(RIM, 0.55 * alpha) if pass_i == 0 else Color(1, 1, 1, alpha), thick + (thick * 0.7 if pass_i == 0 else 0.0))
 
 # ------------------------------------------------------------------ the lobby's cards
 # A flag on the top edge of each seat's card (lobby_cards.gd calls this at the end of its
@@ -140,6 +190,8 @@ static func lobby_flags(n: CanvasItem, cards, xfs: Array) -> void:
 		if ft < 0.0:
 			continue
 		var drop := (Art.ease_out_back(ft / 0.38) - 1.0) * 90.0 if ft < 0.38 else 0.0
+		if Season.christmas():
+			drop += 12.0          # p4.22: a little lower: the horns and the halo stand on top of the flag (and under the title's ribbon)
 		var fa := (0.55 if int(c["kind"]) == 0 else 1.0) * clampf(ft / 0.1, 0.0, 1.0)
 		if c.has("awards") and not c["awards"].is_empty():
 			# after a match the card's top carries its award: the flag goes small into the top right

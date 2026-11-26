@@ -51,6 +51,7 @@ const Polish = preload("res://client/polish.gd")
 const Teams = preload("res://client/teams_view.gd")          # TEAMS: the tap on your own card (the flags: lobby_cards.gd)
 const Motion = preload("res://client/motion.gd")             # p4.21: polish "motion"
 const Hats = preload("res://client/hats.gd")                 # p4.22: the HAT button (the hats on the cards: lobby_cards.gd)
+const Season = preload("res://client/season.gd")             # p4.22: the nights to Christmas (the title's ribbon)
 const UI_ICONS := preload("res://assets/ui_icons.png")   # p4.17 (polish "ui_icons"): 128 px cells, tools/comfy/make_assets.py ICONS
 const PU_ICONS := preload("res://assets/pu_icons.png")   # the power-up pictures: cell 13 the lightning, on POWER-UPS
 enum { IC_BOTS, IC_LEVEL, IC_LOOK, IC_CONTROLS, IC_LEAVE, IC_CROWN }
@@ -137,6 +138,7 @@ var count_left := 0.0             # the countdown's seconds left (the parts drop
 var count_arena := ""
 var last_phase := -1
 var slow := 1.0                   # the test knob ?lobby_slow=N (lobby_art.gd slow_knob)
+var sleeps_knob := -99            # p4.22 the test knob ?sleeps=N: the nights to Christmas to show (-99: the server's count)
 
 class _Dock extends Control:
 	var lobby
@@ -161,11 +163,15 @@ func _init() -> void:
 	Art.fonts_ready()
 	dress = Art.pick_dress()
 	slow = Art.slow_knob()
+	sleeps_knob = int(Art.knob("sleeps", -99.0))
 	pal = Art.DRESSES[dress]
 	var hw := dress == "halloween"
 	add_child(bg)
 	bg.harvest = dress == "harvest"
 	logo.harvest = dress == "harvest"
+	Art.dress_now = dress             # p4.22: the Christmas dress: the backdrop, the title, and (through Art.xmas()) the cards and the panels
+	bg.christmas = dress == "christmas"
+	logo.christmas = dress == "christmas"
 	bg.set_dress(pal, hw)
 	bg.set_tier(tier)
 	root.size = Vector2(1920, 1080)
@@ -409,6 +415,9 @@ func _apply_dress(d: String) -> void:
 	pal = Art.DRESSES[dress]
 	var hw := dress == "halloween"
 	bg.harvest = dress == "harvest"
+	Art.dress_now = dress             # p4.22
+	bg.christmas = dress == "christmas"
+	logo.christmas = dress == "christmas"
 	bg.set_dress(pal, hw)
 	logo.harvest = dress == "harvest"
 	logo.set_dress(pal, hw)
@@ -539,6 +548,7 @@ func update(m: Dictionary, my_seat: int, phase: int, left: int, status_in: Strin
 	cards.set_seats(list, my_seat, phase, bots, m.get("awards", []))
 	known_names = m.get("names", [])
 	champs = m.get("champs", [])
+	logo.set_sleeps(sleeps_knob if sleeps_knob > -99 else int(m.get("sleeps", Season.sleeps)))   # p4.22: "12 SLEEPS TO CHRISTMAS", by the server's date
 	champs_btn.visible = one_panel and not tv and not champs.is_empty()   # (nothing to show before the night's first match)
 	seated_names.clear()
 	for st in list:

@@ -11,9 +11,12 @@
 # The letters are drawn at three sizes only and scaled to the size asked for: a font
 # keeps a sheet of letters (about 2 MB on the GPU) for every size and outline it draws
 # (p4.15's iPhone lesson, client/deathcam.gd).
+# p4.22 the Christmas dress: snow lies on the big line's letters, as on the lobby's title
+# (client/lobby_xmas.gd word_caps). It is drawn once for each line, not every frame.
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
+const Xmas = preload("res://client/lobby_xmas.gd")
 const HALO := preload("res://assets/fx_halo.png")
 const RIBBON := preload("res://assets/ui_ribbon.png")
 const RIB_CAP := 192.0           # the ribbon picture's ends (its tails and folds), px of its 1024 x 191
@@ -34,6 +37,8 @@ var t := 9.0
 var base := MID                  # the size the big line is drawn at
 var line := _Part.new()          # the big line, scaled from base to its size
 var fill := _Part.new()          # its letters' fill (the gradient and the light), in line
+var frost := _Part.new()         # p4.22: the snow on its letters (the Christmas dress), in line, over the fill
+var frost_key := ""              # the line and the size its snow was drawn for ("": none)
 
 class _Part extends Control:
 	var b
@@ -45,13 +50,14 @@ func _init() -> void:
 	size = Vector2(1920, 1080)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	for p in [line, fill]:
+	for p in [line, fill, frost]:
 		p.b = self
 		p.size = size
 		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fill.material = Art.grad_material(Color.WHITE, Color.WHITE, 0.0, 100.0, 1.0)
 	add_child(line)
 	line.add_child(fill)
+	line.add_child(frost)
 
 # What to show this frame: the big line (or []), the ribbon's words, the small lines.
 func set_banner(m: Array, ribbon: String, ex: Array, delta: float) -> void:
@@ -80,6 +86,11 @@ func set_banner(m: Array, ribbon: String, ex: Array, delta: float) -> void:
 		mat.set_shader_parameter("bot_col", main[3])
 		mat.set_shader_parameter("y0", y - base * 0.74)
 		mat.set_shader_parameter("y1", y)
+	var fk := ("%s|%d|%d" % [key, base, int(main[5])]) if Art.xmas() and not main.is_empty() else ""
+	if fk != frost_key:          # p4.22: a new line (or the dress came off): its snow is drawn once
+		frost_key = fk
+		frost.queue_redraw()
+	frost.modulate.a = clampf(t / 0.08, 0.0, 1.0) * alpha
 	queue_redraw()
 	line.queue_redraw()
 	fill.queue_redraw()
@@ -121,6 +132,10 @@ func _paint_part(c: Control) -> void:
 	var text: String = main[0]
 	var y: float = main[5]
 	var a := clampf(t / 0.08, 0.0, 1.0) * alpha
+	if c == frost:
+		if frost_key != "":
+			Xmas.word_caps(c, f, text, 960.0 - f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, base).x * 0.5, y, base, Color(0.07, 0.02, 0.1))
+		return
 	if c == fill:
 		c.draw_string(f, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, 1920, base, Color(1, 1, 1, a))
 		return

@@ -14,8 +14,23 @@ const BODY: FontFile = preload("res://assets/fonts/lobby_body.ttf")         # No
 
 # A dress is a set of colours and words. "halloween": purple night, pumpkin
 # orange, slime green. "castle": blue night, gold. "harvest" (p4.18): an autumn
-# dusk, pumpkin orange, gold, a green ribbon.
+# dusk, pumpkin orange, gold, a green ribbon. "christmas" (p4.22): a deep winter
+# night, pine green buttons, a gold START, a warm red title with a frosted rim, snow
+# white words. Its moving parts (the snow, the lights, the wreath): client/lobby_xmas.gd.
 const DRESSES := {
+	"christmas": {
+		"tint_top": Color(0.02, 0.05, 0.13, 0.84), "tint_mid": Color(0.02, 0.05, 0.12, 0.36), "tint_bot": Color(0.01, 0.03, 0.08, 0.92),
+		"panel": Color(0.04, 0.09, 0.13, 0.93), "panel_edge": Color(0.30, 0.62, 0.44), "panel_hi": Color(0.8, 1.0, 0.9, 0.16),
+		"accent": Color(1.0, 0.77, 0.22), "accent_hi": Color(1.0, 0.91, 0.56), "accent_dark": Color(0.44, 0.25, 0.02),
+		"second": Color(0.5, 0.85, 1.0), "button": Color(0.11, 0.36, 0.25), "danger": Color(0.70, 0.13, 0.14),
+		"text": Color(0.97, 0.99, 1.0), "dim": Color(0.70, 0.83, 0.88), "faint": Color(0.46, 0.58, 0.64),
+		"logo_top": Color(1.0, 0.52, 0.42), "logo_bot": Color(0.80, 0.07, 0.10), "logo_rim": Color(0.97, 0.98, 1.0),
+		"logo_edge": Color(0.03, 0.07, 0.14), "logo_glow": Color(0.55, 0.8, 1.0, 0.24),
+		"ribbon": Color(0.09, 0.42, 0.25), "ribbon_dark": Color(0.04, 0.23, 0.13), "ribbon_text": Color(1.0, 0.95, 0.72),
+		"tagline": "CHRISTMAS BRAWL",
+		"mist": Color(0.78, 0.88, 1.0, 0.13), "ember": Color(1.0, 0.85, 0.4), "ember2": Color(1.0, 1.0, 1.0),
+		"flash": Color(0.85, 0.92, 1.0),
+	},
 	"harvest": {
 		"tint_top": Color(0.10, 0.04, 0.02, 0.84), "tint_mid": Color(0.09, 0.04, 0.02, 0.36), "tint_bot": Color(0.05, 0.02, 0.01, 0.92),
 		"panel": Color(0.13, 0.07, 0.04, 0.93), "panel_edge": Color(0.72, 0.42, 0.16), "panel_hi": Color(1.0, 0.85, 0.6, 0.16),
@@ -82,6 +97,11 @@ void fragment() {
 static var _ready_fonts := false
 static var _boxes := {}
 static var _grad: Shader
+static var dress_now := "castle"   # p4.22: the dress the lobby wears now (lobby.gd sets it): its panels and the cards ask xmas()
+
+# p4.22: is the lobby in its Christmas dress? (The snow, the lights, the wreath: client/lobby_xmas.gd.)
+static func xmas() -> bool:
+	return dress_now == "christmas"
 
 static func grad_material(top: Color, bot: Color, y0: float, y1: float, shine: float) -> ShaderMaterial:
 	if _grad == null:
@@ -107,7 +127,8 @@ static func _query() -> String:
 
 # The dress for tonight by this device's own date, until the server says its season
 # (p4.18): "halloween" from October 1 to November 2, "harvest" from November 3 to 30,
-# else "castle". A test knob: ?dress=castle, halloween or harvest on the page (--dress=... on the PC).
+# "christmas" all of December (p4.22), else "castle". A test knob: ?dress=castle,
+# halloween, harvest or christmas on the page (--dress=... on the PC).
 static func pick_dress() -> String:
 	var t := Time.get_date_dict_from_system()
 	return dress_for(P.season_for(int(t.month), int(t.day)))
@@ -119,6 +140,17 @@ static func dress_for(season: String) -> String:
 		if ("dress=" + d) in q:
 			return d
 	return season if DRESSES.has(season) else "castle"
+
+# A test knob with a number: ?key=12 on the page (--key=12 on the PC); `none` when it
+# is not there. p4.22: ?sleeps=12 (the nights to Christmas the lobby shows: lobby.gd),
+# ?pile_s=5 (a seat card's snow is full in 5 s, not 60: lobby_cards.gd).
+static func knob(key: String, none: float) -> float:
+	var q := _query()
+	for lead in ["?", "&", " ", "--"]:
+		var i := q.find(lead + key + "=")
+		if i >= 0:
+			return float(q.substr(i + lead.length() + key.length() + 1).get_slice("&", 0).get_slice(" ", 0))
+	return none
 
 # A test knob for pictures: ?lobby_slow=4 plays the lobby's rise-in 4 times
 # slower (1: normal).

@@ -32,7 +32,7 @@ ap.add_argument("--url", default="https://127.0.0.1:8443/v2/index.html")
 ap.add_argument("--server", default="wss://127.0.0.1:8091")
 ap.add_argument("--out", default="/tmp/v2clip")
 ap.add_argument("--name", default="Tav")
-ap.add_argument("--script", default="lobby", help="which steps to film: " + ", ".join(["lobby", "teams", "join", "menu", "tv", "hats", "match", "hatmove"]))
+ap.add_argument("--script", default="lobby", help="which steps to film: " + ", ".join(["lobby", "teams", "join", "menu", "tv", "hats", "match", "hatmove", "dress"]))
 ap.add_argument("--secs", type=float, default=16.0, help="p4.22 --script match: how many seconds of the match to film (after the tap on START)")
 ap.add_argument("--slowmo", type=float, default=4.0)
 ap.add_argument("--extra", default="", help="more page options, a=1&b=2")
@@ -74,6 +74,11 @@ SCRIPTS = {
     # the hats' own motion with no server: the test page ?hatsheet=move (client/hats.gd Sheet): six fighters, one in each hat,
     # run, jump, land, turn, roll, aim and are knocked out. One whole turn of the routine is 13 s
     "hatmove": [(13.6, None)],
+    # p4.22 a lobby's dress, for a BEFORE/AFTER of two dresses (two servers in two seasons, or --extra dress=harvest against
+    # dress=christmas): 7 s of the lobby alone (the Christmas sleigh crosses from 5 s), a tap on your own card (its snow
+    # falls off), SETTINGS and DONE, the arena picker and a pick (THE ROOFTOPS), HOW TO PLAY, the bots' - and +
+    "dress": [(7.5, ("tap", (165, 420))), (1.6, ("tap", SET)), (2.0, ("tap", (960, 936))), (0.8, ("tap", (320, 732))), (2.0, ("tap", (776, 684))),
+              (1.0, ("tap", (230, 124))), (2.4, ("tap", (960, 980))), (0.8, ("tap", (1293, 732))), (0.9, ("tap", (1389, 732))), (1.5, None)],
 }
 steps = SCRIPTS[a.script]
 

@@ -7,6 +7,9 @@
 # its BUTTONS layout, or a keyboard and mouse. Drawn on the lobby's 1920 x 1080 frame.
 # p4.21 (polish "motion"): it fades in; the three pictures rise in one after another;
 # GOT IT breathes.
+# p4.22: in the Christmas season its last line says to ride the reindeer (with its
+# picture). In the Christmas dress lights twinkle across the top, the snow drifts behind
+# the three pictures, and snow lies on the planks (client/lobby_xmas.gd).
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
@@ -14,6 +17,8 @@ const World = preload("res://client/world.gd")     # p4.19: the real fighters (F
 const Polish = preload("res://client/polish.gd")
 const Season = preload("res://client/season.gd")
 const Motion = preload("res://client/motion.gd")
+const Xmas = preload("res://client/lobby_xmas.gd")
+const XV = preload("res://client/christmas_view.gd")   # p4.22: the reindeer's badge
 const GOLD := Color(1.0, 0.82, 0.25)
 const INK := Color(0.96, 0.96, 1.0)
 const DIM := Color(0.75, 0.78, 0.9)
@@ -113,6 +118,9 @@ func _draw() -> void:
 	if pane.live:
 		a = 1.0                    # (p4.21: the whole page fades by itself)
 	draw_rect(Rect2(-2000, -1000, 5920, 3080), Color(0.02, 0.01, 0.05, 0.93 * a))   # (wider than the frame: it grows in)
+	if Art.xmas():
+		Xmas.behind_panel(self, t, a)
+		Xmas.top_lights(self, t, -420.0, 2340.0, 0.0, a)
 	_text(Vector2(960, 122), "HOW TO PLAY", 78, Color(GOLD, a))
 	var titles := ["1  MOVE", "2  SHOOT", "3  DODGE"]
 	var k := 0.5 + 0.5 * sin(t * 2.6)          # the pictures move: 0..1 and back
@@ -216,6 +224,9 @@ func _draw() -> void:
 	var more := "Pick your arrows up again. Grab the glowing orbs: they are power-ups."
 	if real and Season.harvest():
 		more = "Pick your arrows up again. Grab the glowing orbs. Catch the turkey!"
+	elif real and Season.christmas():     # p4.22: the season's pet is a reindeer: touch it and you fly
+		more = "Pick your arrows up again. Grab the glowing orbs. Ride the reindeer!"
+		XV.icon(self, Vector2(960.0 + Art.BODY.get_string_size(more, HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x * 0.5 + 44.0, 878.0), XV.IC_REINDEER, 26.0, a, t)
 	_text(Vector2(960, 892), more, 34, Color(DIM, a), Art.BODY)
 	var br := Rect2(710, 930, 500, 96)
 	var gk := 1.0 + 0.03 * sin(t * 4.5) if pane.live else 1.0     # p4.21: GOT IT breathes, like START
@@ -228,3 +239,5 @@ func _draw() -> void:
 func _floor(mid: Vector2, w: float) -> void:
 	draw_style_box(Art.box(Color(0.42, 0.27, 0.15), Color(0.16, 0.09, 0.05), 6, 2, 6), Rect2(mid.x - w * 0.5, mid.y, w, 18))
 	draw_rect(Rect2(mid.x - w * 0.5 + 6, mid.y + 3, w - 12, 2), Color(1, 0.9, 0.7, 0.25))
+	if Art.xmas():             # p4.22: snow lies on it
+		Xmas.cap(self, mid.x - w * 0.5 + 6.0, mid.x + w * 0.5 - 6.0, mid.y + 1.0, 8.0, int(mid.x) % 7)

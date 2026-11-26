@@ -31,6 +31,7 @@
 			// one from 3 to 30 November (p4.18: bench/web/page/splash_harvest.png), else the castle at
 			// sunset (bench/web/page/splash_castle.png); tools/v2_build.sh copies both. ?dress=castle,
 			// ?dress=halloween or ?dress=harvest picks one for a picture.
+			// p4.22: all of December is Christmas (bench/web/page/splash_christmas.png; ?dress=christmas).
 			// It runs here, before the page is drawn, so the colours are the season's from the first moment.
 			(function () {
 				const q = window.location.search;
@@ -38,7 +39,8 @@
 				let dress = 'castle';
 				if (d.getMonth() === 9 || (d.getMonth() === 10 && d.getDate() <= 2)) { dress = 'halloween'; }
 				else if (d.getMonth() === 10) { dress = 'harvest'; }
-				for (const k of ['castle', 'halloween', 'harvest']) { if (q.indexOf('dress=' + k) >= 0) { dress = k; } }
+				else if (d.getMonth() === 11) { dress = 'christmas'; }
+				for (const k of ['castle', 'halloween', 'harvest', 'christmas']) { if (q.indexOf('dress=' + k) >= 0) { dress = k; } }
 				document.documentElement.setAttribute('data-dress', dress);
 			}());
 		</script>
@@ -56,7 +58,7 @@
 }
 
 /* ---- The colours, as the lobby's dress (bench/client/lobby_art.gd DRESSES) ----
-   The castle is the default. The two seasons change them below. */
+   The castle is the default. The three seasons change them below. */
 :root {
 	--tb-bg: $GODOT_SPLASH_COLOR;
 	--tb-tint: 3, 5, 10;          /* the dark that lies over the picture (red, green, blue) */
@@ -100,6 +102,18 @@ html[data-dress="harvest"] {
 	--tb-text: #fff7eb;
 	--tb-dim: #dbb894;
 }
+html[data-dress="christmas"] {    /* p4.22: a winter night, gold, a pine green edge, snow white words */
+	--tb-tint: 3, 8, 20;
+	--tb-accent: #ffc438;
+	--tb-hi: #ffe88f;
+	--tb-low: #e8990f;
+	--tb-edge: #66460a;
+	--tb-glow: rgba(255, 196, 80, 0.55);
+	--tb-panel: #0a1721;
+	--tb-panel-edge: #4d9e70;
+	--tb-text: #f7fcff;
+	--tb-dim: #b3d4e0;
+}
 @media (orientation: portrait) {
 	:root {
 		--tb-u: clamp(13px, 4.2vw, 30px);
@@ -111,6 +125,7 @@ html[data-dress="harvest"] {
 html[data-dress="castle"] { --tb-back: url(data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAwICQsJCAwLCgsODQwOEh4UEhEREiUbHBYeLCcuLisnKyoxN0Y7MTRCNCorPVM+QkhKTk9OLztWXFVMW0ZNTkv/2wBDAQ0ODhIQEiQUFCRLMisyS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0v/wAARCAAbADADASIAAhEBAxEB/8QAGQAAAwEBAQAAAAAAAAAAAAAABAUGAgMB/8QAIxAAAgEEAgIDAQEAAAAAAAAAAQIDAAQFESExEhMUIlEyQf/EABcBAQEBAQAAAAAAAAAAAAAAAAMEAgX/xAAcEQADAQEAAwEAAAAAAAAAAAABAhEAAxITMSH/2gAMAwEAAhEDEQA/AHWSLLH9TSkNL2aZZK+tXhb7gECouTNTfL9SNtd1D5O3z83TitqVWnB4BrRaf8NNcCpvIU8k6Hddc3F8SJmRR1Rh2suIsoOQGSQck03xc3sj1/tQt1lZhcmPegTVJhL6OFAXbe6t9bILbhTupb5NLzXizwct9jQttZlW9u+uaVI7fpo+OV/VryNaPPYToVE13gM2YofAEbFe5zNtJCV33UniWYKeTXe6Ysh2d0Y5gHEWJMwl3bB9y+Q2awly0UOlbmgriRxsBjQgkbf9GqqZDj8Bbv/Z); }
 html[data-dress="halloween"] { --tb-back: url(data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAwICQsJCAwLCgsODQwOEh4UEhEREiUbHBYeLCcuLisnKyoxN0Y7MTRCNCorPVM+QkhKTk9OLztWXFVMW0ZNTkv/2wBDAQ0ODhIQEiQUFCRLMisyS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0v/wAARCAAbADADASIAAhEBAxEB/8QAGgAAAQUBAAAAAAAAAAAAAAAAAwABBAUGAv/EACEQAAEEAgIDAQEAAAAAAAAAAAEAAgMEESEFMRNBUSIy/8QAGAEAAgMAAAAAAAAAAAAAAAAAAQQDBQb/xAAfEQACAgICAwEAAAAAAAAAAAABAgADEiEEERMiMTL/2gAMAwEAAhEDEQA/AMVSDYpQXDSvqvhncAG7VO2MHaNXvClMCnebxvQsPssEAX9TSw0STpmkrVIRsJczSk8RyjbTBjAReetsZVOCM4WO814uCERnFSvYGplprFVji0jao7jWulJZ0u5niSQu95Q396Wt4taqMidyvdgZPkkYB+CoUgMru1HDnfSuw4/U1fYXEDWZSfR5B1J2AdJ7/KyWfZwq3s7RsDx9JFalJy63Abnxx71ACRxKdzyk3spn/wAlSSGf/9k=); }
 html[data-dress="harvest"] { --tb-back: url(data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAwICQsJCAwLCgsODQwOEh4UEhEREiUbHBYeLCcuLisnKyoxN0Y7MTRCNCorPVM+QkhKTk9OLztWXFVMW0ZNTkv/2wBDAQ0ODhIQEiQUFCRLMisyS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0v/wAARCAAbADADASIAAhEBAxEB/8QAGQAAAgMBAAAAAAAAAAAAAAAABQYBAgQD/8QAIhAAAQQCAgIDAQAAAAAAAAAAAQACAwQRIQUSBjETQVEy/8QAGAEBAAMBAAAAAAAAAAAAAAAAAgEDBAX/xAAfEQEAAwEAAQUBAAAAAAAAAAABAAIDERIEEyEiMUH/2gAMAwEAAhEDEQA/AEvjYy+UZGkz164Y0awEPrRRxRB7BkrrLzGesTBgrD5ed51bUWkLxQSO/lpKvLVka3LmkIv40DOxpeAtnkfWGuegGcI1vs352Y71zr+ETZ4A9hyEq8m0xykAaTE3lOjnxvGSsklWO12fJoLRpVyv1+SW+mv7mb/Ek0n4r/qzxsa+xn0cqKbj0O1ya4i17+0Mz7JFpdASPPB2HVYe2dBTy9x12MlpwEO49zjXOT9KtlzhAcHCPXvZWgwHZYxk36Ve44itrSwTvcbWyfa73HH4htPayoMnAKik/9k=); }
+html[data-dress="christmas"] { --tb-back: url(data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAwICQsJCAwLCgsODQwOEh4UEhEREiUbHBYeLCcuLisnKyoxN0Y7MTRCNCorPVM+QkhKTk9OLztWXFVMW0ZNTkv/2wBDAQ0ODhIQEiQUFCRLMisyS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0v/wAARCAAbADADASIAAhEBAxEB/8QAGgAAAQUBAAAAAAAAAAAAAAAABQECAwQGAP/EACMQAAEFAAIBBAMAAAAAAAAAAAEAAgMEERIhBQYTMUEUYXH/xAAXAQEBAQEAAAAAAAAAAAAAAAADAgQB/8QAHREBAAICAwEBAAAAAAAAAAAAAQACERIDBCETMf/aAAwDAQACEQMRAD8AzlWONsY0dqYQ191wUNaN0TNkHSZYmBcA1VagmVlcezbAQ/4++KzeMZwJnkbbLYyTtD6mFo1dZwbiuvVGudmZ79hrdrrGezWH9VW5wY08ftISXFWoabrWAAlHr81VilvpgCSOkD4cP2kg8TJJGZB8JYWNLRoWmrMaKYwfS7p7iMcrU2rAkVF/tfHaWz4+VlfnxPaPwsbwHQV2yxpqDWhXi35mZlq+4mEipTZvD5RahL+FHjmjUbpxsO60LNeoXGOdwYeI/SPmo8njE4kp6T//2Q==); }
 
 html, body, #canvas {
 	margin: 0;
@@ -1029,11 +1044,14 @@ html.tb-oops #status-notice {
 	}
 	if (dress === 'harvest') { tips.push('Catch the turkey! It gives you a power-up.'); }
 	if (dress === 'halloween') { tips.push('Grab a candy: trick or treat!'); }
+	if (dress === 'christmas') { tips.push('Ride the reindeer! Touch it and you fly.'); }
 	tips.push('Grab the glowing orbs. They are power-ups!');
 	tips.push('Out of arrows? Pick them up again.');
 	if (dress === 'harvest') { tips.push('A covered dish is a treat... or a trick!'); }
+	if (dress === 'christmas') { tips.push('Open a present: a gift... or a trick!'); }
 	tips.push('One life a round. The last one standing wins!');
 	if (dress === 'harvest') { tips.push('Watch out for PIE. It splats cream on your screen!'); }
+	if (dress === 'christmas') { tips.push('A snowball packs players into snowmen!'); }
 	tips.push('Two points behind? You start with a SHIELD.');
 
 	var tipN = Math.floor(Math.random() * tips.length);   // a new first tip each time

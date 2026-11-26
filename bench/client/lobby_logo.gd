@@ -4,11 +4,22 @@
 # shader), and a ribbon under it with the dress's line (HALLOWEEN NIGHT). In the
 # Halloween dress the O of TOWER is a jack-o'-lantern whose face flickers.
 # Drawn in the lobby's 1920 x 1080 frame: the title's middle is at x 960.
+# p4.22 the Christmas dress (the user: "snow on the letters and a wreath for the O of
+# TOWER"): a cap of snow lies on every letter (drawn once and kept), the O is a wreath
+# that swings a little from its top, a few sparkles come and go on the snow, and the
+# ribbon counts the nights to Christmas ("12 SLEEPS TO CHRISTMAS": set_sleeps).
 extends Control
 
 const Art = preload("res://client/lobby_art.gd")
 const HALO := preload("res://assets/fx_halo.png")
 const PIE := preload("res://assets/harvest_pie.png")   # p4.18: the Harvest dress: the O of TOWER is a pumpkin pie (ComfyUI)
+const WREATH := preload("res://assets/christmas_wreath.png")   # p4.22: the Christmas dress: the O is a wreath (256 x 256, its hole see-through)
+const Xmas = preload("res://client/lobby_xmas.gd")
+const XV = preload("res://client/christmas_view.gd")   # the sparkle
+const WREATH_W := 138.0          # the wreath's picture on the title, px
+const WREATH_K := WREATH_W / 256.0
+# The wreath's berries, in its picture's own px (a light twinkles on one, then the next).
+const BERRIES := [Vector2(127, 32), Vector2(192, 60), Vector2(215, 112), Vector2(197, 167), Vector2(60, 170), Vector2(40, 112), Vector2(62, 60)]
 const SIZE := 150                # the title's font size
 const BASE := 168.0              # its baseline
 const CX := 960.0
@@ -16,6 +27,12 @@ const CX := 960.0
 var pal: Dictionary = {}
 var halloween := false
 var harvest := false             # p4.18: the Harvest dress (the O of TOWER is a pumpkin pie)
+var christmas := false           # p4.22: the Christmas dress (snow on the letters, the O is a wreath)
+var line := ""                   # p4.22: the ribbon's own words in place of the tagline (the countdown); "": the tagline
+var frost := _Part.new()         # p4.22: the snow on the letters (drawn once, over the letters)
+var wreath := _Wreath.new()      # the wreath: only its angle changes
+var twinkle := _Part.new()       # the sparkles (drawn every frame: four small stars)
+var caps: Array = []             # [x0, x1, y] of each cap of snow (where a sparkle may sit)
 var tier := 2
 var t := 0.0
 var fill := _Fill.new()
@@ -28,6 +45,20 @@ class _Fill extends Control:
 		if logo != null:
 			logo._paint_fill(self)
 
+class _Part extends Control:
+	var logo
+	var which := 0
+	func _draw() -> void:
+		if logo != null:
+			logo._paint_part(self, which)
+
+# The wreath is a Node2D: a turn of a Node2D moves what it drew, a turn of a Control draws it again.
+class _Wreath extends Node2D:
+	var logo
+	func _draw() -> void:
+		if logo != null:
+			logo._paint_part(self, 1)
+
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -38,6 +69,14 @@ func _init() -> void:
 	fill.size = size
 	fill.material = Art.grad_material(Color.WHITE, Color.WHITE, BASE - SIZE * 0.72, BASE, 1.0)
 	add_child(fill)
+	for part in [frost, wreath, twinkle]:     # p4.22: over the letters: the snow, the wreath, the sparkles
+		part.logo = self
+		part.visible = false
+		add_child(part)
+	twinkle.which = 2
+	for part in [frost, twinkle]:
+		part.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		part.size = size         # (a Control with no size at the frame's corner is taken for off the screen, and not drawn)
 
 func set_dress(p: Dictionary, hw: bool) -> void:
 	pal = p
@@ -48,6 +87,19 @@ func set_dress(p: Dictionary, hw: bool) -> void:
 	_layout()
 	queue_redraw()
 	fill.queue_redraw()
+	for part in [frost, wreath, twinkle]:
+		part.visible = christmas
+		part.queue_redraw()
+
+# p4.22: the nights left to Christmas Day (lobby.gd: the server's count, or the ?sleeps=
+# test knob). The ribbon counts them down; under 0 (another day) it keeps the tagline.
+func set_sleeps(n: int) -> void:
+	var s := ""
+	if christmas and n >= 0:
+		s = "MERRY CHRISTMAS!" if n == 0 else ("1 SLEEP TO CHRISTMAS" if n == 1 else "%d SLEEPS TO CHRISTMAS" % n)
+	if s != line:
+		line = s
+		queue_redraw()
 
 func set_tier(n: int) -> void:
 	tier = n
@@ -62,7 +114,7 @@ func _layout() -> void:
 	var f := Art.DISPLAY
 	parts.clear()
 	pumpkin = Vector2.ZERO
-	if halloween or harvest:
+	if halloween or harvest or christmas:
 		var wt := f.get_string_size("T", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x
 		var wo := f.get_string_size("O", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x * 1.12
 		var wr := f.get_string_size("WER BRAWL", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x
@@ -73,6 +125,11 @@ func _layout() -> void:
 	else:
 		var w := f.get_string_size("TOWER BRAWL", HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE).x
 		parts.append(["TOWER BRAWL", CX - w * 0.5])
+	caps.clear()
+	if christmas:                # p4.22: where the snow lies, letter by letter (for the sparkles); the wreath hangs from its top
+		for p in parts:
+			caps.append_array(Xmas.word_caps(null, f, p[0], p[1], BASE, SIZE, Color(0, 0, 0, 0)))
+		wreath.position = Vector2(pumpkin.x, BASE - SIZE * 0.36 - 104.0 * WREATH_K)
 
 func _process(delta: float) -> void:
 	if not is_visible_in_tree():
@@ -80,6 +137,9 @@ func _process(delta: float) -> void:
 	t += delta
 	if halloween or harvest:
 		queue_redraw()   # the pumpkin's face flickers; the pie rocks
+	elif christmas:      # p4.22: the wreath swings from its top (its angle only: nothing is drawn again but the sparkles)
+		wreath.rotation = sin(t * 1.3) * 0.075
+		twinkle.queue_redraw()
 
 # Behind the letters: the glow, the shadow, the dark edge and the rim; the ribbon.
 func _draw() -> void:
@@ -101,9 +161,36 @@ func _draw() -> void:
 		draw_set_transform(Vector2(pumpkin.x, BASE - SIZE * 0.36), sin(t * 1.3) * 0.07, Vector2.ONE)
 		draw_texture_rect(PIE, Rect2(-pw * 0.5, -pw * 0.5, pw, pw), false)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	elif pumpkin.y > 0.0:
+	elif pumpkin.y > 0.0 and not christmas:
 		_pumpkin(Vector2(pumpkin.x, BASE - SIZE * 0.36), pumpkin.y)
-	_ribbon(str(pal["tagline"]))
+	_ribbon(line if line != "" else str(pal["tagline"]))
+
+# p4.22 the Christmas dress's parts over the letters. 0: the snow on each letter (drawn
+# once). 1: the wreath, hanging from its own top so a turn swings it, a little snow on it.
+# 2: sparkles on the snow and a light on the wreath's berries, one after another.
+func _paint_part(c: CanvasItem, which: int) -> void:
+	if not christmas or pal.is_empty():
+		return
+	if which == 0:
+		for i in parts.size():
+			Xmas.word_caps(c, Art.DISPLAY, parts[i][0], parts[i][1], BASE, SIZE, pal["logo_edge"], i * 11)
+	elif which == 1:
+		if tier >= 2:
+			c.draw_texture_rect(WREATH, Rect2(-127.0 * WREATH_K, -8.0 * WREATH_K + 8.0, WREATH_W, WREATH_W), false, Color(0, 0, 0, 0.4))   # its shadow
+		c.draw_texture_rect(WREATH, Rect2(-127.0 * WREATH_K, -8.0 * WREATH_K, WREATH_W, WREATH_W), false)
+		Xmas.cap(c, -30.0, 30.0, 6.0, 11.0, 4, pal["logo_edge"], 9.0, 9.0)
+	else:
+		for k in (2 if tier <= 1 else 4):
+			var u := t * 0.55 + k * 0.29
+			var tw := sin(fposmod(u, 1.0) * PI)
+			var n := int(u) * 7 + k * 3
+			if k == 0:           # the wreath's berries, as it swings
+				c.draw_set_transform(wreath.position, wreath.rotation, Vector2.ONE)
+				XV.sparkle(c, (BERRIES[n % BERRIES.size()] - Vector2(127, 8)) * WREATH_K, 13.0 * tw, Color(1.0, 0.95, 0.6, tw))
+				c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			elif not caps.is_empty():
+				var cp: Array = caps[n % caps.size()]
+				XV.sparkle(c, Vector2(lerpf(cp[0], cp[1], 0.2 + 0.6 * fposmod(n * 0.37, 1.0)), float(cp[2]) - 9.0), 12.0 * tw, Color(1, 1, 1, tw))
 
 # The letters' fill (white: the shader turns it into the gradient and the light).
 func _paint_fill(c: Control) -> void:
@@ -163,7 +250,9 @@ func _ribbon(s: String) -> void:
 	var fs := 34
 	var tw := f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	var w := tw + 90.0
-	var y := BASE + 12.0
+	# p4.22: in the Christmas dress the ribbon sits 6 px higher: in TEAMS the horns and the
+	# halo on the two middle cards' flags reach up to it, and must stay under its words
+	var y := BASE + (6.0 if christmas else 12.0)
 	var h := 50.0
 	var x0 := CX - w * 0.5
 	var x1 := CX + w * 0.5

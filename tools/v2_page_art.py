@@ -195,9 +195,10 @@ def sheet(icons, path):
 
 
 def backs():
-    """Print the three soft backdrops as CSS (the lines between the two marks in shell.html)."""
+    """Print the four soft backdrops as CSS (the lines between the two marks in shell.html)."""
     pics = {"castle": CASTLE, "halloween": os.path.join(ROOT, "bench/assets/splash.png"),
-            "harvest": os.path.join(ROOT, "bench/web/page/splash_harvest.png")}
+            "harvest": os.path.join(ROOT, "bench/web/page/splash_harvest.png"),
+            "christmas": os.path.join(ROOT, "bench/web/page/splash_christmas.png")}   # p4.22
     for name, path in pics.items():
         im = Image.open(path).convert("RGB").resize((192, 108), Image.LANCZOS)
         im = im.filter(ImageFilter.GaussianBlur(7)).resize((48, 27), Image.LANCZOS)
